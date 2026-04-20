@@ -148,6 +148,22 @@ function commandeMatchesStatusFilter(
     return c.statut === filterStatus;
 }
 
+function isCommandeReglee(commande: Commande, factures: any[]): boolean {
+    const linkedFacture = factures.find((f: any) => Number(f?.commande_id) === commande.id);
+    const factureIsPaid =
+        !!linkedFacture &&
+        (linkedFacture.statut === "paye" || linkedFacture.statut === "payee");
+    const totalRegle = Number(commande.total_regle) || 0;
+    const montantTtc =
+        Number(commande.montant_ttc) ||
+        (Number(commande.montant_ht) + Number(commande.montant_tva)) ||
+        0;
+    const statut = String(commande.statut || "").toLowerCase();
+    const commandeStatutReglee = statut === "paye" || statut === "payee" || statut === "reglee";
+    const paidByAmounts = montantTtc > 0 && totalRegle >= montantTtc - 0.01;
+    return factureIsPaid || commandeStatutReglee || paidByAmounts;
+}
+
 const getSousSocieteLabel = (doc: { sous_societe_nom?: string | null; numero_commande?: string | null }) => {
     const fromName = String(doc.sous_societe_nom || "").trim();
     return fromName || "—";
@@ -240,6 +256,7 @@ function Commandes() {
     const [remboursementMap, setRemboursementMap] = useState<Record<number, number>>({});
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+    const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
     const [formData, setFormData] = useState({
         numero_commande: "",
@@ -785,6 +802,12 @@ function Commandes() {
 
     const handleDelete = async () => {
         if (!commandeToDelete) return;
+        if (isCommandeReglee(commandeToDelete, factures)) {
+            toast.error("Suppression impossible : cette commande est déjà réglée.");
+            setDeleteDialogOpen(false);
+            setCommandeToDelete(null);
+            return;
+        }
         try {
             const response = await fetch(`/api/commandes/${commandeToDelete.id}`, {
                 method: "DELETE",
@@ -806,14 +829,23 @@ function Commandes() {
     };
 
 
+    const openBulkDeleteDialog = () => {
+        if (selectedIds.length === 0) return;
+        setBulkDeleteDialogOpen(true);
+    };
+
     const handleBulkDelete = async () => {
         if (selectedIds.length === 0) return;
-        if (!window.confirm(`Êtes-vous sûr de vouloir supprimer ${selectedIds.length} commandes ?`)) return;
-
         setIsBulkDeleting(true);
         try {
             let successCount = 0;
+            let blockedCount = 0;
             for (const id of selectedIds) {
+                const commande = commandes.find((c) => c.id === id);
+                if (commande && isCommandeReglee(commande, factures)) {
+                    blockedCount++;
+                    continue;
+                }
                 const response = await fetch(`/api/commandes/${id}`, {
                     method: "DELETE",
                     headers: { Authorization: `Bearer ${token}` }
@@ -828,10 +860,14 @@ function Commandes() {
             } else {
                 toast.error("Erreur lors de la suppression des commandes");
             }
+            if (blockedCount > 0) {
+                toast.error(`${blockedCount} commande(s) réglée(s) n'ont pas pu être supprimées.`);
+            }
         } catch (error) {
             toast.error("Erreur lors de la suppression en masse");
         } finally {
             setIsBulkDeleting(false);
+            setBulkDeleteDialogOpen(false);
         }
     };
 
@@ -1246,7 +1282,7 @@ function Commandes() {
                                 <Button 
                                     variant="destructive" 
                                     size="sm" 
-                                    onClick={handleBulkDelete}
+                                    onClick={openBulkDeleteDialog}
                                     disabled={isBulkDeleting}
                                     className="h-9 rounded-lg bg-red-500 hover:bg-red-600 font-bold gap-2"
                                 >
@@ -1608,20 +1644,7 @@ function Commandes() {
                                                                 remboursementMap
                                                             );
                                                             const canConvert = commande.statut === "validee" || commande.statut === "validée" || commande.statut === "livree";
-                                                            const totalRegle = Number(commande.total_regle) || 0;
-                                                            const montantTtc =
-                                                                Number(commande.montant_ttc) ||
-                                                                (Number(commande.montant_ht) + Number(commande.montant_tva)) ||
-                                                                0;
-                                                            const factureIsPaid =
-                                                                !!linkedFacture &&
-                                                                (linkedFacture.statut === "paye" || linkedFacture.statut === "payee");
-                                                            const isCommandeReglee =
-                                                                factureIsPaid ||
-                                                                commande.statut === "paye" ||
-                                                                commande.statut === "payee" ||
-                                                                commande.statut === "reglee" ||
-                                                                (montantTtc > 0 && totalRegle >= montantTtc - 0.01);
+                                                            const isReglee = isCommandeReglee(commande, factures);
                                                             
                                                             return (
                                                                 <>
@@ -1683,7 +1706,7 @@ function Commandes() {
                                                                         </>
                                                                     )}
 
-                                                                    {!linkedFacture && isCommandeReglee && !hasRemboursement && (
+                                                                    {!linkedFacture && isReglee && !hasRemboursement && (
                                                                         <DropdownMenuItem
                                                                             className="cursor-pointer text-orange-600 focus:text-orange-600"
                                                                             onClick={() => {
@@ -1741,7 +1764,18 @@ function Commandes() {
                                                             <EditSvgIcon className="h-4 w-4" />
                                                             Modifier
                                                         </DropdownMenuItem>
-                                                        <DropdownMenuItem onClick={() => { setCommandeToDelete(commande); setDeleteDialogOpen(true); }} variant="destructive" className="cursor-pointer text-red-600 focus:text-red-600">
+                                                        <DropdownMenuItem
+                                                            onClick={() => {
+                                                                if (isCommandeReglee(commande, factures)) {
+                                                                    toast.error("Suppression impossible : cette commande est déjà réglée.");
+                                                                    return;
+                                                                }
+                                                                setCommandeToDelete(commande);
+                                                                setDeleteDialogOpen(true);
+                                                            }}
+                                                            variant="destructive"
+                                                            className="cursor-pointer text-red-600 focus:text-red-600"
+                                                        >
                                                             <DeleteSvgIcon className="h-4 w-4" />
                                                             Supprimer
                                                         </DropdownMenuItem>
@@ -2277,6 +2311,29 @@ function Commandes() {
                     <DialogFooter>
                         <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)}>Annuler</Button>
                         <Button variant="destructive" onClick={handleDelete} className="bg-red-500 hover:bg-red-600">Supprimer</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+                <DialogContent className="sm:max-w-[420px]">
+                    <DialogHeader>
+                        <DialogTitle className="text-red-500">Supprimer la sélection ?</DialogTitle>
+                        <DialogDescription className="py-2">
+                            Voulez-vous vraiment supprimer <span className="font-bold text-foreground">{selectedIds.length}</span> commande(s) ?
+                            Cette action est irréversible.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setBulkDeleteDialogOpen(false)}>Annuler</Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleBulkDelete}
+                            disabled={isBulkDeleting}
+                            className="bg-red-500 hover:bg-red-600"
+                        >
+                            {isBulkDeleting ? "Suppression..." : "Supprimer"}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

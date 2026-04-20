@@ -718,7 +718,13 @@ exports.deleteCommande = async (req, res) => {
         await connection.beginTransaction();
 
         // Check ownership/existence
-        let checkSql = "SELECT user_id FROM commandes WHERE id = ?";
+        let checkSql = `
+            SELECT c.user_id, c.statut, c.numero_commande, c.devis_id, c.montant_ttc,
+                   (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) AS facture_id,
+                   (SELECT statut FROM factures WHERE commande_id = c.id LIMIT 1) AS facture_statut
+            FROM commandes c
+            WHERE c.id = ?
+        `;
         const [rows] = await connection.execute(checkSql, [id]);
         if (rows.length === 0) {
             await connection.rollback();
@@ -729,11 +735,47 @@ exports.deleteCommande = async (req, res) => {
             return res.status(403).json({ message: "Unauthorized" });
         }
 
-        // 1. Delete items first
+        const commande = rows[0];
+        const factureId = commande.facture_id ? Number(commande.facture_id) : null;
+        const montantTtc = Number(commande.montant_ttc) || 0;
+        const statutCommande = String(commande.statut || "").toLowerCase();
+        const statutFacture = String(commande.facture_statut || "").toLowerCase();
+        const [[reglementRow]] = await connection.execute(
+            `
+                SELECT COALESCE(SUM(montant), 0) AS total_regle
+                FROM reglements_clients
+                WHERE statut = 'approuve'
+                  AND (commande_id = ? OR (? IS NOT NULL AND facture_id = ?))
+            `,
+            [id, factureId, factureId]
+        );
+        const totalRegle = Number(reglementRow?.total_regle) || 0;
+        const commandeReglee =
+            statutCommande === "paye" ||
+            statutCommande === "payee" ||
+            statutCommande === "reglee" ||
+            statutFacture === "paye" ||
+            statutFacture === "payee" ||
+            (montantTtc > 0 && totalRegle >= montantTtc - 0.01);
+
+        if (commandeReglee) {
+            await connection.rollback();
+            return res.status(400).json({
+                message: "Suppression impossible : cette commande est déjà réglée."
+            });
+        }
+
+        // 1. Delete items first (suppression logique seulement : le stock reste inchangé)
         await connection.execute("DELETE FROM commande_items WHERE commande_id = ?", [id]);
 
         // 2. Delete the command
         await connection.execute("DELETE FROM commandes WHERE id = ?", [id]);
+
+        // 3. Supprimer le devis lié à la commande (avec ses lignes)
+        if (commande.devis_id) {
+            await connection.execute("DELETE FROM devis_items WHERE devis_id = ?", [commande.devis_id]);
+            await connection.execute("DELETE FROM devis WHERE id = ?", [commande.devis_id]);
+        }
 
         await connection.commit();
         res.status(200).json({ message: "Commande supprimée" });

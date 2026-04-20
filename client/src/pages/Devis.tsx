@@ -188,6 +188,7 @@ function Devis() {
     const [linkedFactures, setLinkedFactures] = useState<LinkedFactureSummary[]>([]);
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+    const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
     const token = localStorage.getItem("token");
 
@@ -652,10 +653,13 @@ function Devis() {
         }
     };
 
+    const openBulkDeleteDialog = () => {
+        if (selectedIds.length === 0) return;
+        setBulkDeleteDialogOpen(true);
+    };
+
     const handleBulkDelete = async () => {
         if (selectedIds.length === 0) return;
-        if (!window.confirm(`Êtes-vous sûr de vouloir supprimer ${selectedIds.length} devis ?`)) return;
-
         setIsBulkDeleting(true);
         try {
             let successCount = 0;
@@ -678,6 +682,7 @@ function Devis() {
             toast.error("Erreur lors de la suppression en masse");
         } finally {
             setIsBulkDeleting(false);
+            setBulkDeleteDialogOpen(false);
         }
     };
 
@@ -1050,7 +1055,7 @@ function Devis() {
                                 <Button 
                                     variant="destructive" 
                                     size="sm" 
-                                    onClick={handleBulkDelete}
+                                    onClick={openBulkDeleteDialog}
                                     disabled={isBulkDeleting}
                                     className="h-9 rounded-lg bg-red-500 hover:bg-red-600 font-bold gap-2"
                                 >
@@ -1778,6 +1783,29 @@ function Devis() {
                     <DialogFooter>
                         <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)}>Annuler</Button>
                         <Button variant="destructive" onClick={confirmDelete} className="bg-red-500 hover:bg-red-600">Supprimer</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+                <DialogContent className="sm:max-w-[420px]">
+                    <DialogHeader>
+                        <DialogTitle className="text-red-500">Supprimer la sélection ?</DialogTitle>
+                        <DialogDescription className="py-2">
+                            Voulez-vous vraiment supprimer <span className="font-bold text-foreground">{selectedIds.length}</span> devis ?
+                            Cette action est irréversible.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setBulkDeleteDialogOpen(false)}>Annuler</Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleBulkDelete}
+                            disabled={isBulkDeleting}
+                            className="bg-red-500 hover:bg-red-600"
+                        >
+                            {isBulkDeleting ? "Suppression..." : "Supprimer"}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
