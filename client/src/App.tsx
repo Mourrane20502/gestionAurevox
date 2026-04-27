@@ -61,6 +61,7 @@ import Promotions from "@/pages/Promotions";
 import Autoposting from "@/pages/Autoposting";
 import AlertsNotifications from "@/pages/AlertsNotifications";
 import Impots from "@/pages/Impots";
+import TVA from "@/pages/TVA";
 import Recus from "@/pages/Recus";
 import EmailMarketing from "@/pages/EmailMarketing";
 import NotificationManager from "./components/common/NotificationManager";
@@ -103,6 +104,7 @@ export default function App() {
             <Route path="factures-gros/:id" element={<FactureGrosDetails />} />
             <Route path="factures" element={<Factures />} />
             <Route path="impots" element={<Impots />} />
+            <Route path="tva" element={<TVA />} />
             <Route path="factures/:id" element={<FactureDetails />} />
             <Route path="avoirs" element={<Avoirs />} />
             <Route path="avoirs/:id" element={<AvoirDetails />} />
