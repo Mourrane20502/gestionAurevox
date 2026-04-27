@@ -713,7 +713,7 @@ exports.getFactureById = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.grammage, p.code_barre, p.reference, COALESCE(p.nom, fi.designation) as designation,
+            SELECT fi.*, p.photo, p.poids AS grammage, p.code_barre, p.reference, COALESCE(p.nom, fi.designation) as designation,
                    pt.name AS product_type_name
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id
@@ -1237,7 +1237,7 @@ exports.sendFactureEmail = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.grammage, COALESCE(p.nom, fi.designation) as designation 
+            SELECT fi.*, p.photo, p.poids AS grammage, COALESCE(p.nom, fi.designation) as designation
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id
             WHERE fi.facture_id = ?
@@ -1359,7 +1359,7 @@ exports.sendFacturesBulkEmail = async (req, res) => {
 
             const [items] = await db.execute(
                 `
-                SELECT fi.*, p.photo, p.grammage, COALESCE(p.nom, fi.designation) as designation
+                SELECT fi.*, p.photo, p.poids AS grammage, COALESCE(p.nom, fi.designation) as designation
                 FROM facture_items fi
                 LEFT JOIN products p ON fi.produit_id = p.id
                 WHERE fi.facture_id = ?
@@ -1652,7 +1652,7 @@ exports.downloadFacturePdf = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.grammage, COALESCE(p.nom, fi.designation) as designation 
+            SELECT fi.*, p.photo, p.poids AS grammage, COALESCE(p.nom, fi.designation) as designation
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id
             WHERE fi.facture_id = ?
