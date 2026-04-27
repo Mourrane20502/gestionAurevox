@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
@@ -33,6 +34,7 @@ import {
     Banknote,
     Filter,
     Search,
+    CalendarRange,
     DollarSign,
     CheckCircle2,
     Clock,
@@ -143,6 +145,10 @@ export default function Reglements() {
     const [filterPointDeVente, setFilterPointDeVente] = useState<string>("all");
     const [filterSousSociete, setFilterSousSociete] = useState<string>("all");
     const [filterModePaiement, setFilterModePaiement] = useState<string>("all");
+    const [filterMonth, setFilterMonth] = useState<string>("all");
+    const [filterYear, setFilterYear] = useState<string>("all");
+    const [dateFrom, setDateFrom] = useState<string>("");
+    const [dateTo, setDateTo] = useState<string>("");
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
 
@@ -210,6 +216,15 @@ export default function Reglements() {
             r.facture_id ||
                 (r.commande_id != null && commandeToFacture.has(Number(r.commande_id)))
         );
+
+    const toDateOnly = (value?: string | null) => {
+        const d = new Date(String(value || ""));
+        if (Number.isNaN(d.getTime())) return null;
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+    };
 
     const getFactureLabelFromReglement = (r: ReglementClient) => {
         if (r.numero_facture) return r.numero_facture;
@@ -522,6 +537,18 @@ export default function Reglements() {
                 filterModePaiement === "all" ||
                 String(r.mode_paiement || "").trim() === filterModePaiement;
 
+            const parsedDate = new Date(r.date_reglement);
+            const isValidDate = !Number.isNaN(parsedDate.getTime());
+            const recordMonth = isValidDate ? String(parsedDate.getMonth() + 1) : "";
+            const recordYear = isValidDate ? String(parsedDate.getFullYear()) : "";
+            const recordDateOnly = toDateOnly(r.date_reglement);
+            const matchesMonth = filterMonth === "all" || recordMonth === filterMonth;
+            const matchesYear = filterYear === "all" || recordYear === filterYear;
+            const matchesDateFrom =
+                !dateFrom || (recordDateOnly !== null && recordDateOnly >= dateFrom);
+            const matchesDateTo =
+                !dateTo || (recordDateOnly !== null && recordDateOnly <= dateTo);
+
             return (
                 matchesSearch &&
                 matchesClient &&
@@ -530,10 +557,14 @@ export default function Reglements() {
                 matchesCommandeFacturee &&
                 matchesPointDeVente &&
                 matchesSousSociete &&
-                matchesModePaiement
+                matchesModePaiement &&
+                matchesMonth &&
+                matchesYear &&
+                matchesDateFrom &&
+                matchesDateTo
             );
         });
-    }, [reglements, searchTerm, filterClient, filterStatut, filterType, filterCommandeFacturee, filterPointDeVente, filterSousSociete, filterModePaiement, commandeToFacture]);
+    }, [reglements, searchTerm, filterClient, filterStatut, filterType, filterCommandeFacturee, filterPointDeVente, filterSousSociete, filterModePaiement, filterMonth, filterYear, dateFrom, dateTo, commandeToFacture]);
 
     const pointDeVenteOptions = useMemo(
         () =>
@@ -571,10 +602,25 @@ export default function Reglements() {
         [reglements]
     );
 
+    const yearOptions = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    reglements
+                        .map((r) => {
+                            const d = new Date(r.date_reglement);
+                            return Number.isNaN(d.getTime()) ? null : String(d.getFullYear());
+                        })
+                        .filter((v): v is string => Boolean(v))
+                )
+            ).sort((a, b) => Number(b) - Number(a)),
+        [reglements]
+    );
+
     // Reset page to 1 when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm, filterClient, filterStatut, filterType, filterCommandeFacturee, filterPointDeVente, filterSousSociete, filterModePaiement]);
+    }, [searchTerm, filterClient, filterStatut, filterType, filterCommandeFacturee, filterPointDeVente, filterSousSociete, filterModePaiement, filterMonth, filterYear, dateFrom, dateTo]);
 
     const paginatedReglements = useMemo(() => {
         const startIndex = (currentPage - 1) * itemsPerPage;
@@ -989,6 +1035,51 @@ export default function Reglements() {
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-medium text-muted-foreground">Periode rapide :</span>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                                const now = new Date();
+                                const start = new Date(now.getFullYear(), now.getMonth(), 1);
+                                setDateFrom(start.toISOString().split("T")[0]);
+                                setDateTo(now.toISOString().split("T")[0]);
+                            }}
+                        >
+                            Ce mois
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                                const now = new Date();
+                                const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                                const end = new Date(now.getFullYear(), now.getMonth(), 0);
+                                setDateFrom(start.toISOString().split("T")[0]);
+                                setDateTo(end.toISOString().split("T")[0]);
+                            }}
+                        >
+                            Mois dernier
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                                const now = new Date();
+                                setDateFrom(`${now.getFullYear()}-01-01`);
+                                setDateTo(now.toISOString().split("T")[0]);
+                            }}
+                        >
+                            Cette annee
+                        </Button>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                         <div className="relative md:col-span-2 xl:col-span-3 2xl:col-span-2">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1109,6 +1200,79 @@ export default function Reglements() {
                                     ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                                <CalendarRange className="h-3 w-3" />
+                                Mois
+                            </Label>
+                            <Select value={filterMonth} onValueChange={setFilterMonth}>
+                                <SelectTrigger className="h-10">
+                                    <SelectValue placeholder="Tous les mois" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Tous les mois</SelectItem>
+                                    <SelectItem value="1">Janvier</SelectItem>
+                                    <SelectItem value="2">Fevrier</SelectItem>
+                                    <SelectItem value="3">Mars</SelectItem>
+                                    <SelectItem value="4">Avril</SelectItem>
+                                    <SelectItem value="5">Mai</SelectItem>
+                                    <SelectItem value="6">Juin</SelectItem>
+                                    <SelectItem value="7">Juillet</SelectItem>
+                                    <SelectItem value="8">Aout</SelectItem>
+                                    <SelectItem value="9">Septembre</SelectItem>
+                                    <SelectItem value="10">Octobre</SelectItem>
+                                    <SelectItem value="11">Novembre</SelectItem>
+                                    <SelectItem value="12">Decembre</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                                <CalendarRange className="h-3 w-3" />
+                                Annee
+                            </Label>
+                            <Select value={filterYear} onValueChange={setFilterYear}>
+                                <SelectTrigger className="h-10">
+                                    <SelectValue placeholder="Toutes les annees" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Toutes les annees</SelectItem>
+                                    {yearOptions.map((year) => (
+                                        <SelectItem key={year} value={year}>
+                                            {year}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                                <CalendarRange className="h-3 w-3" />
+                                Date du
+                            </Label>
+                            <Input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="h-10"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                                <CalendarRange className="h-3 w-3" />
+                                Date au
+                            </Label>
+                            <Input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="h-10"
+                            />
                         </div>
                     </div>
                 </CardContent>
@@ -2182,3 +2346,4 @@ export default function Reglements() {
         </div>
     );
 }
+

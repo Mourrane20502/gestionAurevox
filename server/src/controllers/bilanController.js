@@ -3,6 +3,7 @@ const db = require("../config/db").promise();
 exports.getBilan = async (req, res) => {
     const { dateFrom, dateTo, pdvId, societeId, userId, clientId, fournisseurId } = req.query;
     const societeByPdvFilter = " IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)";
+    const debugSociete = Boolean(societeId && societeId !== "all");
 
     // Build params for Devis (no PDV)
     const devisParams = [];
@@ -38,18 +39,57 @@ exports.getBilan = async (req, res) => {
     let cmdConds = "";
     if (pdvId && pdvId !== "all") { cmdConds += " AND point_de_vente_id = ?"; cmdParams.push(pdvId); }
     if (societeId && societeId !== "all") {
-        cmdConds += ` AND COALESCE(
-            point_de_vente_id,
-            (
-                SELECT p.id_point_de_vente
-                FROM devis_items di
-                INNER JOIN products p ON di.produit_id = p.id
-                WHERE di.devis_id = commandes.devis_id
-                  AND p.id_point_de_vente IS NOT NULL
-                ORDER BY di.id
-                LIMIT 1
+        cmdConds += ` AND (
+            COALESCE(
+                NULLIF(point_de_vente_id, 0),
+                (
+                    SELECT p.id_point_de_vente
+                    FROM commande_items ci
+                    INNER JOIN products p ON ci.produit_id = p.id
+                    WHERE ci.commande_id = commandes.id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY ci.id
+                    LIMIT 1
+                ),
+                (
+                    SELECT p.id_point_de_vente
+                    FROM devis_items di
+                    INNER JOIN products p ON di.produit_id = p.id
+                    WHERE di.devis_id = commandes.devis_id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY di.id
+                    LIMIT 1
+                )
+            )${societeByPdvFilter}
+            OR EXISTS (
+                SELECT 1
+                FROM reglements_clients rc
+                LEFT JOIN factures rf ON rc.facture_id = rf.id
+                WHERE rc.statut = 'approuve'
+                  AND (rc.commande_id = commandes.id OR rf.commande_id = commandes.id)
+                  AND COALESCE(
+                      NULLIF(rf.point_de_vente_id, 0),
+                      (
+                          SELECT p.id_point_de_vente
+                          FROM facture_items fi
+                          INNER JOIN products p ON p.id = fi.produit_id
+                          WHERE fi.facture_id = rf.id AND p.id_point_de_vente IS NOT NULL
+                          ORDER BY fi.id
+                          LIMIT 1
+                      ),
+                      (
+                          SELECT p.id_point_de_vente
+                          FROM commande_items ci
+                          INNER JOIN products p ON p.id = ci.produit_id
+                          WHERE ci.commande_id = commandes.id AND p.id_point_de_vente IS NOT NULL
+                          ORDER BY ci.id
+                          LIMIT 1
+                      ),
+                      NULLIF(commandes.point_de_vente_id, 0)
+                  ) IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)
             )
-        )${societeByPdvFilter}`;
+        )`;
+        cmdParams.push(societeId);
         cmdParams.push(societeId);
     }
     if (userId && userId !== "all") { cmdConds += " AND user_id = ?"; cmdParams.push(userId); }
@@ -61,24 +101,73 @@ exports.getBilan = async (req, res) => {
     let facConds = "";
     if (pdvId && pdvId !== "all") { facConds += " AND point_de_vente_id = ?"; facParams.push(pdvId); }
     if (societeId && societeId !== "all") {
-        facConds += ` AND COALESCE(
-            point_de_vente_id,
-            (
-                SELECT co.point_de_vente_id
-                FROM commandes co
-                WHERE co.id = factures.commande_id
-                LIMIT 1
-            ),
-            (
-                SELECT p.id_point_de_vente
-                FROM devis_items di
-                INNER JOIN products p ON di.produit_id = p.id
-                WHERE di.devis_id = factures.devis_id
-                  AND p.id_point_de_vente IS NOT NULL
-                ORDER BY di.id
-                LIMIT 1
+        facConds += ` AND (
+            COALESCE(
+                NULLIF(point_de_vente_id, 0),
+                (
+                    SELECT p.id_point_de_vente
+                    FROM facture_items fi
+                    INNER JOIN products p ON fi.produit_id = p.id
+                    WHERE fi.facture_id = factures.id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY fi.id
+                    LIMIT 1
+                ),
+                (
+                    SELECT co.point_de_vente_id
+                    FROM commandes co
+                    WHERE co.id = factures.commande_id
+                    LIMIT 1
+                ),
+                (
+                    SELECT p.id_point_de_vente
+                    FROM commande_items ci
+                    INNER JOIN products p ON ci.produit_id = p.id
+                    WHERE ci.commande_id = factures.commande_id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY ci.id
+                    LIMIT 1
+                ),
+                (
+                    SELECT p.id_point_de_vente
+                    FROM devis_items di
+                    INNER JOIN products p ON di.produit_id = p.id
+                    WHERE di.devis_id = factures.devis_id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY di.id
+                    LIMIT 1
+                )
+            )${societeByPdvFilter}
+            OR EXISTS (
+                SELECT 1
+                FROM reglements_clients rc
+                LEFT JOIN factures rf ON rc.facture_id = rf.id
+                LEFT JOIN commandes rcmd ON rc.commande_id = rcmd.id
+                WHERE rc.statut = 'approuve'
+                  AND (rc.facture_id = factures.id OR (factures.commande_id IS NOT NULL AND rc.commande_id = factures.commande_id))
+                  AND COALESCE(
+                      NULLIF(rf.point_de_vente_id, 0),
+                      (
+                          SELECT p.id_point_de_vente
+                          FROM facture_items fi
+                          INNER JOIN products p ON p.id = fi.produit_id
+                          WHERE fi.facture_id = rf.id AND p.id_point_de_vente IS NOT NULL
+                          ORDER BY fi.id
+                          LIMIT 1
+                      ),
+                      (
+                          SELECT p.id_point_de_vente
+                          FROM commande_items ci
+                          INNER JOIN products p ON p.id = ci.produit_id
+                          WHERE ci.commande_id = COALESCE(rcmd.id, rf.commande_id) AND p.id_point_de_vente IS NOT NULL
+                          ORDER BY ci.id
+                          LIMIT 1
+                      ),
+                      NULLIF(rcmd.point_de_vente_id, 0)
+                  ) IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)
             )
-        )${societeByPdvFilter}`;
+        )`;
+        facParams.push(societeId);
         facParams.push(societeId);
     }
     if (userId && userId !== "all") { facConds += " AND user_id = ?"; facParams.push(userId); }
@@ -88,9 +177,50 @@ exports.getBilan = async (req, res) => {
     // Build params for Reglements Clients
     const rcParams = [];
     let rcConds = "";
-    if (pdvId && pdvId !== "all") { rcConds += " AND COALESCE(f.point_de_vente_id, cmd.point_de_vente_id) = ?"; rcParams.push(pdvId); }
+    if (pdvId && pdvId !== "all") {
+        rcConds += ` AND COALESCE(
+            NULLIF(f.point_de_vente_id, 0),
+            (
+                SELECT p.id_point_de_vente
+                FROM facture_items fi
+                INNER JOIN products p ON p.id = fi.produit_id
+                WHERE fi.facture_id = f.id AND p.id_point_de_vente IS NOT NULL
+                ORDER BY fi.id
+                LIMIT 1
+            ),
+            (
+                SELECT p.id_point_de_vente
+                FROM commande_items ci
+                INNER JOIN products p ON p.id = ci.produit_id
+                WHERE ci.commande_id = COALESCE(cmd.id, f.commande_id) AND p.id_point_de_vente IS NOT NULL
+                ORDER BY ci.id
+                LIMIT 1
+            ),
+            NULLIF(cmd.point_de_vente_id, 0)
+        ) = ?`;
+        rcParams.push(pdvId);
+    }
     if (societeId && societeId !== "all") {
-        rcConds += " AND COALESCE(f.point_de_vente_id, cmd.point_de_vente_id) IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)";
+        rcConds += ` AND COALESCE(
+            NULLIF(f.point_de_vente_id, 0),
+            (
+                SELECT p.id_point_de_vente
+                FROM facture_items fi
+                INNER JOIN products p ON p.id = fi.produit_id
+                WHERE fi.facture_id = f.id AND p.id_point_de_vente IS NOT NULL
+                ORDER BY fi.id
+                LIMIT 1
+            ),
+            (
+                SELECT p.id_point_de_vente
+                FROM commande_items ci
+                INNER JOIN products p ON p.id = ci.produit_id
+                WHERE ci.commande_id = COALESCE(cmd.id, f.commande_id) AND p.id_point_de_vente IS NOT NULL
+                ORDER BY ci.id
+                LIMIT 1
+            ),
+            NULLIF(cmd.point_de_vente_id, 0)
+        ) IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)`;
         rcParams.push(societeId);
     }
     if (userId && userId !== "all") { rcConds += " AND COALESCE(f.user_id, cmd.user_id) = ?"; rcParams.push(userId); }
@@ -134,7 +264,16 @@ exports.getBilan = async (req, res) => {
     if (pdvId && pdvId !== "all") { cmdGrosConds += " AND point_de_vente_id = ?"; cmdGrosParams.push(pdvId); }
     if (societeId && societeId !== "all") {
         cmdGrosConds += ` AND COALESCE(
-            point_de_vente_id,
+            NULLIF(point_de_vente_id, 0),
+            (
+                SELECT p.id_point_de_vente
+                FROM commandes_gros_items cgi
+                INNER JOIN products p ON cgi.produit_id = p.id
+                WHERE cgi.commande_gros_id = commandes_gros.id
+                  AND p.id_point_de_vente IS NOT NULL
+                ORDER BY cgi.id
+                LIMIT 1
+            ),
             (
                 SELECT p.id_point_de_vente
                 FROM devis_gros_items dgi
@@ -157,11 +296,29 @@ exports.getBilan = async (req, res) => {
     if (pdvId && pdvId !== "all") { facGrosConds += " AND point_de_vente_id = ?"; facGrosParams.push(pdvId); }
     if (societeId && societeId !== "all") {
         facGrosConds += ` AND COALESCE(
-            point_de_vente_id,
+            NULLIF(point_de_vente_id, 0),
+            (
+                SELECT p.id_point_de_vente
+                FROM factures_gros_items fgi
+                INNER JOIN products p ON fgi.produit_id = p.id
+                WHERE fgi.facture_gros_id = factures_gros.id
+                  AND p.id_point_de_vente IS NOT NULL
+                ORDER BY fgi.id
+                LIMIT 1
+            ),
             (
                 SELECT cg.point_de_vente_id
                 FROM commandes_gros cg
                 WHERE cg.id = factures_gros.commande_gros_id
+                LIMIT 1
+            ),
+            (
+                SELECT p.id_point_de_vente
+                FROM commandes_gros_items cgi
+                INNER JOIN products p ON cgi.produit_id = p.id
+                WHERE cgi.commande_gros_id = factures_gros.commande_gros_id
+                  AND p.id_point_de_vente IS NOT NULL
+                ORDER BY cgi.id
                 LIMIT 1
             ),
             (
@@ -183,9 +340,50 @@ exports.getBilan = async (req, res) => {
     // Build params for Reglements Clients Gros
     const rcgParams = [];
     let rcgConds = "";
-    if (pdvId && pdvId !== "all") { rcgConds += " AND fg.point_de_vente_id = ?"; rcgParams.push(pdvId); }
+    if (pdvId && pdvId !== "all") {
+        rcgConds += ` AND COALESCE(
+            NULLIF(fg.point_de_vente_id, 0),
+            (
+                SELECT p.id_point_de_vente
+                FROM factures_gros_items fgi
+                INNER JOIN products p ON p.id = fgi.produit_id
+                WHERE fgi.facture_gros_id = fg.id AND p.id_point_de_vente IS NOT NULL
+                ORDER BY fgi.id
+                LIMIT 1
+            ),
+            (
+                SELECT p.id_point_de_vente
+                FROM commandes_gros_items cgi
+                INNER JOIN products p ON p.id = cgi.produit_id
+                WHERE cgi.commande_gros_id = COALESCE(cg.id, fg.commande_gros_id) AND p.id_point_de_vente IS NOT NULL
+                ORDER BY cgi.id
+                LIMIT 1
+            ),
+            NULLIF(cg.point_de_vente_id, 0)
+        ) = ?`;
+        rcgParams.push(pdvId);
+    }
     if (societeId && societeId !== "all") {
-        rcgConds += " AND COALESCE(fg.point_de_vente_id, cg.point_de_vente_id) IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)";
+        rcgConds += ` AND COALESCE(
+            NULLIF(fg.point_de_vente_id, 0),
+            (
+                SELECT p.id_point_de_vente
+                FROM factures_gros_items fgi
+                INNER JOIN products p ON p.id = fgi.produit_id
+                WHERE fgi.facture_gros_id = fg.id AND p.id_point_de_vente IS NOT NULL
+                ORDER BY fgi.id
+                LIMIT 1
+            ),
+            (
+                SELECT p.id_point_de_vente
+                FROM commandes_gros_items cgi
+                INNER JOIN products p ON p.id = cgi.produit_id
+                WHERE cgi.commande_gros_id = COALESCE(cg.id, fg.commande_gros_id) AND p.id_point_de_vente IS NOT NULL
+                ORDER BY cgi.id
+                LIMIT 1
+            ),
+            NULLIF(cg.point_de_vente_id, 0)
+        ) IN (SELECT id FROM point_de_vente WHERE id_sous_gestionnaire = ?)`;
         rcgParams.push(societeId);
     }
     if (userId && userId !== "all") { rcgConds += " AND fg.user_id = ?"; rcgParams.push(userId); }
@@ -289,6 +487,40 @@ exports.getBilan = async (req, res) => {
     `;
 
     try {
+        if (debugSociete) {
+            console.log("[BILAN][DEBUG][SOCIETE] Incoming filters:", {
+                dateFrom: dateFrom || null,
+                dateTo: dateTo || null,
+                pdvId: pdvId || "all",
+                societeId,
+                userId: userId || "all",
+                clientId: clientId || "all",
+                fournisseurId: fournisseurId || "all",
+            });
+            console.log("[BILAN][DEBUG][SOCIETE] SQL filter blocks:", {
+                devisConds,
+                devisGrosConds,
+                cmdConds,
+                cmdGrosConds,
+                facConds,
+                facGrosConds,
+                rcConds,
+                rcgConds,
+            });
+            console.log("[BILAN][DEBUG][SOCIETE] SQL params:", {
+                devisParams,
+                devisGrosParams,
+                cmdParams,
+                cmdGrosParams,
+                facParams,
+                facGrosParams,
+                rcParams,
+                rcgParams,
+                cParams,
+                fourParams,
+            });
+        }
+
         const [clientsRows] = await db.execute(clientQuery, clientQueryParams);
 
         // Client Details
@@ -339,6 +571,36 @@ exports.getBilan = async (req, res) => {
         }
 
         const [fournisseursRows] = await db.execute(fournisseurQuery, fournisseurQueryParams);
+
+        if (debugSociete) {
+            const totals = clientsRows.reduce(
+                (acc, row) => {
+                    acc.devis += Number(row.montant_devis) || 0;
+                    acc.commande += Number(row.montant_commande) || 0;
+                    acc.facture += Number(row.montant_facture) || 0;
+                    acc.regle += Number(row.montant_regle) || 0;
+                    return acc;
+                },
+                { devis: 0, commande: 0, facture: 0, regle: 0 }
+            );
+
+            console.log("[BILAN][DEBUG][SOCIETE] Result summary:", {
+                clientsCount: clientsRows.length,
+                fournisseursCount: fournisseursRows.length,
+                totals,
+            });
+            console.log(
+                "[BILAN][DEBUG][SOCIETE] Top clients snapshot:",
+                clientsRows.slice(0, 10).map((r) => ({
+                    client_id: r.client_id,
+                    client_nom: r.client_nom,
+                    montant_devis: r.montant_devis,
+                    montant_commande: r.montant_commande,
+                    montant_facture: r.montant_facture,
+                    montant_regle: r.montant_regle,
+                }))
+            );
+        }
 
         // Fournisseur Details
         for (let row of fournisseursRows) {
