@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
@@ -2346,4 +2345,3 @@ export default function Reglements() {
         </div>
     );
 }
-

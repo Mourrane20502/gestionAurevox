@@ -396,7 +396,7 @@ export default function GestionPaie() {
             doc.setFontSize(10);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(100, 100, 100);
-            doc.text("Gestion de paie - Aurevox", pageWidth / 2, y, { align: "center" });
+            doc.text("Gestion de paie", pageWidth / 2, y, { align: "center" });
             y += 15;
 
             // Informations du document et employé
@@ -518,7 +518,7 @@ export default function GestionPaie() {
             doc.setFontSize(10);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(100, 100, 100);
-            doc.text("Gestion de paie - Aurevox", pageWidth / 2, y, { align: "center" });
+            doc.text("Gestion de paie", pageWidth / 2, y, { align: "center" });
             y += 15;
 
             doc.setFillColor(248, 250, 252);

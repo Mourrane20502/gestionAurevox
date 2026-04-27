@@ -339,7 +339,7 @@ export default function AchatDetails() {
                 </Card>
                 
                 <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-widest border-t border-dashed border-border pt-4 pr-4">
-                    Aurevox - Service Achats
+                    Service Achats
                 </p>
             </div>
         </div>

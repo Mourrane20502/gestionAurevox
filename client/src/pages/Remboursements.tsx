@@ -67,7 +67,6 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import AurevoxLogo from "@/assets/aurevox_logo.png";
 
 import {
     AlertDialog,
@@ -427,7 +426,26 @@ export default function Remboursements() {
                 img.onerror = () => res(null);
             });
 
-            const logoImgData = await loadImgToBase64(AurevoxLogo);
+            let gestionnaireName = "Gestionnaire";
+            let gestionnaireLogoUrl: string | null = null;
+            try {
+                const localToken = localStorage.getItem("token");
+                const response = await fetch("/api/gestionnaires", {
+                    headers: localToken ? { Authorization: `Bearer ${localToken}` } : {},
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    const first = Array.isArray(data) ? data[0] : null;
+                    const resolvedName = String(first?.nom || "").trim();
+                    if (resolvedName) gestionnaireName = resolvedName;
+                    if (first?.logo) {
+                        gestionnaireLogoUrl = `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${first.logo}`;
+                    }
+                }
+            } catch {
+                // Keep fallback values.
+            }
+            const logoImgData = gestionnaireLogoUrl ? await loadImgToBase64(gestionnaireLogoUrl) : null;
 
             doc.setFillColor(248, 250, 252);
             doc.rect(0, 0, pageWidth, 40, "F");
@@ -437,7 +455,7 @@ export default function Remboursements() {
             doc.setFontSize(20);
             doc.setTextColor(67, 56, 202);
             doc.setFont("helvetica", "bold");
-            doc.text("AUREVOX AGENCY", 40, 18);
+            doc.text(gestionnaireName, 40, 18);
 
             doc.setFontSize(12);
             doc.setTextColor(100, 116, 139);

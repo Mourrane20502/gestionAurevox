@@ -426,7 +426,7 @@ export default function Conges() {
             ];
 
             let y = margin + 30;
-            doc.setFontSize(12);
+            doc.setFontSize(10);
             paragraphs.forEach((line) => {
                 doc.text(line, margin, y);
                 y += 8;

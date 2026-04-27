@@ -112,7 +112,7 @@ export default function Clients() {
 
     const getMailtoHref = (email: string, fullName?: string) => {
         const cleanEmail = email.trim();
-        const subjectText = `Aurevox - Contact${fullName ? ` (${fullName})` : ""}`;
+        const subjectText = ` Contact${fullName ? ` (${fullName})` : ""}`;
         const bodyText = fullName ? `Bonjour ${fullName},\n\n` : "Bonjour,\n\n";
         return `mailto:${cleanEmail}?subject=${encodeURIComponent(subjectText)}&body=${encodeURIComponent(bodyText)}`;
     };
@@ -127,7 +127,7 @@ export default function Clients() {
 
     const getGmailComposeHref = (email: string, fullName?: string) => {
         const cleanEmail = email.trim();
-        const subjectText = `Aurevox - Contact${fullName ? ` (${fullName})` : ""}`;
+        const subjectText = ` Contact${fullName ? ` (${fullName})` : ""}`;
         const bodyText = fullName ? `Bonjour ${fullName},\n\n` : "Bonjour,\n\n";
         return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(cleanEmail)}&su=${encodeURIComponent(subjectText)}&body=${encodeURIComponent(bodyText)}`;
     };

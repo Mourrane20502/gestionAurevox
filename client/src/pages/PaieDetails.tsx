@@ -327,7 +327,7 @@ export default function PaieDetails() {
             doc.setFontSize(10);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(100, 100, 100);
-            doc.text("Gestion de Paie - Aurevox", pageWidth / 2, y, { align: "center" });
+            doc.text("Gestion de Paie ", pageWidth / 2, y, { align: "center" });
             y += 15;
 
             doc.setFillColor(248, 250, 252);

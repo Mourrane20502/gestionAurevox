@@ -42,7 +42,6 @@ import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
-import AurevoxLogo from "@/assets/aurevox_logo.png";
 
 function toNum(value: any): number {
     if (value === null || value === undefined) return 0;
@@ -75,7 +74,6 @@ interface BilanResponse {
     fournisseurs: FournisseurRow[];
     filters: {
         pdvs: { id: number; nom: string }[];
-        societes: { id: number; nom: string }[];
         users: { id: number; nom: string }[];
         clients: { id: number; nom: string }[];
         fournisseurs: { id: number; nom: string }[];
@@ -90,7 +88,6 @@ export default function Bilan() {
     const [dateFrom, setDateFrom] = useState<string>("");
     const [dateTo, setDateTo] = useState<string>("");
     const [pdvId, setPdvId] = useState<string>("all");
-    const [societeId, setSocieteId] = useState<string>("all");
     const [userId, setUserId] = useState<string>("all");
     const [clientId, setClientId] = useState<string>("all");
     const [fournisseurId, setFournisseurId] = useState<string>("all");
@@ -114,7 +111,6 @@ export default function Bilan() {
             if (dateFrom) params.append("dateFrom", dateFrom);
             if (dateTo) params.append("dateTo", dateTo);
             if (pdvId !== "all") params.append("pdvId", pdvId);
-            if (societeId !== "all") params.append("societeId", societeId);
             if (userId !== "all") params.append("userId", userId);
             if (clientId !== "all") params.append("clientId", clientId);
             if (fournisseurId !== "all") params.append("fournisseurId", fournisseurId);
@@ -315,7 +311,26 @@ export default function Bilan() {
                 img.onerror = () => res(null);
             });
 
-            const logoData = await loadImgToBase64(AurevoxLogo);
+            let gestionnaireName = "Gestionnaire";
+            let gestionnaireLogoUrl: string | null = null;
+            try {
+                const localToken = localStorage.getItem("token");
+                const response = await fetch("/api/gestionnaires", {
+                    headers: localToken ? { Authorization: `Bearer ${localToken}` } : {},
+                });
+                if (response.ok) {
+                    const payload = await response.json();
+                    const first = Array.isArray(payload) ? payload[0] : null;
+                    const resolvedName = String(first?.nom || "").trim();
+                    if (resolvedName) gestionnaireName = resolvedName;
+                    if (first?.logo) {
+                        gestionnaireLogoUrl = `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${first.logo}`;
+                    }
+                }
+            } catch {
+                // Keep fallback header values for PDF exports.
+            }
+            const logoData = gestionnaireLogoUrl ? await loadImgToBase64(gestionnaireLogoUrl) : null;
 
             // Header Background
             doc.setFillColor(248, 250, 252);
@@ -330,7 +345,7 @@ export default function Bilan() {
             doc.setFontSize(22);
             doc.setTextColor(67, 56, 202); // indigo
             doc.setFont("helvetica", "bold");
-            doc.text("AUREVOX AGENCY", 42, 18);
+            doc.text(gestionnaireName, 42, 18);
 
             doc.setFontSize(14);
             doc.setTextColor(100, 116, 139);
@@ -484,14 +499,33 @@ export default function Bilan() {
                 };
                 img.onerror = () => res(null);
             });
-            const logoData = await loadImgToBase64(AurevoxLogo);
+            let gestionnaireName = "Gestionnaire";
+            let gestionnaireLogoUrl: string | null = null;
+            try {
+                const localToken = localStorage.getItem("token");
+                const response = await fetch("/api/gestionnaires", {
+                    headers: localToken ? { Authorization: `Bearer ${localToken}` } : {},
+                });
+                if (response.ok) {
+                    const payload = await response.json();
+                    const first = Array.isArray(payload) ? payload[0] : null;
+                    const resolvedName = String(first?.nom || "").trim();
+                    if (resolvedName) gestionnaireName = resolvedName;
+                    if (first?.logo) {
+                        gestionnaireLogoUrl = `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${first.logo}`;
+                    }
+                }
+            } catch {
+                // Keep fallback header values for PDF exports.
+            }
+            const logoData = gestionnaireLogoUrl ? await loadImgToBase64(gestionnaireLogoUrl) : null;
             doc.setFillColor(248, 250, 252);
             doc.rect(0, 0, pageWidth, 40, "F");
             if (logoData) doc.addImage(logoData, "JPEG", 14, 8, 24, 24);
             doc.setFontSize(22);
             doc.setTextColor(67, 56, 202);
             doc.setFont("helvetica", "bold");
-            doc.text("AUREVOX AGENCY", 42, 18);
+            doc.text(gestionnaireName, 42, 18);
             doc.setFontSize(14);
             doc.setTextColor(100, 116, 139);
             doc.setFont("helvetica", "normal");
@@ -596,14 +630,33 @@ export default function Bilan() {
                 };
                 img.onerror = () => res(null);
             });
-            const logoData = await loadImgToBase64(AurevoxLogo);
+            let gestionnaireName = "Gestionnaire";
+            let gestionnaireLogoUrl: string | null = null;
+            try {
+                const localToken = localStorage.getItem("token");
+                const response = await fetch("/api/gestionnaires", {
+                    headers: localToken ? { Authorization: `Bearer ${localToken}` } : {},
+                });
+                if (response.ok) {
+                    const payload = await response.json();
+                    const first = Array.isArray(payload) ? payload[0] : null;
+                    const resolvedName = String(first?.nom || "").trim();
+                    if (resolvedName) gestionnaireName = resolvedName;
+                    if (first?.logo) {
+                        gestionnaireLogoUrl = `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${first.logo}`;
+                    }
+                }
+            } catch {
+                // Keep fallback header values for PDF exports.
+            }
+            const logoData = gestionnaireLogoUrl ? await loadImgToBase64(gestionnaireLogoUrl) : null;
             doc.setFillColor(248, 250, 252);
             doc.rect(0, 0, pageWidth, 40, "F");
             if (logoData) doc.addImage(logoData, "JPEG", 14, 8, 24, 24);
             doc.setFontSize(22);
             doc.setTextColor(67, 56, 202);
             doc.setFont("helvetica", "bold");
-            doc.text("AUREVOX AGENCY", 42, 18);
+            doc.text(gestionnaireName, 42, 18);
             doc.setFontSize(14);
             doc.setTextColor(100, 116, 139);
             doc.setFont("helvetica", "normal");
@@ -711,7 +764,7 @@ export default function Bilan() {
                         Filtres
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        Filtrez par période, PDV, société, utilisateur, client ou fournisseur. Cliquez sur &quot;Appliquer&quot; pour mettre à jour le bilan.
+                        Filtrez par période, PDV, utilisateur, client ou fournisseur. Cliquez sur &quot;Appliquer&quot; pour mettre à jour le bilan.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -785,25 +838,6 @@ export default function Bilan() {
                                     {data?.filters.pdvs.map((p) => (
                                         <SelectItem key={p.id} value={String(p.id)}>
                                             {p.nom}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-                                <Store className="h-3 w-3" />
-                                Société
-                            </label>
-                            <Select value={societeId} onValueChange={setSocieteId}>
-                                <SelectTrigger className="h-9 text-xs">
-                                    <SelectValue placeholder="Toutes les sociétés" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">Toutes</SelectItem>
-                                    {data?.filters.societes?.map((s) => (
-                                        <SelectItem key={s.id} value={String(s.id)}>
-                                            {s.nom}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -903,7 +937,6 @@ export default function Bilan() {
                                 setDateFrom("");
                                 setDateTo("");
                                 setPdvId("all");
-                                setSocieteId("all");
                                 setUserId("all");
                                 setClientId("all");
                                 setFournisseurId("all");

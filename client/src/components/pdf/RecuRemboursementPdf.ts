@@ -32,6 +32,29 @@ const formatDh = (v: number) => {
 const loadPdvInfo = async (): Promise<PdvInfo | null> => {
     try {
         const token = localStorage.getItem("token");
+        const gestionnaireRes = await fetch("/api/gestionnaires", {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (gestionnaireRes.ok) {
+            const data = await gestionnaireRes.json();
+            const first = Array.isArray(data) ? data[0] : null;
+            if (first) {
+                const logoUrl = first.logo
+                    ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${first.logo}`
+                    : null;
+                const nom = String(first.nom || "").trim();
+                return {
+                    nom: nom || "Gestionnaire",
+                    logoUrl,
+                    email: first.email || null,
+                    telephone: first.telephone || null,
+                    if: first.identifiant_fiscale || null,
+                    ice: first.ice || null,
+                    patente: first.patente || null,
+                };
+            }
+        }
+
         const res = await fetch("/api/pdv", {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
