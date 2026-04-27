@@ -527,7 +527,11 @@ export default function DevisDetailsPage() {
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200">
-                                            {Number(item.montant_ht).toLocaleString("fr-FR")} DH
+                                            {(
+                                                (Number(item.montant_ht) || 0) *
+                                                (1 + (Number(item.tva) || 0) / 100)
+                                            ).toLocaleString("fr-FR")}{" "}
+                                            DH
                                         </TableCell>
                                     </TableRow>
                                 ))}
