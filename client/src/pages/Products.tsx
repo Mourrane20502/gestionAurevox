@@ -142,8 +142,6 @@ export default function Products() {
     const [filterPdv, setFilterPdv] = useState("");
     const [filterCategory, setFilterCategory] = useState("");
     const [filterProductType, setFilterProductType] = useState("");
-    const [filterGrammeMin, setFilterGrammeMin] = useState("");
-    const [filterGrammeMax, setFilterGrammeMax] = useState("");
     const [filterPriceSort, setFilterPriceSort] = useState<"" | "asc" | "desc">("");
     const [filterDisponibilite, setFilterDisponibilite] = useState<"" | "disponible" | "epuise">("");
     const [showFilters, setShowFilters] = useState(false);
@@ -359,7 +357,7 @@ export default function Products() {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm, showOnlyLowStock, filterReference, filterPdv, filterCategory, filterProductType, filterGrammeMin, filterGrammeMax, filterPriceSort, filterDisponibilite]);
+    }, [searchTerm, showOnlyLowStock, filterReference, filterPdv, filterCategory, filterProductType, filterPriceSort, filterDisponibilite]);
 
     // Auto-generate barcode when code_barre changes
     useEffect(() => {
@@ -600,8 +598,6 @@ export default function Products() {
         filterPdv,
         filterCategory,
         filterProductType,
-        filterGrammeMin,
-        filterGrammeMax,
         filterPriceSort,
         filterDisponibilite,
     ].filter(Boolean).length;
@@ -612,8 +608,6 @@ export default function Products() {
         setFilterPdv("");
         setFilterCategory("");
         setFilterProductType("");
-        setFilterGrammeMin("");
-        setFilterGrammeMax("");
         setFilterPriceSort("");
         setFilterDisponibilite("");
     };
@@ -639,19 +633,13 @@ export default function Products() {
         const matchesProductType = filterProductType
             ? p.product_type_id?.toString() === filterProductType
             : true;
-        const matchesGrammeMin = filterGrammeMin
-            ? (p.grammage ?? 0) >= Number(filterGrammeMin)
-            : true;
-        const matchesGrammeMax = filterGrammeMax
-            ? (p.grammage ?? 0) <= Number(filterGrammeMax)
-            : true;
         const matchesDisponibilite = filterDisponibilite
             ? (filterDisponibilite === "disponible"
                 ? isProductAvailableForFilter(p)
                 : !isProductAvailableForFilter(p))
             : true;
         const matchesLowStock = showOnlyLowStock ? (p.stock_alert && p.stock <= p.stock_alert) : true;
-        return matchesSearch && matchesReference && matchesPdv && matchesCategory && matchesProductType && matchesGrammeMin && matchesGrammeMax && matchesDisponibilite && matchesLowStock;
+        return matchesSearch && matchesReference && matchesPdv && matchesCategory && matchesProductType && matchesDisponibilite && matchesLowStock;
     })
     .sort((a, b) => {
         if (!filterPriceSort) return 0;
@@ -710,7 +698,6 @@ export default function Products() {
         "Catégorie": p.category_name || "—",
         "Type": p.product_type_name || "—",
         "Prix (DH)": formatProductPrice(p),
-        "Grammage (g)": p.grammage ? Number(p.grammage).toFixed(2) : "—",
         "Stock": p.stock,
         "Point de vente": p.point_de_vente_name || "—",
         "Disponibilité": (p.disponible === 0 || p.disponible === false) ? "Non disponible" : "Disponible",
@@ -802,7 +789,6 @@ export default function Products() {
                 p.reference || "—",
                 p.category_name || "—",
                 formatProductPrice(p),
-                p.grammage ? `${Number(p.grammage).toFixed(2)} g` : "—",
                 p.stock.toString(),
                 p.point_de_vente_name || "—",
                 (p.disponible === 0 || p.disponible === false) ? "Non disponible" : "Disponible",
@@ -810,7 +796,7 @@ export default function Products() {
 
             autoTable(doc, {
                 startY: 48,
-                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix", "Grammage", "Stock", "Point de vente", "Disponibilité"]],
+                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix", "Stock", "Point de vente", "Disponibilité"]],
                 body: tableData,
                 theme: "grid",
                 headStyles: {
@@ -834,9 +820,8 @@ export default function Products() {
                     0: { cellWidth: 20, halign: "center" }, // Photo
                     1: { fontStyle: "bold", cellWidth: 40 }, // Nom
                     4: { halign: "right" }, // Prix
-                    5: { halign: "right" }, // Grammage
-                    6: { halign: "center" }, // Stock
-                    8: { halign: "center" }, // Disponibilité
+                    5: { halign: "center" }, // Stock
+                    7: { halign: "center" }, // Disponibilité
                 },
                 didDrawCell: (data) => {
                     if (data.section === "body" && data.column.index === 0) {
@@ -853,7 +838,7 @@ export default function Products() {
                 },
                 didParseCell: (data: any) => {
                     // Color stock column in red if low
-                    if (data.section === "body" && data.column.index === 6) { // Stock is now index 6
+                    if (data.section === "body" && data.column.index === 5) { // Stock index
                         const product = filteredProducts[data.row.index];
                         if (product && product.stock_alert && product.stock <= product.stock_alert) {
                             data.cell.styles.textColor = [220, 38, 38];
@@ -861,7 +846,7 @@ export default function Products() {
                         }
                     }
                     // Color availability
-                    if (data.section === "body" && data.column.index === 8) { // Dispo is now index 8
+                    if (data.section === "body" && data.column.index === 7) { // Dispo index
                         if (data.cell.raw === "Non disponible") {
                             data.cell.styles.textColor = [220, 38, 38];
                         } else {
@@ -900,7 +885,6 @@ export default function Products() {
                 { wch: 18 }, // Référence
                 { wch: 18 }, // Catégorie
                 { wch: 14 }, // Prix
-                { wch: 14 }, // Grammage
                 { wch: 10 }, // Stock
                 { wch: 20 }, // Point de vente
                 { wch: 18 }, // Disponibilité
@@ -1543,30 +1527,6 @@ export default function Products() {
                                 </Select>
                             </div>
 
-                            {/* Grammage */}
-                            <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Grammage (g)</Label>
-                                <div className="flex items-center gap-2">
-                                    <Input
-                                        type="number"
-                                        step="0.01"
-                                        placeholder="Min"
-                                        className="h-9 bg-background border-border text-sm"
-                                        value={filterGrammeMin}
-                                        onChange={(e) => setFilterGrammeMin(e.target.value)}
-                                    />
-                                    <span className="text-muted-foreground text-xs font-medium shrink-0">à</span>
-                                    <Input
-                                        type="number"
-                                        step="0.01"
-                                        placeholder="Max"
-                                        className="h-9 bg-background border-border text-sm"
-                                        value={filterGrammeMax}
-                                        onChange={(e) => setFilterGrammeMax(e.target.value)}
-                                    />
-                                </div>
-                            </div>
-
                             {/* Disponibilité */}
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Disponibilité</Label>
@@ -1615,12 +1575,6 @@ export default function Products() {
                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-800">
                                         Type: {productTypes.find(t => t.id.toString() === filterProductType)?.name || filterProductType}
                                         <button onClick={() => setFilterProductType("")} className="ml-0.5 hover:text-blue-900 dark:hover:text-blue-200"><X className="h-3 w-3" /></button>
-                                    </span>
-                                )}
-                                {(filterGrammeMin || filterGrammeMax) && (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-800">
-                                        Gramme: {filterGrammeMin || "0"}g — {filterGrammeMax || "∞"}g
-                                        <button onClick={() => { setFilterGrammeMin(""); setFilterGrammeMax(""); }} className="ml-0.5 hover:text-amber-900 dark:hover:text-amber-200"><X className="h-3 w-3" /></button>
                                     </span>
                                 )}
                                 {filterPriceSort && (
@@ -1737,11 +1691,6 @@ export default function Products() {
                                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
                                         Stock: {product.stock}
                                     </span>
-                                    {product.grammage ? (
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
-                                            {Number(product.grammage).toFixed(2)} g
-                                        </span>
-                                    ) : null}
                                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">
                                         {formatProductPrice(product)}
                                     </span>
@@ -1801,7 +1750,6 @@ export default function Products() {
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Catégorie</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Type</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix</TableHead>
-                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Grammage</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Stock</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Point de vente</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Disponibilité</TableHead>
@@ -1812,7 +1760,7 @@ export default function Products() {
                         {isLoading ? (
                             Array.from({ length: 5 }).map((_, i) => (
                                 <TableRow key={i} className="border-b border-border">
-                                    {Array.from({ length: 9 }).map((_, j) => (
+                                    {Array.from({ length: 8 }).map((_, j) => (
                                         <TableCell key={j}>
                                             <div className="h-4 bg-muted rounded animate-pulse w-24" />
                                         </TableCell>
@@ -1821,7 +1769,7 @@ export default function Products() {
                             ))
                         ) : filteredProducts.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="text-center py-16">
+                                <TableCell colSpan={8} className="text-center py-16">
                                     <Package className="h-10 w-10 text-muted mx-auto mb-3" />
                                     <p className="text-muted-foreground font-medium">Aucun produit trouvé</p>
                                     <p className="text-muted text-sm mt-1">Essayez un autre terme de recherche</p>
@@ -1885,11 +1833,6 @@ export default function Products() {
                                     <TableCell>
                                         <span className="font-semibold text-foreground text-sm">
                                             {formatProductPrice(product)}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className="text-sm text-muted-foreground font-medium">
-                                            {product.grammage ? `${Number(product.grammage).toFixed(2)} g` : "—"}
                                         </span>
                                     </TableCell>
                                     <TableCell>{getStockBadge(product)}</TableCell>
@@ -2185,7 +2128,6 @@ export default function Products() {
                                                 label: "Prix",
                                                 value: formatProductPrice(viewingProduct),
                                             },
-                                            { label: "Grammage", value: viewingProduct.grammage ? `${Number(viewingProduct.grammage).toFixed(2)} g` : "—" },
                                             { label: "Stock", value: viewingProduct.stock.toString() },
                                             {
                                                 label: "Alerte stock",
