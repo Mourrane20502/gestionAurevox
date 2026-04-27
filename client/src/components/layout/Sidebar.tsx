@@ -538,6 +538,11 @@ export default function Sidebar({ onNavigate, onToggle }: {
                             const filteredSubItems = item.subItems?.filter(sub => {
                                 // Super administrateur : voit tous les sous-menus pour "Clients"
                                 if (isSuperAdmin && item.name === "Clients") return true;
+                                // Masquer le module "gros" du sidebar (routes conservées)
+                                const isGrosModule =
+                                    sub.href.includes("-gros") ||
+                                    String(sub.section || "").toLowerCase().includes("gros");
+                                if (isGrosModule) return false;
                                 return !sub.permission || userPermissions.includes(sub.permission);
                             });
 
