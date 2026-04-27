@@ -1210,9 +1210,6 @@ export default function Products() {
                                             <Label htmlFor="reference" className="text-sm font-medium">Référence</Label>
                                             <Input id="reference" name="reference" value={formData.reference} onChange={handleInputChange} className="h-10" />
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Point de vente</Label>
                                             <Select onValueChange={(v) => handleSelectChange("id_point_de_vente", v)} value={formData.id_point_de_vente}>
