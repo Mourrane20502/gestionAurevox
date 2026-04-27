@@ -298,7 +298,7 @@ exports.createFacture = async (req, res) => {
                     current_devis_id = devisResult.insertId;
 
                     const devisItemsData = items.map(it => [
-                        current_devis_id, it.produit_id || null, it.designation, it.quantite || 1, it.prix_unitaire || 0, it.tva || 0, it.reduction || 0, (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0) * (1 - (Number(it.reduction) || 0) / 100)
+                        current_devis_id, it.produit_id || null, it.designation, it.quantite || 1, it.prix_unitaire || 0, it.tva ?? 20, it.reduction || 0, (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0) * (1 - (Number(it.reduction) || 0) / 100)
                     ]);
                     await connection.query(`INSERT INTO devis_items (devis_id, produit_id, designation, quantite, prix_unitaire, tva, reduction, montant_ht) VALUES ?`, [devisItemsData]);
 
@@ -395,7 +395,7 @@ exports.createFacture = async (req, res) => {
             const redItem = Number(item.reduction) || 0;
             const itemReductionAmount = brutHT * (redItem / 100);
             const montant_ht = brutHT - itemReductionAmount;
-            const montant_tva = montant_ht * (Number(item.tva) / 100);
+            const montant_tva = montant_ht * (Number(item.tva ?? 20) / 100);
 
             montant_ht_total += montant_ht;
             montant_tva_total += montant_tva;
@@ -859,7 +859,7 @@ exports.updateFacture = async (req, res) => {
                 const itemRedRate = Number(item.reduction) || 0;
                 const itemRedAmount = bruteHT * (itemRedRate / 100);
                 const ht = bruteHT - itemRedAmount;
-                const tva = ht * (Number(item.tva) / 100);
+                const tva = ht * (Number(item.tva ?? 20) / 100);
                 totalHT += ht;
                 totalTVA += tva;
                 totalItemsRed += itemRedAmount;
@@ -1465,7 +1465,7 @@ exports.sendFacturesBulkEmail = async (req, res) => {
                     designation: it.designation || "Article",
                     quantite: qte,
                     prix_unitaire: pu,
-                    tva: Number(it.tva || 0),
+                    tva: Number(it.tva ?? 20),
                     reduction: 0,
                     montant_ht: montantHt,
                 };
@@ -1473,7 +1473,7 @@ exports.sendFacturesBulkEmail = async (req, res) => {
 
             const montantHt = items.reduce((sum, it) => sum + Number(it.montant_ht || 0), 0);
             const montantTva = items.reduce(
-                (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva || 0)) / 100,
+                (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva ?? 20)) / 100,
                 0
             );
             const montantTtc = montantHt + montantTva;
@@ -1813,7 +1813,7 @@ exports.downloadFournisseurFacturePdf = async (req, res) => {
                 designation: it.designation || "Article",
                 quantite: qte,
                 prix_unitaire: pu,
-                tva: Number(it.tva || 0),
+                tva: Number(it.tva ?? 20),
                 reduction: 0,
                 montant_ht: montantHt,
             };
@@ -1821,7 +1821,7 @@ exports.downloadFournisseurFacturePdf = async (req, res) => {
 
         const montantHt = items.reduce((sum, it) => sum + Number(it.montant_ht || 0), 0);
         const montantTva = items.reduce(
-            (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva || 0)) / 100,
+            (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva ?? 20)) / 100,
             0
         );
         const montantTtc = montantHt + montantTva;

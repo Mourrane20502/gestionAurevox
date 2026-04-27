@@ -317,7 +317,7 @@ function Devis() {
                 designation: product.nom,
                 prix_unitaire: product.prix,
                 quantite: 1,
-                tva: 0,
+                tva: 20,
                 reduction: 0,
                 montant_ht: product.prix
             };
@@ -395,7 +395,7 @@ function Devis() {
         reduction: "0"
     });
     const [items, setItems] = useState<DevisItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     const calculateTotals = (currentItems: DevisItem[], forcedGlobalRed?: number) => {
@@ -494,7 +494,7 @@ function Devis() {
     };
 
     const addItem = () => {
-        const newItems = [...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }];
+        const newItems = [...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }];
         setItems(newItems);
     };
 
@@ -600,7 +600,7 @@ function Devis() {
 
     const resetForm = () => {
         setFormData({ numero_devis: "", date_devis: new Date().toISOString().split('T')[0], montant_ht: "", taux_tva: "20", statuts_devis: "en attente", reduction: "0" });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null); setClientSearch(""); setCalculatedValues({ montantTVA: 0, montantTTC: 0, totalReductionAmount: 0 }); setShowClientDropdown(false);
     };
 
@@ -987,7 +987,7 @@ function Devis() {
                 designation: product.nom,
                 prix_unitaire: product.prix,
                 quantite: 1,
-                tva: 0,
+                tva: 20,
                 reduction: 0,
                 montant_ht: product.prix
             };

@@ -7,7 +7,7 @@ import { Loader2, Eye, EyeOff, Mail, Lock, ShieldCheck, RefreshCw } from "lucide
 import { Button } from "@/components/common/ui/button";
 import { Input } from "@/components/common/ui/input";
 import { Label } from "@/components/common/ui/label";
-import signinPhoto from "@/assets/signinphoto.png";
+import signinPhoto from "@/assets/signinphoto.jpg";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -118,29 +118,29 @@ export default function SignIn() {
 
 
     return (
-        <div className="min-h-screen w-full bg-slate-100 dark:bg-slate-950 flex items-center justify-center px-4 py-4 overflow-hidden">
+        <div className="min-h-screen w-full bg-gradient-to-br from-slate-100 via-indigo-50/30 to-slate-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 flex items-center justify-center px-4 py-4 overflow-hidden">
             <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                className="relative z-10 flex w-full max-w-6xl rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.1)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                className="relative z-10 flex w-full max-w-6xl rounded-3xl overflow-hidden shadow-[0_25px_70px_rgba(15,23,42,0.16)] dark:shadow-[0_30px_80px_rgba(2,6,23,0.65)] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800"
             >
-                <div className="w-full md:w-[48%] flex flex-col justify-center px-6 py-8 md:px-10 md:py-10">
+                <div className="w-full md:w-[48%] flex flex-col justify-center px-6 py-8 md:px-10 md:py-10 lg:px-12">
 
                     <motion.div
                         initial={{ opacity: 0, y: 15 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, delay: 0.3 }}
-                        className="text-left mb-4"
+                        className="text-left mb-5"
                     >
                         <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/20 px-3 py-1">
                             <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
-                            <span className="text-[10px] font-black  tracking-[0.2em] text-indigo-600 dark:text-indigo-300">BusiVox OR</span>
+                            <span className="text-[10px] font-black  tracking-[0.2em] text-indigo-600 dark:text-indigo-300">BusiVox ERP</span>
                         </div>
-                        <h1 className="text-xl md:text-2xl mt-4  font-black text-slate-900 dark:text-white mb-4 tracking-tight leading-tight">
+                        <h1 className="text-2xl md:text-3xl mt-4 font-black text-slate-900 dark:text-white mb-3 tracking-tight leading-tight">
                         L'excellence digitale qui fait la diffèrence
                         </h1>
-                        <p className="text-slate-500 dark:text-slate-400 text-sm mb-4 font-medium max-w-md">
+                        <p className="text-slate-500 dark:text-slate-400 text-sm mb-3 font-medium max-w-md leading-relaxed">
                             Pilotez ventes, stock, finance et ressources humaines depuis une interface unique, rapide et securisee.
                         </p>
                   
@@ -148,7 +148,7 @@ export default function SignIn() {
 
                     <motion.form
                         onSubmit={handleSubmit(onSubmit)}
-                        className="space-y-4"
+                        className="space-y-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 p-4 md:p-5"
                         initial={{ opacity: 0, y: 15 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, delay: 0.4 }}
@@ -336,23 +336,26 @@ export default function SignIn() {
                         transition={{ duration: 0.5, delay: 0.7 }}
                         className="mt-6"
                     >
-                        <p className="text-[11px] text-slate-400 font-medium">© {new Date().getFullYear()} Bijouterie Aurevox — Plateforme de Gestion Bijouterie</p>
+                        <p className="text-[11px] text-slate-400 font-medium">© {new Date().getFullYear()} BusiVox — Plateforme ERP/CRM Entreprise</p>
                     </motion.div>
                 </div>
 
                 {/* Right: Photo */}
-                <div className="hidden md:flex md:w-[54%] relative min-h-[560px] overflow-hidden">
+                <div className="hidden md:flex md:w-[54%] relative min-h-[560px] overflow-hidden bg-slate-950">
                     <motion.img
                         initial={{ scale: 1.16, opacity: 0 }}
-                        animate={{ scale: 1.07, opacity: 1 }}
+                        animate={{ scale: 1.04, opacity: 1 }}
                         transition={{ duration: 1.2, ease: "easeOut" }}
                         src={signinPhoto}
                         alt=""
-                        className="absolute inset-0 w-full h-full object-cover object-right-top"
+                        className="absolute inset-0 w-full h-full object-cover object-center"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-900/25 to-slate-900/5" />
-                
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-900/35 to-slate-900/10" />
+                    <div className="absolute inset-0 bg-gradient-to-l from-indigo-900/40 via-indigo-500/10 to-transparent" />
+                    <div className="absolute -top-20 -right-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
+                    <div className="absolute -bottom-24 left-8 h-64 w-64 rounded-full bg-purple-500/20 blur-3xl" />
 
+                 
                 </div>
             </motion.div>
         </div>

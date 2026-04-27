@@ -300,7 +300,7 @@ function Factures() {
     });
 
     const [items, setItems] = useState<FactureItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     const token = localStorage.getItem("token");
@@ -631,7 +631,7 @@ function Factures() {
     ) => {
         if (commandeIdStr === "none") {
             setFormData(prev => ({ ...prev, commande_id: "none", devis_id: "none" }));
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
             setSelectedClient(null);
             setClientSearch("");
             return;
@@ -779,7 +779,7 @@ function Factures() {
     };
 
     const addItem = () => {
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
@@ -942,7 +942,7 @@ function Factures() {
             paiement_espece_type: "total",
             montant_paye: ""
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setCommandeSearch("");

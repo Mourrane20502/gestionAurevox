@@ -98,7 +98,7 @@ exports.createDevis = async (req, res) => {
             });
         } else {
             totalHT = Number(req.body.montant_ht) || 0;
-            const tauxTVA = Number(req.body.taux_tva) || 0;
+            const tauxTVA = Number(req.body.taux_tva ?? 20) || 20;
             totalTVA = (totalHT * tauxTVA) / 100;
         }
 
@@ -136,7 +136,7 @@ exports.createDevis = async (req, res) => {
             `TEMP-${Date.now()}`,
             date_devis || new Date().toISOString().split('T')[0],
             totalHT,
-            req.body.taux_tva ?? items?.[0]?.tva ?? 0,
+            req.body.taux_tva ?? items?.[0]?.tva ?? 20,
             totalTVA,
             req.user.id,
             finalStatus,
@@ -407,7 +407,7 @@ exports.updateDevis = async (req, res) => {
             });
         } else {
             totalHT = Number(req.body.montant_ht) || 0;
-            const tauxTVA = Number(req.body.taux_tva) || 0;
+            const tauxTVA = Number(req.body.taux_tva ?? 20) || 20;
             totalTVA = (totalHT * tauxTVA) / 100;
         }
 
@@ -436,7 +436,7 @@ exports.updateDevis = async (req, res) => {
             numero_devis,
             date_devis || new Date().toISOString().split('T')[0],
             totalHT,
-            req.body.taux_tva ?? items?.[0]?.tva ?? 0,
+            req.body.taux_tva ?? items?.[0]?.tva ?? 20,
             totalTVA,
             newStatus,
             client_id,

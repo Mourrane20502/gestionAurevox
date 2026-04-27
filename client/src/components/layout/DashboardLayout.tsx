@@ -200,10 +200,10 @@ export default function DashboardLayout() {
                                 </div>
                                 <div className="flex flex-col">
                                     <span className="text-sm font-black tracking-tighter text-foreground uppercase leading-none">
-                                        Gestion Bijouterie
+                                        Gestion Entreprise
                                     </span>
                                     <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mt-1">
-                                       BusiVox OR
+                                       BusiVox ERP
                                     </span>
                                 </div>
                             </div>

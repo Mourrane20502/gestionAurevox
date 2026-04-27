@@ -313,7 +313,7 @@ exports.createCommande = async (req, res) => {
                     it.designation,
                     it.quantite || 1,
                     it.prix_unitaire || 0,
-                    it.tva || 0,
+                    it.tva ?? 20,
                     it.reduction || 0,
                     (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0) * (1 - (Number(it.reduction) || 0) / 100)
                 ]);
@@ -350,7 +350,7 @@ exports.createCommande = async (req, res) => {
             const redTaux = Number(item.reduction) || 0;
             const itemReductionAmount = bruteHT * (redTaux / 100);
             const montant_ht = bruteHT - itemReductionAmount;
-            const montant_tva = montant_ht * (Number(item.tva) / 100);
+            const montant_tva = montant_ht * (Number(item.tva ?? 20) / 100);
 
             montant_ht_total += montant_ht;
             montant_tva_total += montant_tva;
@@ -643,7 +643,7 @@ exports.updateCommande = async (req, res) => {
                 const redTaux = Number(item.reduction) || 0;
                 const itemReductionAmount = bruteHT * (redTaux / 100);
                 const ht = bruteHT - itemReductionAmount;
-                const tva = ht * (Number(item.tva) / 100);
+                const tva = ht * (Number(item.tva ?? 20) / 100);
                 totalHT += ht;
                 totalTVA += tva;
                 totalItemsRed += itemReductionAmount;

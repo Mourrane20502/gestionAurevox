@@ -272,7 +272,7 @@ function Commandes() {
     });
 
     const [items, setItems] = useState<CommandeItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     const token = localStorage.getItem("token");
@@ -589,7 +589,7 @@ function Commandes() {
     const handleDevisSelect = async (devisId: string) => {
         if (devisId === "none") {
             setFormData(prev => ({ ...prev, devis_id: null }));
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
             setSelectedClient(null);
             setClientSearch("");
             return;
@@ -642,7 +642,7 @@ function Commandes() {
     };
 
     const addItem = () => {
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
@@ -767,7 +767,7 @@ function Commandes() {
             banque_id: "none",
             paiement_espece_type: "total"
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setDevisSearch("");
