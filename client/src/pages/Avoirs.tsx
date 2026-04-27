@@ -177,7 +177,7 @@ export default function Avoirs() {
     });
 
     const [items, setItems] = useState<AvoirItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     // Filter states
@@ -346,27 +346,38 @@ export default function Avoirs() {
 
                 // Si la facture est partiellement payée, on propose un avoir du reste à payer
                 if (totalRegle > 0 && resteAPayer > 0) {
+                    const importedTvaRaw =
+                        data.items?.[0]?.tva ??
+                        data.taux_tva ??
+                        20;
+                    const importedTva = Number.isFinite(Number(importedTvaRaw))
+                        ? Number(importedTvaRaw)
+                        : 20;
                     setItems([{
                         designation: `Avoir sur facture ${data.numero_facture} (solde restant)`,
                         quantite: 1,
-                        prix_unitaire: resteAPayer / (1 + (Number(data.items?.[0]?.tva || 20) / 100)),
-                        tva: Number(data.items?.[0]?.tva || 20),
+                        prix_unitaire: resteAPayer / (1 + (importedTva / 100)),
+                        tva: importedTva,
                         reduction: 0,
-                        montant_ht: resteAPayer / (1 + (Number(data.items?.[0]?.tva || 20) / 100))
+                        montant_ht: resteAPayer / (1 + (importedTva / 100))
                     }]);
                     toast.info(`Facture partiellement payée (${totalRegle.toLocaleString()} DH réglés). L'avoir est initialisé avec le solde restant : ${resteAPayer.toLocaleString()} DH.`);
                 } else if (data.items && data.items.length > 0) {
-                    // Copy items (avec réduction comme sur la facture)
+                    // Conserver le PU et la TVA d'origine de la facture
                     setItems(data.items.map((it: any) => {
                         const red = Number(it.reduction) || 0;
                         const brut = (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0);
                         const net = brut * (1 - red / 100);
+                        const importedTvaRaw = it.tva ?? data.taux_tva ?? 20;
+                        const importedTva = Number.isFinite(Number(importedTvaRaw))
+                            ? Number(importedTvaRaw)
+                            : 20;
                         return {
                             produit_id: it.produit_id,
                             designation: it.designation,
                             quantite: it.quantite,
                             prix_unitaire: it.prix_unitaire,
-                            tva: it.tva,
+                            tva: importedTva,
                             reduction: red,
                             montant_ht: net
                         };
@@ -451,7 +462,7 @@ export default function Avoirs() {
     };
 
     const addItem = () => {
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
@@ -580,7 +591,7 @@ export default function Avoirs() {
             status: "en_attente",
             facture_id: "none"
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setEditingAvoir(null);
@@ -1623,7 +1634,13 @@ export default function Avoirs() {
                                                         </TableCell>
                                                         <TableCell className="py-2 pr-6">
                                                             <div className="flex items-center justify-end gap-2">
-                                                                <span className="font-bold text-sm">{(item.montant_ht).toLocaleString()} DH</span>
+                                                                <span className="font-bold text-sm">
+                                                                    {(
+                                                                        (Number(item.montant_ht) || 0) +
+                                                                        ((Number(item.montant_ht) || 0) * (Number(item.tva) || 0)) / 100
+                                                                    ).toLocaleString()}{" "}
+                                                                    DH
+                                                                </span>
                                                                 <Button
                                                                     type="button"
                                                                     variant="ghost"
