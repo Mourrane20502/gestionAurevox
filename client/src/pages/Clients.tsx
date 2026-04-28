@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { Button } from "@/components/common/ui/button";
 import { Input } from "@/components/common/ui/input";
 import { Label } from "@/components/common/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
+import { Card } from "@/components/common/ui/card";
 import {
     Table,
     TableBody,
@@ -72,6 +72,11 @@ interface Client {
     nom_complet: string;
     type: 'particulier' | 'revendeur' | 'societe';
     ice?: string | null;
+    numero_tva?: string | null;
+    rc?: string | null;
+    if_number?: string | null;
+    cnss?: string | null;
+    patente?: string | null;
     telephone?: string | null;
     email?: string | null;
     adresse?: string | null;
@@ -154,7 +159,19 @@ export default function Clients() {
         }
     };
 
-    const [formData, setFormData] = useState({ nom_complet: "", type: "particulier", ice: "", telephone: "", email: "", adresse: "" });
+    const [formData, setFormData] = useState({
+        nom_complet: "",
+        type: "particulier",
+        ice: "",
+        numero_tva: "",
+        rc: "",
+        if_number: "",
+        cnss: "",
+        patente: "",
+        telephone: "",
+        email: "",
+        adresse: "",
+    });
     const token = localStorage.getItem("token");
 
     const fetchClients = async () => {
@@ -179,9 +196,14 @@ export default function Clients() {
                 nom_complet: editingClient.nom_complet,
                 type: editingClient.type || "particulier",
                 ice: editingClient.ice || "",
+                numero_tva: editingClient.numero_tva || "",
+                rc: editingClient.rc || "",
+                if_number: editingClient.if_number || "",
+                cnss: editingClient.cnss || "",
+                patente: editingClient.patente || "",
                 telephone: editingClient.telephone || "",
                 email: editingClient.email || "",
-                adresse: editingClient.adresse || ""
+                adresse: editingClient.adresse || "",
             });
             setIsFormVisible(true);
         }
@@ -225,6 +247,11 @@ export default function Clients() {
 
             if ("nom_complet" in sampleRow) sampleRow.nom_complet = "Client Exemple";
             if ("type" in sampleRow) sampleRow.type = "particulier";
+            if ("numero_tva" in sampleRow) sampleRow.numero_tva = "TVA-EXEMPLE";
+            if ("rc" in sampleRow) sampleRow.rc = "RC-EXEMPLE";
+            if ("if_number" in sampleRow) sampleRow.if_number = "IF-EXEMPLE";
+            if ("cnss" in sampleRow) sampleRow.cnss = "CNSS-EXEMPLE";
+            if ("patente" in sampleRow) sampleRow.patente = "PATENTE-EXEMPLE";
             if ("telephone" in sampleRow) sampleRow.telephone = "0612345678";
             if ("email" in sampleRow) sampleRow.email = "client@example.com";
             if ("adresse" in sampleRow) sampleRow.adresse = "Casablanca";
@@ -364,7 +391,19 @@ export default function Clients() {
     };
 
     const resetForm = () => {
-        setFormData({ nom_complet: "", type: "particulier", ice: "", telephone: "", email: "", adresse: "" });
+        setFormData({
+            nom_complet: "",
+            type: "particulier",
+            ice: "",
+            numero_tva: "",
+            rc: "",
+            if_number: "",
+            cnss: "",
+            patente: "",
+            telephone: "",
+            email: "",
+            adresse: "",
+        });
         setEditingClient(null);
         setFormErrors({});
         setIsFormVisible(false);
@@ -442,10 +481,27 @@ export default function Clients() {
                 </div>
                 {isAdmin && (
                     <Button
-                        onClick={() => { editingClient ? resetForm() : setIsFormVisible(!isFormVisible) }}
-                        className={cn("shadow-sm transition-all cursor-pointer", isFormVisible ? "bg-muted text-foreground hover:bg-accent" : "bg-indigo-600 text-white hover:bg-indigo-700")}
+                        onClick={() => {
+                            setEditingClient(null);
+                            setFormData({
+                                nom_complet: "",
+                                type: "particulier",
+                                ice: "",
+                                numero_tva: "",
+                                rc: "",
+                                if_number: "",
+                                cnss: "",
+                                patente: "",
+                                telephone: "",
+                                email: "",
+                                adresse: "",
+                            });
+                            setFormErrors({});
+                            setIsFormVisible(true);
+                        }}
+                        className="shadow-sm transition-all cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700"
                     >
-                        {isFormVisible ? "Annuler" : <><Plus className="mr-2 h-4 w-4" /> Nouveau Client</>}
+                        <Plus className="mr-2 h-4 w-4" /> Nouveau Client
                     </Button>
                 )}
             </div>
@@ -475,101 +531,106 @@ export default function Clients() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                {/* Form Column */}
-                {isFormVisible && (
-                    <Card className="lg:col-span-4 border border-border shadow-xl bg-card sticky top-6 animate-in slide-in-from-left duration-300">
-                        <CardHeader>
-                            <CardTitle className="text-lg flex items-center gap-2">
-                                {editingClient ? <EditSvgIcon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" /> : <Plus className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
-                                {editingClient ? "Modifier le Client" : "Ajouter un Client"}
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <form onSubmit={handleSubmit} className="space-y-4">
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="nom_complet" className="text-sm font-medium">Nom Complet *</Label>
-                                    <Input
-                                        id="nom_complet"
-                                        name="nom_complet"
-                                        value={formData.nom_complet}
-                                        onChange={handleInputChange}
-                                        placeholder="Ex: Jean Dupont"
-                                        className={cn("h-10", formErrors.nom_complet && "border-red-500 focus-visible:ring-red-500")}
-                                    />
-                                    {formErrors.nom_complet && <p className="text-red-500 text-xs mt-1">{formErrors.nom_complet}</p>}
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="type" className="text-sm font-medium">Type Client</Label>
-                                    <Select
-                                        value={formData.type}
-                                        onValueChange={(value) => setFormData(prev => ({ ...prev, type: value as any }))}
-                                    >
-                                        <SelectTrigger className="h-10">
-                                            <SelectValue placeholder="Choisir un type" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="particulier">Particulier</SelectItem>
-                                            <SelectItem value="revendeur">Revendeur</SelectItem>
-                                            <SelectItem value="societe">Société</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                {formData.type === "societe" && (
-                                    <>
-                                        <div className="space-y-1.5">
-                                            <Label htmlFor="ice" className="text-sm font-medium">ICE</Label>
-                                            <Input
-                                                id="ice"
-                                                name="ice"
-                                                value={formData.ice}
-                                                onChange={handleInputChange}
-                                                placeholder="ICE de la société"
-                                            />
-                                        </div>
-                                    </>
-                                )}
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="email" className="text-sm font-medium">Email</Label>
-                                    <Input
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        value={formData.email}
-                                        onChange={handleInputChange}
-                                        placeholder="Email du client"
-                                    />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="telephone" className="text-sm font-medium">Téléphone</Label>
-                                    <Input
-                                        id="telephone"
-                                        name="telephone"
-                                        value={formData.telephone}
-                                        onChange={handleInputChange}
-                                        placeholder="Téléphone du client"
-                                    />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="adresse" className="text-sm font-medium">Adresse</Label>
-                                    <Input
-                                        id="adresse"
-                                        name="adresse"
-                                        value={formData.adresse}
-                                        onChange={handleInputChange}
-                                        placeholder="Adresse du client"
-                                    />
-                                </div>
-                                <Button disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
-                                    {isSubmitting ? "Traitement..." : editingClient ? "Mettre à jour" : "Créer le Client"}
-                                </Button>
-                            </form>
-                        </CardContent>
-                    </Card>
-                )}
+            <Dialog
+                open={isFormVisible}
+                onOpenChange={(open) => {
+                    setIsFormVisible(open);
+                    if (!open) {
+                        setEditingClient(null);
+                        setFormErrors({});
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="text-lg flex items-center gap-2">
+                            {editingClient ? <EditSvgIcon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" /> : <Plus className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
+                            {editingClient ? "Modifier le Client" : "Ajouter un Client"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="nom_complet" className="text-sm font-medium">Nom Complet *</Label>
+                            <Input
+                                id="nom_complet"
+                                name="nom_complet"
+                                value={formData.nom_complet}
+                                onChange={handleInputChange}
+                                placeholder="Ex: Jean Dupont"
+                                className={cn("h-10", formErrors.nom_complet && "border-red-500 focus-visible:ring-red-500")}
+                            />
+                            {formErrors.nom_complet && <p className="text-red-500 text-xs mt-1">{formErrors.nom_complet}</p>}
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="type" className="text-sm font-medium">Type Client</Label>
+                            <Select
+                                value={formData.type}
+                                onValueChange={(value) => setFormData(prev => ({ ...prev, type: value as any }))}
+                            >
+                                <SelectTrigger className="h-10">
+                                    <SelectValue placeholder="Choisir un type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="particulier">Particulier</SelectItem>
+                                    <SelectItem value="revendeur">Revendeur</SelectItem>
+                                    <SelectItem value="societe">Société</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="rounded-xl border border-border p-3 space-y-3">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Informations fiscales (optionnel)
+                            </p>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="ice" className="text-sm font-medium">ICE</Label>
+                                <Input id="ice" name="ice" value={formData.ice} onChange={handleInputChange} placeholder="ICE" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="numero_tva" className="text-sm font-medium">Numéro TVA</Label>
+                                <Input id="numero_tva" name="numero_tva" value={formData.numero_tva} onChange={handleInputChange} placeholder="Numéro TVA" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="rc" className="text-sm font-medium">RC</Label>
+                                <Input id="rc" name="rc" value={formData.rc} onChange={handleInputChange} placeholder="RC" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="if_number" className="text-sm font-medium">IF</Label>
+                                <Input id="if_number" name="if_number" value={formData.if_number} onChange={handleInputChange} placeholder="IF" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="cnss" className="text-sm font-medium">CNSS</Label>
+                                <Input id="cnss" name="cnss" value={formData.cnss} onChange={handleInputChange} placeholder="CNSS" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="patente" className="text-sm font-medium">Patente</Label>
+                                <Input id="patente" name="patente" value={formData.patente} onChange={handleInputChange} placeholder="Patente" />
+                            </div>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="email" className="text-sm font-medium">Email</Label>
+                            <Input id="email" name="email" type="email" value={formData.email} onChange={handleInputChange} placeholder="Email du client" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="telephone" className="text-sm font-medium">Téléphone</Label>
+                            <Input id="telephone" name="telephone" value={formData.telephone} onChange={handleInputChange} placeholder="Téléphone du client" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="adresse" className="text-sm font-medium">Adresse</Label>
+                            <Input id="adresse" name="adresse" value={formData.adresse} onChange={handleInputChange} placeholder="Adresse du client" />
+                        </div>
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setIsFormVisible(false)}>
+                                Annuler
+                            </Button>
+                            <Button disabled={isSubmitting} className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
+                                {isSubmitting ? "Traitement..." : editingClient ? "Mettre à jour" : "Créer le Client"}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
-                {/* List Column */}
-                <div className={cn("space-y-4", isFormVisible ? "lg:col-span-8" : "lg:col-span-12")}>
+            <div className="space-y-4">
                     <div className="bg-card p-3 rounded-xl border border-border shadow-sm flex justify-between items-center backdrop-blur-sm">
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -863,8 +924,6 @@ export default function Clients() {
                         </div>
                     )}
                 </div>
-            </div>
-
             {/* Delete Dialog */}
             <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                 <DialogContent className="sm:max-w-[400px]">

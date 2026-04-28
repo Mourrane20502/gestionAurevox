@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/common/ui/button";
 import { Input } from "@/components/common/ui/input";
 import { Label } from "@/components/common/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
+import { Card } from "@/components/common/ui/card";
 import {
     Table,
     TableBody,
@@ -48,6 +48,15 @@ interface Fournisseur {
     email: string;
     rc: string;
     adresse: string;
+    numero_tva?: string | null;
+    if_number?: string | null;
+    cnss?: string | null;
+    patente?: string | null;
+    taux_ras?: number | null;
+    regularite_fiscale?: number | boolean;
+    regularite_pdf_document?: string | null;
+    regularite_date_debut?: string | null;
+    regularite_date_expiration?: string | null;
 }
 
 export default function Fournisseurs() {
@@ -87,11 +96,20 @@ export default function Fournisseurs() {
     const [formData, setFormData] = useState({
         nom: "",
         ice: "",
+        numero_tva: "",
+        if_number: "",
+        cnss: "",
+        patente: "",
+        taux_ras: "100",
         telephone: "",
         email: "",
         rc: "",
-        adresse: ""
+        adresse: "",
+        regularite_fiscale: false,
+        regularite_date_debut: "",
+        regularite_date_expiration: "",
     });
+    const [regularitePdfFile, setRegularitePdfFile] = useState<File | null>(null);
 
     const token = localStorage.getItem("token");
 
@@ -116,23 +134,67 @@ export default function Fournisseurs() {
             setFormData({
                 nom: editingFournisseur.nom || "",
                 ice: editingFournisseur.ice || "",
+                numero_tva: editingFournisseur.numero_tva || "",
+                if_number: editingFournisseur.if_number || "",
+                cnss: editingFournisseur.cnss || "",
+                patente: editingFournisseur.patente || "",
+                taux_ras:
+                    String(
+                        editingFournisseur.regularite_fiscale === 1 || editingFournisseur.regularite_fiscale === true
+                            ? 75
+                            : 100
+                    ),
                 telephone: editingFournisseur.telephone || "",
                 email: editingFournisseur.email || "",
                 rc: editingFournisseur.rc || "",
-                adresse: editingFournisseur.adresse || ""
+                adresse: editingFournisseur.adresse || "",
+                regularite_fiscale:
+                    editingFournisseur.regularite_fiscale === 1 || editingFournisseur.regularite_fiscale === true,
+                regularite_date_debut: editingFournisseur.regularite_date_debut
+                    ? String(editingFournisseur.regularite_date_debut).slice(0, 10)
+                    : "",
+                regularite_date_expiration: editingFournisseur.regularite_date_expiration
+                    ? String(editingFournisseur.regularite_date_expiration).slice(0, 10)
+                    : "",
             });
+            setRegularitePdfFile(null);
             setIsFormVisible(true);
         }
     }, [editingFournisseur]);
 
+    const addSixMonths = (dateStart: string) => {
+        if (!dateStart) return "";
+        const [y, m, d] = dateStart.split("-").map(Number);
+        if (!y || !m || !d) return "";
+        const base = new Date(y, m - 1, d);
+        if (Number.isNaN(base.getTime())) return "";
+        base.setMonth(base.getMonth() + 6);
+        const yy = base.getFullYear();
+        const mm = String(base.getMonth() + 1).padStart(2, "0");
+        const dd = String(base.getDate()).padStart(2, "0");
+        return `${yy}-${mm}-${dd}`;
+    };
+
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
-        setFormData((prev) => ({ ...prev, [name]: value }));
+        setFormData((prev) => {
+            if (name === "regularite_date_debut") {
+                return {
+                    ...prev,
+                    regularite_date_debut: value,
+                    regularite_date_expiration: addSixMonths(value),
+                };
+            }
+            return { ...prev, [name]: value };
+        });
     };
 
     const validateForm = () => {
         const errors: Record<string, string> = {};
         if (!formData.nom.trim()) errors.nom = "Le nom est requis";
+        if (formData.regularite_fiscale) {
+            if (!formData.regularite_date_debut) errors.regularite_date_debut = "Date début requise";
+        }
         setFormErrors(errors);
         return Object.keys(errors).length === 0;
     };
@@ -145,10 +207,28 @@ export default function Fournisseurs() {
         try {
             const method = editingFournisseur ? "PUT" : "POST";
             const url = editingFournisseur ? `/api/fournisseurs/${editingFournisseur.id}` : "/api/fournisseurs";
+            const payload = new FormData();
+            payload.set("nom", formData.nom);
+            payload.set("ice", formData.ice);
+            payload.set("numero_tva", formData.numero_tva);
+            payload.set("if_number", formData.if_number);
+            payload.set("cnss", formData.cnss);
+            payload.set("patente", formData.patente);
+            payload.set("taux_ras", formData.taux_ras);
+            payload.set("telephone", formData.telephone);
+            payload.set("email", formData.email);
+            payload.set("rc", formData.rc);
+            payload.set("adresse", formData.adresse);
+            payload.set("regularite_fiscale", formData.regularite_fiscale ? "1" : "0");
+            if (formData.regularite_fiscale) {
+                payload.set("regularite_date_debut", formData.regularite_date_debut || "");
+                payload.set("regularite_date_expiration", formData.regularite_date_expiration || "");
+                if (regularitePdfFile) payload.set("regularite_pdf", regularitePdfFile);
+            }
             const response = await fetch(url, {
                 method,
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                body: JSON.stringify(formData),
+                headers: { Authorization: `Bearer ${token}` },
+                body: payload,
             });
 
             if (response.ok) {
@@ -169,11 +249,20 @@ export default function Fournisseurs() {
         setFormData({
             nom: "",
             ice: "",
+            numero_tva: "",
+            if_number: "",
+            cnss: "",
+            patente: "",
+            taux_ras: "100",
             telephone: "",
             email: "",
             rc: "",
-            adresse: ""
+            adresse: "",
+            regularite_fiscale: false,
+            regularite_date_debut: "",
+            regularite_date_expiration: "",
         });
+        setRegularitePdfFile(null);
         setEditingFournisseur(null);
         setFormErrors({});
         setIsFormVisible(false);
@@ -222,10 +311,31 @@ export default function Fournisseurs() {
                 </div>
                 {isAdmin && (
                     <Button
-                        onClick={() => { editingFournisseur ? resetForm() : setIsFormVisible(!isFormVisible) }}
-                        className={cn("shadow-sm cursor-pointer transition-all", isFormVisible ? "bg-muted text-foreground hover:bg-accent" : "bg-indigo-600 text-white hover:bg-indigo-700")}
+                        onClick={() => {
+                            setEditingFournisseur(null);
+                            setFormData({
+                                nom: "",
+                                ice: "",
+                                numero_tva: "",
+                                if_number: "",
+                                cnss: "",
+                                patente: "",
+                                taux_ras: "100",
+                                telephone: "",
+                                email: "",
+                                rc: "",
+                                adresse: "",
+                                regularite_fiscale: false,
+                                regularite_date_debut: "",
+                                regularite_date_expiration: "",
+                            });
+                            setRegularitePdfFile(null);
+                            setFormErrors({});
+                            setIsFormVisible(true);
+                        }}
+                        className="shadow-sm cursor-pointer transition-all bg-indigo-600 text-white hover:bg-indigo-700"
                     >
-                        {isFormVisible ? "Annuler" : <><Plus className="mr-2 h-4 w-4" /> Nouveau Fournisseur</>}
+                        <><Plus className="mr-2 h-4 w-4" /> Nouveau Fournisseur</>
                     </Button>
                 )}
             </div>
@@ -240,94 +350,162 @@ export default function Fournisseurs() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                {isFormVisible && (
-                    <Card className="lg:col-span-4 border border-border shadow-xl bg-card sticky top-6 animate-in slide-in-from-left duration-300">
-                        <CardHeader>
-                            <CardTitle className="text-lg flex items-center gap-2">
-                                {editingFournisseur ? <EditSvgIcon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" /> : <Plus className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
-                                {editingFournisseur ? "Modifier le Fournisseur" : "Ajouter un Fournisseur"}
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <form onSubmit={handleSubmit} className="space-y-4">
+            <Dialog
+                open={isFormVisible}
+                onOpenChange={(open) => {
+                    setIsFormVisible(open);
+                    if (!open) {
+                        setEditingFournisseur(null);
+                        setFormErrors({});
+                        setRegularitePdfFile(null);
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="text-lg flex items-center gap-2">
+                            {editingFournisseur ? <EditSvgIcon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" /> : <Plus className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
+                            {editingFournisseur ? "Modifier le Fournisseur" : "Ajouter un Fournisseur"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="nom" className="text-sm font-medium">Nom *</Label>
+                            <Input
+                                id="nom"
+                                name="nom"
+                                value={formData.nom}
+                                onChange={handleInputChange}
+                                placeholder="Ex: Fournisseur SARL"
+                                className={cn("h-10", formErrors.nom && "border-red-500 focus-visible:ring-red-500")}
+                            />
+                            {formErrors.nom && <p className="text-red-500 text-xs mt-1">{formErrors.nom}</p>}
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="ice" className="text-sm font-medium">ICE</Label>
+                            <Input id="ice" name="ice" value={formData.ice} onChange={handleInputChange} placeholder="ICE du fournisseur" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="numero_tva" className="text-sm font-medium">Numéro TVA</Label>
+                            <Input id="numero_tva" name="numero_tva" value={formData.numero_tva} onChange={handleInputChange} placeholder="Numéro TVA" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="if_number" className="text-sm font-medium">IF</Label>
+                            <Input id="if_number" name="if_number" value={formData.if_number} onChange={handleInputChange} placeholder="IF" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="cnss" className="text-sm font-medium">CNSS</Label>
+                            <Input id="cnss" name="cnss" value={formData.cnss} onChange={handleInputChange} placeholder="CNSS" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="patente" className="text-sm font-medium">Patente</Label>
+                            <Input id="patente" name="patente" value={formData.patente} onChange={handleInputChange} placeholder="Patente" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="taux_ras" className="text-sm font-medium">Taux RAS (%)</Label>
+                            <Input
+                                id="taux_ras"
+                                name="taux_ras"
+                                value={formData.taux_ras}
+                                readOnly
+                                disabled
+                                className="h-10"
+                            />
+                            <p className="text-[11px] text-muted-foreground">
+                                Calcul automatique: 75% si régularité fiscale active, sinon 100%.
+                            </p>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="telephone" className="text-sm font-medium">Téléphone</Label>
+                            <Input id="telephone" name="telephone" value={formData.telephone} onChange={handleInputChange} placeholder="+212..." className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="email" className="text-sm font-medium">Email</Label>
+                            <Input id="email" name="email" type="email" value={formData.email} onChange={handleInputChange} placeholder="email@exemple.com" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="rc" className="text-sm font-medium">RC</Label>
+                            <Input id="rc" name="rc" value={formData.rc} onChange={handleInputChange} placeholder="Numéro RC" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="adresse" className="text-sm font-medium">Adresse</Label>
+                            <Input id="adresse" name="adresse" value={formData.adresse} onChange={handleInputChange} placeholder="Adresse complète" className="h-10" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-sm font-medium">Régularité fiscale</Label>
+                            <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
+                                <input
+                                    id="regularite_fiscale"
+                                    type="checkbox"
+                                    checked={Boolean(formData.regularite_fiscale)}
+                                    onChange={(e) =>
+                                        setFormData((prev) => ({
+                                            ...prev,
+                                            regularite_fiscale: e.target.checked,
+                                            taux_ras: e.target.checked ? "75" : "100",
+                                            regularite_date_debut: e.target.checked ? prev.regularite_date_debut : "",
+                                            regularite_date_expiration: e.target.checked ? prev.regularite_date_expiration : "",
+                                        }))
+                                    }
+                                />
+                                <Label htmlFor="regularite_fiscale" className="text-sm cursor-pointer">
+                                    Fournisseur avec régularité fiscale
+                                </Label>
+                            </div>
+                        </div>
+                        {formData.regularite_fiscale && (
+                            <div className="space-y-3 rounded-xl border border-indigo-100 dark:border-indigo-900/40 bg-indigo-50/40 dark:bg-indigo-900/10 p-3">
                                 <div className="space-y-1.5">
-                                    <Label htmlFor="nom" className="text-sm font-medium">Nom *</Label>
+                                    <Label htmlFor="regularite_pdf" className="text-sm font-medium">PDF</Label>
                                     <Input
-                                        id="nom"
-                                        name="nom"
-                                        value={formData.nom}
-                                        onChange={handleInputChange}
-                                        placeholder="Ex: Fournisseur SARL"
-                                        className={cn("h-10", formErrors.nom && "border-red-500 focus-visible:ring-red-500")}
-                                    />
-                                    {formErrors.nom && <p className="text-red-500 text-xs mt-1">{formErrors.nom}</p>}
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="ice" className="text-sm font-medium">ICE</Label>
-                                    <Input
-                                        id="ice"
-                                        name="ice"
-                                        value={formData.ice}
-                                        onChange={handleInputChange}
-                                        placeholder="ICE du fournisseur"
-                                        className="h-10"
+                                        id="regularite_pdf"
+                                        type="file"
+                                        accept=".pdf,application/pdf"
+                                        onChange={(e) => setRegularitePdfFile(e.target.files?.[0] || null)}
                                     />
                                 </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="telephone" className="text-sm font-medium">Téléphone</Label>
-                                    <Input
-                                        id="telephone"
-                                        name="telephone"
-                                        value={formData.telephone}
-                                        onChange={handleInputChange}
-                                        placeholder="+212..."
-                                        className="h-10"
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="regularite_date_debut" className="text-sm font-medium">Date début</Label>
+                                        <Input
+                                            id="regularite_date_debut"
+                                            name="regularite_date_debut"
+                                            type="date"
+                                            value={formData.regularite_date_debut}
+                                            onChange={handleInputChange}
+                                        />
+                                        {formErrors.regularite_date_debut && (
+                                            <p className="text-red-500 text-xs mt-1">{formErrors.regularite_date_debut}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="regularite_date_expiration" className="text-sm font-medium">Date expiration</Label>
+                                        <Input
+                                            id="regularite_date_expiration"
+                                            name="regularite_date_expiration"
+                                            type="date"
+                                            value={formData.regularite_date_expiration}
+                                            readOnly
+                                            disabled
+                                        />
+                                        <p className="text-[11px] text-muted-foreground">Calculée automatiquement (+ 6 mois).</p>
+                                    </div>
                                 </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="email" className="text-sm font-medium">Email</Label>
-                                    <Input
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        value={formData.email}
-                                        onChange={handleInputChange}
-                                        placeholder="email@exemple.com"
-                                        className="h-10"
-                                    />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="rc" className="text-sm font-medium">RC</Label>
-                                    <Input
-                                        id="rc"
-                                        name="rc"
-                                        value={formData.rc}
-                                        onChange={handleInputChange}
-                                        placeholder="Numéro RC"
-                                        className="h-10"
-                                    />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label htmlFor="adresse" className="text-sm font-medium">Adresse</Label>
-                                    <Input
-                                        id="adresse"
-                                        name="adresse"
-                                        value={formData.adresse}
-                                        onChange={handleInputChange}
-                                        placeholder="Adresse complète"
-                                        className="h-10"
-                                    />
-                                </div>
-                                <Button disabled={isSubmitting} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
-                                    {isSubmitting ? "Traitement..." : editingFournisseur ? "Mettre à jour" : "Créer le Fournisseur"}
-                                </Button>
-                            </form>
-                        </CardContent>
-                    </Card>
-                )}
+                            </div>
+                        )}
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setIsFormVisible(false)}>
+                                Annuler
+                            </Button>
+                            <Button disabled={isSubmitting} className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
+                                {isSubmitting ? "Traitement..." : editingFournisseur ? "Mettre à jour" : "Créer le Fournisseur"}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
-                <div className={cn("space-y-4", isFormVisible ? "lg:col-span-8" : "lg:col-span-12")}>
+            <div className="space-y-4">
                     <div className="bg-card p-3 rounded-xl border border-border shadow-sm flex justify-between items-center backdrop-blur-sm">
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -400,14 +578,40 @@ export default function Fournisseurs() {
                                             </TableCell>
                                             <TableCell>
                                                 <div className="flex flex-col gap-1.5">
-                                                    {f.adresse && (
-                                                        <span className="text-xs flex items-center gap-2 text-muted-foreground max-w-[200px] truncate">
-                                                            <MapPin className="h-3.5 w-3.5 text-rose-400" /> {f.adresse}
-                                                        </span>
+                                                    {(f.numero_tva || f.if_number || f.cnss || f.patente || f.rc) ? (
+                                                        <div className="flex flex-wrap items-center gap-1.5">
+                                                            {f.numero_tva && (
+                                                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                                                    TVA: {f.numero_tva}
+                                                                </span>
+                                                            )}
+                                                            {f.if_number && (
+                                                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                                                    IF: {f.if_number}
+                                                                </span>
+                                                            )}
+                                                            {f.cnss && (
+                                                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                                                    CNSS: {f.cnss}
+                                                                </span>
+                                                            )}
+                                                            {f.patente && (
+                                                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                                                    Patente: {f.patente}
+                                                                </span>
+                                                            )}
+                                                            {f.rc && (
+                                                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                                                    RC: {f.rc}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-xs text-muted-foreground">Aucune info fiscale</span>
                                                     )}
-                                                    {f.rc && (
-                                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                                            RC: {f.rc}
+                                                    {f.adresse && (
+                                                        <span className="text-xs flex items-center gap-2 text-muted-foreground max-w-[260px] truncate">
+                                                            <MapPin className="h-3.5 w-3.5 text-rose-400" /> {f.adresse}
                                                         </span>
                                                     )}
                                                 </div>
@@ -440,8 +644,6 @@ export default function Fournisseurs() {
                         </Table>
                     </div>
                 </div>
-            </div>
-
             <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                 <DialogContent className="sm:max-w-[400px]">
                     <DialogHeader>

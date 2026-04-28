@@ -16,6 +16,10 @@ export interface BonCommandeFournisseurPdfData {
     date_commande?: string;
     statut?: string;
     items: BonCommandeFournisseurItem[];
+    taux_ras?: number;
+    montant_ras?: number;
+    net_fournisseur?: number;
+    montant_ttc?: number;
 }
 
 interface PdvInfo {
@@ -232,11 +236,39 @@ export const generateBonCommandeFournisseurPdf = async (bon: BonCommandeFourniss
 
     // Total TTC
     currentY += 8;
-    const totalTtc = totalGeneral + totalTva;
+    const totalTtc = bon.montant_ttc ?? (totalGeneral + totalTva);
     doc.setFontSize(12);
     doc.setTextColor(63, 81, 181); // Indigo color for TTC
     doc.text("Total TTC", pageWidth - 70, currentY);
     doc.text(`${formatMontant(totalTtc)} DH`, pageWidth - 20, currentY, {
+        align: "right",
+    });
+
+    // Taux RAS
+    currentY += 8;
+    const tauxRas = bon.taux_ras ?? 100;
+    doc.setFontSize(11);
+    doc.setTextColor(40, 40, 40);
+    doc.text("Taux RAS", pageWidth - 70, currentY);
+    doc.text(`${formatMontant(tauxRas)} %`, pageWidth - 20, currentY, {
+        align: "right",
+    });
+
+    // Montant RAS
+    currentY += 8;
+    const montantRas = bon.montant_ras ?? (totalTtc - (totalTtc * (tauxRas / 100)));
+    doc.text("Montant RAS", pageWidth - 70, currentY);
+    doc.text(`${formatMontant(montantRas)} DH`, pageWidth - 20, currentY, {
+        align: "right",
+    });
+
+    // Net fournisseur
+    currentY += 8;
+    const netFournisseur = bon.net_fournisseur ?? (totalTtc * (tauxRas / 100));
+    doc.setFontSize(12);
+    doc.setTextColor(16, 124, 65);
+    doc.text("Net fournisseur", pageWidth - 70, currentY);
+    doc.text(`${formatMontant(netFournisseur)} DH`, pageWidth - 20, currentY, {
         align: "right",
     });
 

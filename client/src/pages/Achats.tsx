@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
 import { Button } from "@/components/common/ui/button";
@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 interface Fournisseur {
     id: number;
     nom: string;
+    taux_ras?: number | null;
 }
 
 interface CatalogProduct {
@@ -66,11 +67,34 @@ export default function Achats() {
     const [selectedFournisseurId, setSelectedFournisseurId] = useState<string>("");
     const [selectedGestionnaireId, setSelectedGestionnaireId] = useState<string>("");
     const [items, setItems] = useState<AchatItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0 },
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20 },
     ]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [reglementDialogOpen, setReglementDialogOpen] = useState(false);
     const [pendingAchatId, setPendingAchatId] = useState<number | null>(null);
+
+    const selectedFournisseur = useMemo(
+        () => fournisseurs.find((f) => String(f.id) === selectedFournisseurId),
+        [fournisseurs, selectedFournisseurId]
+    );
+    const tauxRas = Number(selectedFournisseur?.taux_ras ?? 100);
+
+    const totals = useMemo(() => {
+        const totalTTC = items.reduce((sum, it) => {
+            const qty = Number(it.quantite) || 0;
+            const unit = Number(it.prix_unitaire) || 0;
+            const tva = Number(it.tva) || 0;
+            const ht = qty * unit;
+            return sum + ht * (1 + tva / 100);
+        }, 0);
+        const netFournisseur = totalTTC * (tauxRas / 100);
+        const montantRas = totalTTC - netFournisseur;
+        return {
+            totalTTC,
+            montantRas,
+            netFournisseur,
+        };
+    }, [items, tauxRas]);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -121,7 +145,7 @@ export default function Achats() {
     };
 
     const addItemRow = () => {
-        setItems(prev => [...prev, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0 }]);
+        setItems(prev => [...prev, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20 }]);
     };
 
     const removeItemRow = (index: number) => {
@@ -171,6 +195,13 @@ export default function Achats() {
                     tva: it.tva,
                     designation_libre: it.produit_id ? null : it.designation || null,
                     numero: orderNumero,
+                    montant_ttc: it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100),
+                    taux_ras: tauxRas,
+                    montant_ras:
+                        (it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100)) -
+                        (it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100) * (tauxRas / 100)),
+                    net_fournisseur:
+                        it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100) * (tauxRas / 100),
                 };
                 const res = await fetch("/api/achats-fournisseurs", {
                     method: "POST",
@@ -204,13 +235,17 @@ export default function Achats() {
                         tva: it.tva,
                         montant_ht: it.quantite * it.prix_unitaire,
                     })),
+                    montant_ttc: totals.totalTTC,
+                    taux_ras: tauxRas,
+                    montant_ras: totals.montantRas,
+                    net_fournisseur: totals.netFournisseur,
                 });
                 toast.success("Achat enregistré et bon de commande téléchargé");
             } catch (pdfErr) {
                 console.error(pdfErr);
                 toast.success("Achat fournisseur enregistré");
             }
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20 }]);
 
             // Notifier le sidebar pour rafraîchir le compteur d'approbations
             window.dispatchEvent(new CustomEvent("approvals-updated"));
@@ -419,6 +454,24 @@ export default function Achats() {
                             >
                                 {isSubmitting ? "Enregistrement..." : "Enregistrer l'achat"}
                             </Button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <div className="rounded-lg border border-border p-3">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Total TTC</p>
+                                <p className="text-lg font-semibold">{totals.totalTTC.toFixed(2)} MAD</p>
+                            </div>
+                            <div className="rounded-lg border border-border p-3">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Taux RAS auto</p>
+                                <p className="text-lg font-semibold">{tauxRas.toFixed(2)} %</p>
+                            </div>
+                            <div className="rounded-lg border border-border p-3">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Montant RAS</p>
+                                <p className="text-lg font-semibold">{totals.montantRas.toFixed(2)} MAD</p>
+                            </div>
+                            <div className="rounded-lg border border-border p-3">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Net fournisseur</p>
+                                <p className="text-lg font-semibold">{totals.netFournisseur.toFixed(2)} MAD</p>
+                            </div>
                         </div>
                     </form>
                 </CardContent>

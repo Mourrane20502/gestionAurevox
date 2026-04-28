@@ -10,9 +10,64 @@ const ensureAchatFactureColumn = async () => {
     achatFactureColumnReady = true;
 };
 
+let achatFinancialColumnsReady = false;
+const ensureAchatFinancialColumns = async () => {
+    if (achatFinancialColumnsReady) return;
+    const financialCols = [
+        "montant_ttc",
+        "taux_ras",
+        "montant_ras",
+        "net_fournisseur",
+    ];
+    for (const col of financialCols) {
+        const [rows] = await db.query(`SHOW COLUMNS FROM achats_fournisseurs LIKE '${col}'`);
+        if (!Array.isArray(rows) || rows.length === 0) {
+            await db.query(`ALTER TABLE achats_fournisseurs ADD COLUMN ${col} DECIMAL(12,2) NULL`);
+        }
+    }
+    achatFinancialColumnsReady = true;
+};
+
+const toNumber = (value, fallback = 0) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+};
+
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+const computeAchatFinancials = ({ quantite, prix_unitaire, tva, taux_ras }) => {
+    const qty = toNumber(quantite, 0);
+    const unit = toNumber(prix_unitaire, 0);
+    const tauxTva = toNumber(tva, 0);
+    const tauxRas = toNumber(taux_ras, 100);
+    const montantHT = qty * unit;
+    const montantTTC = round2(montantHT * (1 + tauxTva / 100));
+    const netFournisseur = round2(montantTTC * (tauxRas / 100));
+    const montantRas = round2(montantTTC - netFournisseur);
+    return {
+        montantTTC,
+        tauxRas: round2(tauxRas),
+        montantRas,
+        netFournisseur,
+    };
+};
+
+const getFournisseurTauxRas = async (fournisseurId) => {
+    const [[fournisseur]] = await db.query(
+        "SELECT taux_ras, regularite_fiscale FROM fournisseur WHERE id = ? LIMIT 1",
+        [fournisseurId]
+    );
+    if (!fournisseur) return 100;
+    if (fournisseur.taux_ras !== null && fournisseur.taux_ras !== undefined) {
+        return toNumber(fournisseur.taux_ras, 100);
+    }
+    return toNumber(fournisseur.regularite_fiscale, 0) === 1 ? 75 : 100;
+};
+
 exports.getAllAchats = async (req, res) => {
     try {
         await ensureAchatFactureColumn();
+        await ensureAchatFinancialColumns();
         let sql = `
             SELECT af.*,
                    g.nom AS gestionnaire_nom,
@@ -50,6 +105,7 @@ exports.getAllAchats = async (req, res) => {
 exports.getAchatById = async (req, res) => {
     try {
         await ensureAchatFactureColumn();
+        await ensureAchatFinancialColumns();
         const { id } = req.params;
 
         const [rows] = await db.query(`
@@ -83,6 +139,7 @@ exports.getAchatById = async (req, res) => {
 exports.getAchatByNumero = async (req, res) => {
     try {
         await ensureAchatFactureColumn();
+        await ensureAchatFinancialColumns();
         const { numero } = req.params;
 
         const [rows] = await db.query(`
@@ -117,6 +174,7 @@ exports.getAchatByNumero = async (req, res) => {
 exports.createAchat = async (req, res) => {
     try {
         await ensureAchatFactureColumn();
+        await ensureAchatFinancialColumns();
         const {
             gestionnaire_id,
             fournisseur_id,
@@ -148,10 +206,18 @@ exports.createAchat = async (req, res) => {
         }
 
         const created_by = req.user && req.user.id ? req.user.id : null;
+        const effectiveTva = tva === undefined || tva === null || tva === "" ? 20 : Number(tva);
+        const fournisseurTauxRas = await getFournisseurTauxRas(fournisseur_id);
+        const { montantTTC, tauxRas, montantRas, netFournisseur } = computeAchatFinancials({
+            quantite,
+            prix_unitaire,
+            tva: effectiveTva,
+            taux_ras: fournisseurTauxRas,
+        });
         const [result] = await db.query(`
             INSERT INTO achats_fournisseurs
-            (numero, gestionnaire_id, fournisseur_id, product_id, quantite, prix_unitaire, statut, tva, designation_libre, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (numero, gestionnaire_id, fournisseur_id, product_id, quantite, prix_unitaire, statut, tva, designation_libre, created_by, montant_ttc, taux_ras, montant_ras, net_fournisseur)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             effectiveNumero,
             gestionnaire_id,
@@ -160,9 +226,13 @@ exports.createAchat = async (req, res) => {
             quantite,
             prix_unitaire || null,
             statut || "en_attente",
-            tva || null,
+            effectiveTva,
             designation_libre || null,
             created_by,
+            montantTTC,
+            tauxRas,
+            montantRas,
+            netFournisseur,
         ]);
 
         res.status(201).json({
@@ -186,6 +256,7 @@ exports.createAchatBatch = async (req, res) => {
     const connection = await db.getConnection();
     try {
         await ensureAchatFactureColumn();
+        await ensureAchatFinancialColumns();
         const { gestionnaire_id, fournisseur_id, numero: bodyNumero, lignes } = req.body;
 
         if (!gestionnaire_id || !fournisseur_id || !Array.isArray(lignes) || lignes.length === 0) {
@@ -193,6 +264,7 @@ exports.createAchatBatch = async (req, res) => {
         }
 
         const created_by = req.user && req.user.id ? req.user.id : null;
+        const fournisseurTauxRas = await getFournisseurTauxRas(fournisseur_id);
         let effectiveNumero = bodyNumero;
         if (!effectiveNumero || typeof effectiveNumero !== "string" || !effectiveNumero.trim()) {
             const now = new Date();
@@ -208,11 +280,18 @@ exports.createAchatBatch = async (req, res) => {
             const { product_id, quantite, prix_unitaire, tva, designation_libre } = line;
             if (!quantite || Number(quantite) <= 0) continue;
             if (!product_id && (!designation_libre || !String(designation_libre).trim())) continue;
+            const effectiveTva = tva === undefined || tva === null || tva === "" ? 20 : Number(tva);
 
+            const { montantTTC, tauxRas, montantRas, netFournisseur } = computeAchatFinancials({
+                quantite,
+                prix_unitaire,
+                tva: effectiveTva,
+                taux_ras: fournisseurTauxRas,
+            });
             const [result] = await connection.query(`
                 INSERT INTO achats_fournisseurs
-                (numero, gestionnaire_id, fournisseur_id, product_id, quantite, prix_unitaire, statut, tva, designation_libre, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (numero, gestionnaire_id, fournisseur_id, product_id, quantite, prix_unitaire, statut, tva, designation_libre, created_by, montant_ttc, taux_ras, montant_ras, net_fournisseur)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, [
                 effectiveNumero,
                 gestionnaire_id,
@@ -221,9 +300,13 @@ exports.createAchatBatch = async (req, res) => {
                 Number(quantite),
                 prix_unitaire != null ? Number(prix_unitaire) : null,
                 "en_attente",
-                tva != null ? Number(tva) : null,
+                effectiveTva,
                 designation_libre && String(designation_libre).trim() ? String(designation_libre).trim() : null,
                 created_by,
+                montantTTC,
+                tauxRas,
+                montantRas,
+                netFournisseur,
             ]);
             insertedIds.push(result.insertId);
         }
@@ -258,6 +341,7 @@ exports.createAchatBatch = async (req, res) => {
 exports.updateAchat = async (req, res) => {
     try {
         await ensureAchatFactureColumn();
+        await ensureAchatFinancialColumns();
         const { id } = req.params;
         const {
             gestionnaire_id,
@@ -280,6 +364,14 @@ exports.updateAchat = async (req, res) => {
             return res.status(404).json({ message: "Achat not found" });
         }
 
+        const effectiveTva = tva === undefined || tva === null || tva === "" ? 20 : Number(tva);
+        const fournisseurTauxRas = await getFournisseurTauxRas(fournisseur_id);
+        const { montantTTC, tauxRas, montantRas, netFournisseur } = computeAchatFinancials({
+            quantite,
+            prix_unitaire,
+            tva: effectiveTva,
+            taux_ras: fournisseurTauxRas,
+        });
         await db.query(`
             UPDATE achats_fournisseurs
             SET gestionnaire_id = ?,
@@ -290,7 +382,11 @@ exports.updateAchat = async (req, res) => {
                 statut = ?,
                 tva = ?,
                 designation_libre = ?,
-                numero = ?
+                numero = ?,
+                montant_ttc = ?,
+                taux_ras = ?,
+                montant_ras = ?,
+                net_fournisseur = ?
             WHERE id = ?
         `, [
             gestionnaire_id,
@@ -299,9 +395,13 @@ exports.updateAchat = async (req, res) => {
             quantite,
             prix_unitaire,
             statut,
-            tva,
+            effectiveTva,
             designation_libre || null,
             numero || null,
+            montantTTC,
+            tauxRas,
+            montantRas,
+            netFournisseur,
             id
         ]);
 

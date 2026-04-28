@@ -80,6 +80,7 @@ const autopostRoutes = require("./routes/autopostRoutes");
 const { ensurePromotionsTable } = require("./utils/promotionUtils");
 const { ensureAutopostsTable } = require("./utils/autopostUtils");
 const { bootstrapScheduledAutoposts } = require("./services/autopostQueue");
+const { bootstrapFournisseurFiscalReminders } = require("./services/fournisseurFiscalReminderService");
 
 const PORT = process.env.PORT || 3000;
 
@@ -156,6 +157,7 @@ db.promise().getConnection()
 ensurePromotionsTable();
 ensureAutopostsTable();
 bootstrapScheduledAutoposts();
+bootstrapFournisseurFiscalReminders();
 
 
 server.listen(PORT, () => {
