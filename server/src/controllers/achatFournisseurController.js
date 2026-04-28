@@ -41,9 +41,11 @@ const computeAchatFinancials = ({ quantite, prix_unitaire, tva, taux_ras }) => {
     const tauxTva = toNumber(tva, 0);
     const tauxRas = toNumber(taux_ras, 100);
     const montantHT = qty * unit;
-    const montantTTC = round2(montantHT * (1 + tauxTva / 100));
-    const netFournisseur = round2(montantTTC * (tauxRas / 100));
-    const montantRas = round2(montantTTC - netFournisseur);
+    const montantTVA = round2(montantHT * (tauxTva / 100));
+    const montantTTC = round2(montantHT + montantTVA);
+    // RAS est calculee sur la TVA uniquement.
+    const montantRas = round2(montantTVA * (tauxRas / 100));
+    const netFournisseur = round2(montantTTC - montantRas);
     return {
         montantTTC,
         tauxRas: round2(tauxRas),

@@ -80,15 +80,22 @@ export default function Achats() {
     const tauxRas = Number(selectedFournisseur?.taux_ras ?? 100);
 
     const totals = useMemo(() => {
-        const totalTTC = items.reduce((sum, it) => {
+        const totalHT = items.reduce((sum, it) => {
+            const qty = Number(it.quantite) || 0;
+            const unit = Number(it.prix_unitaire) || 0;
+            return sum + (qty * unit);
+        }, 0);
+        const totalTVA = items.reduce((sum, it) => {
             const qty = Number(it.quantite) || 0;
             const unit = Number(it.prix_unitaire) || 0;
             const tva = Number(it.tva) || 0;
             const ht = qty * unit;
-            return sum + ht * (1 + tva / 100);
+            return sum + (ht * tva / 100);
         }, 0);
-        const netFournisseur = totalTTC * (tauxRas / 100);
-        const montantRas = totalTTC - netFournisseur;
+        const totalTTC = totalHT + totalTVA;
+        // RAS est calcule sur la TVA uniquement.
+        const montantRas = totalTVA * (tauxRas / 100);
+        const netFournisseur = totalTTC - montantRas;
         return {
             totalTTC,
             montantRas,
@@ -198,10 +205,10 @@ export default function Achats() {
                     montant_ttc: it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100),
                     taux_ras: tauxRas,
                     montant_ras:
-                        (it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100)) -
-                        (it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100) * (tauxRas / 100)),
+                        (it.quantite * it.prix_unitaire * ((Number(it.tva) || 0) / 100)) * (tauxRas / 100),
                     net_fournisseur:
-                        it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100) * (tauxRas / 100),
+                        (it.quantite * it.prix_unitaire * (1 + (Number(it.tva) || 0) / 100)) -
+                        ((it.quantite * it.prix_unitaire * ((Number(it.tva) || 0) / 100)) * (tauxRas / 100)),
                 };
                 const res = await fetch("/api/achats-fournisseurs", {
                     method: "POST",

@@ -84,6 +84,10 @@ interface AchatFournisseur {
     quantite?: number;
     prix_unitaire?: number;
     tva?: number;
+    montant_ttc?: number;
+    taux_ras?: number;
+    montant_ras?: number;
+    net_fournisseur?: number;
     statut?: string | null;
     numero?: string | null;
     date_achat?: string;
@@ -126,6 +130,9 @@ interface AchatRow {
     designation: string;
     montantHT: number;
     montantTTC: number;
+    tauxRas: number;
+    montantRas: number;
+    netFournisseur: number;
     totalRegle: number;
     resteAPayer: number;
     reglements: ReglementFournisseur[];
@@ -290,7 +297,11 @@ export default function ReglementsFournisseurs() {
             const pu = toNum(achat.prix_unitaire);
             const tva = toNum(achat.tva);
             const montantHT = qte * pu;
-            const montantTTC = montantHT * (1 + tva / 100);
+            const montantTVA = montantHT * (tva / 100);
+            const montantTTC = toNum(achat.montant_ttc) || (montantHT + montantTVA);
+            const tauxRas = toNum(achat.taux_ras) || 100;
+            const montantRas = toNum(achat.montant_ras) || (montantTVA * (tauxRas / 100));
+            const netFournisseur = toNum(achat.net_fournisseur) || (montantTTC - montantRas);
             const totalRegle = achatReglements
                 .filter((r) => r.statut === "approuve")
                 .reduce((sum, r) => sum + toNum(r.montant), 0);
@@ -310,6 +321,9 @@ export default function ReglementsFournisseurs() {
                 designation,
                 montantHT,
                 montantTTC,
+                tauxRas,
+                montantRas,
+                netFournisseur,
                 totalRegle,
                 resteAPayer,
                 reglements: achatReglements,
@@ -523,6 +537,15 @@ export default function ReglementsFournisseurs() {
     const computeTotalSaisi = () =>
         reglementLines.reduce((sum, l) => sum + (parseFloat(l.montant || "0") || 0), 0);
 
+    const buildDefaultReglementLine = (montant = "") => ({
+        mode_paiement: "virement",
+        banque_id: "none",
+        montant,
+        date_reglement: new Date().toISOString().split("T")[0],
+        date_echeance: new Date().toISOString().split("T")[0],
+        commentaire: "",
+    });
+
     const openDialog = (achatId?: number) => {
         if (achatId) {
             const achat = achats.find((a) => a.id === achatId);
@@ -532,27 +555,20 @@ export default function ReglementsFournisseurs() {
                     toast.error("Cette commande est déjà totalement réglée. Aucun nouveau règlement n'est autorisé.");
                     return;
                 }
+                const montantAuto = row ? Math.max(row.resteAPayer, 0).toFixed(2) : "";
                 setSelectedFournisseurId(achat.fournisseur_id.toString());
                 setSelectedAchatId(achat.id.toString());
                 setAchatSearch(achat.numero || achat.designation_libre || achat.produit_nom || `Achat #${achat.id.toString().padStart(4, "0")}`);
                 loadSituation(achat.id.toString());
+                setReglementLines([buildDefaultReglementLine(montantAuto)]);
             }
         } else {
             setSelectedFournisseurId("");
             setSelectedAchatId("");
             setAchatSearch("");
             setSituation(null);
+            setReglementLines([buildDefaultReglementLine("")]);
         }
-        setReglementLines([
-            {
-                mode_paiement: "virement",
-                banque_id: "none",
-                montant: "",
-                date_reglement: new Date().toISOString().split("T")[0],
-                date_echeance: new Date().toISOString().split("T")[0],
-                commentaire: "",
-            },
-        ]);
         setDialogOpen(true);
     };
 
@@ -568,10 +584,19 @@ export default function ReglementsFournisseurs() {
             );
             if (res.ok) {
                 const data = await res.json();
+                const resteAPayer = Number(data.reste_a_payer) || 0;
                 setSituation({
                     montant_ttc: Number(data.montant_ttc) || 0,
                     total_regle: Number(data.total_regle) || 0,
-                    reste_a_payer: Number(data.reste_a_payer) || 0,
+                    reste_a_payer: resteAPayer,
+                });
+                setReglementLines((prev) => {
+                    if (!prev.length) return [buildDefaultReglementLine(Math.max(resteAPayer, 0).toFixed(2))];
+                    return prev.map((line, index) =>
+                        index === 0
+                            ? { ...line, montant: Math.max(resteAPayer, 0).toFixed(2) }
+                            : line
+                    );
                 });
             } else {
                 setSituation(null);
@@ -1343,6 +1368,15 @@ export default function ReglementsFournisseurs() {
                                         Montant TTC
                                     </TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-2 text-right">
+                                        Taux RAS
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-2 text-right">
+                                        Montant RAS
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-2 text-right">
+                                        Net fournisseur
+                                    </TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-2 text-right">
                                         Total réglé
                                     </TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-2 text-right">
@@ -1366,12 +1400,12 @@ export default function ReglementsFournisseurs() {
 	                                {isLoading ? (
 	                                    Array.from({ length: 6 }).map((_, i) => (
 	                                        <TableRow key={i} className="animate-pulse border-b border-border">
-	                                            <TableCell colSpan={10} className="h-12" />
+	                                            <TableCell colSpan={13} className="h-12" />
 	                                        </TableRow>
 	                                    ))
 	                                ) : paginatedRows.length === 0 ? (
 	                                    <TableRow>
-	                                        <TableCell colSpan={10} className="py-12 text-center text-sm text-muted-foreground">
+	                                        <TableCell colSpan={13} className="py-12 text-center text-sm text-muted-foreground">
 	                                            Aucune commande d&apos;achat fournisseur trouvée.
 	                                        </TableCell>
 	                                    </TableRow>
@@ -1408,6 +1442,27 @@ export default function ReglementsFournisseurs() {
                                             </TableCell>
                                             <TableCell className="text-right font-semibold">
                                                 {row.montantTTC.toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{" "}
+                                                MAD
+                                            </TableCell>
+                                            <TableCell className="text-right font-semibold">
+                                                {row.tauxRas.toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{" "}
+                                                %
+                                            </TableCell>
+                                            <TableCell className="text-right font-semibold text-rose-600 dark:text-rose-400">
+                                                {row.montantRas.toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{" "}
+                                                MAD
+                                            </TableCell>
+                                            <TableCell className="text-right font-semibold text-blue-600 dark:text-blue-400">
+                                                {row.netFournisseur.toLocaleString("fr-FR", {
                                                     minimumFractionDigits: 2,
                                                     maximumFractionDigits: 2,
                                                 })}{" "}
@@ -2119,6 +2174,12 @@ export default function ReglementsFournisseurs() {
                                                                 setSelectedAchatId(a.id.toString());
                                                                 setAchatSearch(label);
                                                                 loadSituation(a.id.toString());
+                                                                const row = achatRows.find((r) => r.achat.id === a.id);
+                                                                setReglementLines([
+                                                                    buildDefaultReglementLine(
+                                                                        row ? Math.max(row.resteAPayer, 0).toFixed(2) : ""
+                                                                    ),
+                                                                ]);
                                                                 setShowAchatDropdown(false);
                                                             }}
                                                             className="px-4 py-2 hover:bg-muted cursor-pointer text-sm font-medium text-foreground flex items-center justify-between"

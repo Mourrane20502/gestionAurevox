@@ -256,7 +256,7 @@ export const generateBonCommandeFournisseurPdf = async (bon: BonCommandeFourniss
 
     // Montant RAS
     currentY += 8;
-    const montantRas = bon.montant_ras ?? (totalTtc - (totalTtc * (tauxRas / 100)));
+    const montantRas = bon.montant_ras ?? (totalTva * (tauxRas / 100));
     doc.text("Montant RAS", pageWidth - 70, currentY);
     doc.text(`${formatMontant(montantRas)} DH`, pageWidth - 20, currentY, {
         align: "right",
@@ -264,7 +264,7 @@ export const generateBonCommandeFournisseurPdf = async (bon: BonCommandeFourniss
 
     // Net fournisseur
     currentY += 8;
-    const netFournisseur = bon.net_fournisseur ?? (totalTtc * (tauxRas / 100));
+    const netFournisseur = bon.net_fournisseur ?? (totalTtc - montantRas);
     doc.setFontSize(12);
     doc.setTextColor(16, 124, 65);
     doc.text("Net fournisseur", pageWidth - 70, currentY);
