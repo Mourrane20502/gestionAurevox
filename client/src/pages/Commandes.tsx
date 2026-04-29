@@ -104,6 +104,7 @@ interface Commande {
     reste_a_payer?: number;
     has_avoir?: boolean;
     has_avoir_facture?: boolean;
+    bon_livraison_id?: number | null;
     banque_id?: number | null;
     sous_societe_nom?: string | null;
 }
@@ -276,6 +277,10 @@ function Commandes() {
     ]);
 
     const token = localStorage.getItem("token");
+
+    const createBonLivraisonFromCommande = async (commande: Commande) => {
+        navigate("/dashboard/bons-livraison", { state: { commandeId: commande.id } });
+    };
 
     const devisLinkedByCommande = useMemo(
         () => getCommandeLinkedDevisIds(commandes, editingCommande?.id ?? null),
@@ -1731,6 +1736,14 @@ function Commandes() {
                                                             
                                                             return (
                                                                 <>
+                                                                    <DropdownMenuItem
+                                                                        className="cursor-pointer font-bold text-indigo-600"
+                                                                        disabled={Boolean(commande.bon_livraison_id)}
+                                                                        onClick={() => createBonLivraisonFromCommande(commande)}
+                                                                    >
+                                                                        <FileText className="h-4 w-4" />
+                                                                        {commande.bon_livraison_id ? "Bon de livraison déjà créé" : "Créer un bon de livraison"}
+                                                                    </DropdownMenuItem>
                                                                     {linkedFacture ? (
                                                                         <DropdownMenuItem className="cursor-pointer" onClick={() => navigate(`/dashboard/factures/${linkedFacture.id}`)}>
                                                                             <ArrowUpRight className="h-4 w-4" />

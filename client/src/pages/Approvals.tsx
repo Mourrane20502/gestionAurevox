@@ -137,6 +137,20 @@ interface Facture {
     reduction?: number | null;
 }
 
+interface BonLivraisonApproval {
+    id: number;
+    numero_bon_livraison: string;
+    date_bon_livraison: string;
+    numero_commande?: string | null;
+    client_nom?: string | null;
+    statut: string;
+}
+
+const isPendingBlStatus = (status: string | null | undefined) => {
+    const s = String(status || "").trim().toLowerCase();
+    return s === "en_attente" || s === "en attente" || s === "brouillon";
+};
+
 interface DevisGrosApproval {
     id: number;
     numero_devis: string;
@@ -283,6 +297,7 @@ export default function Approvals() {
     const [pendingDevis, setPendingDevis] = useState<Devis[]>([]);
     const [pendingCommandes, setPendingCommandes] = useState<Commande[]>([]);
     const [pendingFactures, setPendingFactures] = useState<Facture[]>([]);
+    const [pendingBonsLivraison, setPendingBonsLivraison] = useState<BonLivraisonApproval[]>([]);
     const [pendingDevisGros, setPendingDevisGros] = useState<DevisGrosApproval[]>([]);
     const [pendingCommandesGros, setPendingCommandesGros] = useState<CommandeGrosApproval[]>([]);
     const [pendingFacturesGros, setPendingFacturesGros] = useState<FactureGrosApproval[]>([]);
@@ -295,7 +310,7 @@ export default function Approvals() {
     const [pendingReglementsClientsGros, setPendingReglementsClientsGros] = useState<ReglementClientGrosApproval[]>([]);
     const [pendingRemboursements, setPendingRemboursements] = useState<RemboursementApproval[]>([]);
     const [myApprovalRights, setMyApprovalRights] = useState<string[]>([]);
-    const [activeTab, setActiveTab] = useState<"devis" | "commandes" | "factures" | "gros" | "avoirs" | "inventaire" | "achats_fournisseurs" | "reglements" | "remboursements">("devis");
+    const [activeTab, setActiveTab] = useState<"devis" | "commandes" | "bons_livraison" | "factures" | "gros" | "avoirs" | "inventaire" | "achats_fournisseurs" | "reglements" | "remboursements">("devis");
     const [activeGrosTab, setActiveGrosTab] = useState<"devis_gros" | "commandes_gros" | "factures_gros" | "avoirs_gros" | "reglements_gros">("devis_gros");
     const [inventoryMessageMap, setInventoryMessageMap] = useState<Record<number, string>>({});
     const [inventoryActionLoadingId, setInventoryActionLoadingId] = useState<number | null>(null);
@@ -372,9 +387,10 @@ export default function Approvals() {
             const canSeeReglements = canApproveEverything || rights.includes('reglements');
             const canSeeRemboursements = canApproveEverything || rights.includes('remboursements');
 
-            const [devisRes, cmdRes, facRes, devisGrosRes, cmdGrosRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
+            const [devisRes, cmdRes, blRes, facRes, devisGrosRes, cmdGrosRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
                 (canApproveEverything || rights.includes('devis')) ? fetch("/api/devis", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('commande')) ? fetch("/api/commandes", { headers }) : Promise.resolve(null),
+                (canApproveEverything || rights.includes('commande')) ? fetch("/api/bons-livraison", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('facture')) ? fetch("/api/factures", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('devis')) ? fetch("/api/devis-gros", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('commande')) ? fetch("/api/commandes-gros", { headers }) : Promise.resolve(null),
@@ -610,6 +626,13 @@ export default function Approvals() {
                 setPendingCommandes([]);
             }
 
+            if (blRes && blRes.ok) {
+                const data: BonLivraisonApproval[] = await blRes.json();
+                setPendingBonsLivraison(data.filter((b) => isPendingBlStatus(b.statut)));
+            } else {
+                setPendingBonsLivraison([]);
+            }
+
             if (facRes && facRes.ok) {
                 const data: Facture[] = await facRes.json();
                 // On affiche ici les factures en attente de validation
@@ -729,7 +752,7 @@ export default function Approvals() {
     useEffect(() => {
         const state = location.state as any;
             if (state?.fromDetails && state?.type) {
-                if (["devis", "commandes", "factures", "gros", "avoirs", "inventaire", "achats_fournisseurs", "reglements", "remboursements"].includes(state.type)) {
+                if (["devis", "commandes", "bons_livraison", "factures", "gros", "avoirs", "inventaire", "achats_fournisseurs", "reglements", "remboursements"].includes(state.type)) {
                     setActiveTab(state.type);
                 }
             // clear history state so back/refresh doesn't re-force tab
@@ -738,13 +761,14 @@ export default function Approvals() {
     }, [location.state]);
 
     const handleApprove = async (
-        type: "commande" | "facture" | "avoir" | "avoir_gros" | "achat_fournisseur" | "devis_gros" | "commande_gros" | "facture_gros" | "reglement_client_gros",
+        type: "commande" | "bon_livraison" | "facture" | "avoir" | "avoir_gros" | "achat_fournisseur" | "devis_gros" | "commande_gros" | "facture_gros" | "reglement_client_gros",
         id: number
     ) => {
         setActionLoadingId(id);
         
         // Optimistic update
         if (type === "commande") setPendingCommandes(prev => prev.filter(c => c.id !== id));
+        else if (type === "bon_livraison") setPendingBonsLivraison(prev => prev.filter(b => b.id !== id));
         else if (type === "facture") setPendingFactures(prev => prev.filter(f => f.id !== id));
         else if (type === "avoir") setPendingAvoirs(prev => prev.filter(a => a.id !== id));
         else if (type === "achat_fournisseur") setPendingAchatsFournisseurs(prev => prev.filter(a => a.id !== id));
@@ -757,6 +781,7 @@ export default function Approvals() {
         try {
             let url = "";
             if (type === "commande") url = `/api/commandes/${id}/approve`;
+            if (type === "bon_livraison") url = `/api/bons-livraison/${id}/approve`;
             if (type === "facture") url = `/api/factures/${id}/approve`;
             if (type === "avoir") url = `/api/avoirs/${id}/approve`;
             if (type === "achat_fournisseur") url = `/api/achats-fournisseurs/${id}/approve`;
@@ -903,13 +928,14 @@ export default function Approvals() {
 
 
     const handleReject = async (
-        type: "commande" | "facture" | "avoir" | "avoir_gros" | "achat_fournisseur" | "devis_gros" | "commande_gros" | "facture_gros" | "reglement_client_gros",
+        type: "commande" | "bon_livraison" | "facture" | "avoir" | "avoir_gros" | "achat_fournisseur" | "devis_gros" | "commande_gros" | "facture_gros" | "reglement_client_gros",
         id: number
     ) => {
         setActionLoadingId(id);
         
         // Optimistic update
         if (type === "commande") setPendingCommandes(prev => prev.filter(c => c.id !== id));
+        else if (type === "bon_livraison") setPendingBonsLivraison(prev => prev.filter(b => b.id !== id));
         else if (type === "facture") setPendingFactures(prev => prev.filter(f => f.id !== id));
         else if (type === "avoir") setPendingAvoirs(prev => prev.filter(a => a.id !== id));
         else if (type === "achat_fournisseur") setPendingAchatsFournisseurs(prev => prev.filter(a => a.id !== id));
@@ -922,6 +948,7 @@ export default function Approvals() {
         try {
             let url = "";
             if (type === "commande") url = `/api/commandes/${id}/reject`;
+            if (type === "bon_livraison") url = `/api/bons-livraison/${id}/reject`;
             if (type === "facture") url = `/api/factures/${id}/reject`;
             if (type === "avoir") url = `/api/avoirs/${id}/reject`;
             if (type === "achat_fournisseur") url = `/api/achats-fournisseurs/${id}/reject`;
@@ -973,6 +1000,7 @@ export default function Approvals() {
     const totalPending =
         (pendingDevis?.length || 0) +
         (pendingCommandes?.length || 0) +
+        (pendingBonsLivraison?.length || 0) +
         (pendingFactures?.length || 0) +
         (pendingDevisGros?.length || 0) +
         (pendingCommandesGros?.length || 0) +
@@ -1192,6 +1220,20 @@ export default function Approvals() {
                                         )}
                                     </TabsTrigger>
                                 )}
+                                {(role === 'superadmin' || role === 'admin' || myApprovalRights.includes('commande')) && (
+                                    <TabsTrigger 
+                                        value="bons_livraison"
+                                        className="flex-1 relative flex flex-col items-center justify-center py-3 px-2 data-[state=active]:bg-background data-[state=active]:shadow-md transition-all duration-200 rounded-lg group"
+                                    >
+                                        <FileText className="h-5 w-5 mb-1.5 text-violet-500 group-data-[state=active]:animate-pulse" />
+                                        <span className="text-[13px] font-medium">Bons livraison</span>
+                                        {pendingBonsLivraison.length > 0 && (
+                                            <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-violet-600 text-[10px] animate-in zoom-in">
+                                                {pendingBonsLivraison.length}
+                                            </Badge>
+                                        )}
+                                    </TabsTrigger>
+                                )}
                                 {(role === 'superadmin' || role === 'admin' || myApprovalRights.includes('facture')) && (
                                     <TabsTrigger 
                                         value="factures"
@@ -1396,6 +1438,56 @@ export default function Approvals() {
                                                         label="Rejeter la commande"
                                                         isLoading={actionLoadingId === c.id}
                                                         onClick={() => handleReject("commande", c.id)}
+                                                    />
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </TabsContent>
+
+                            <TabsContent value="bons_livraison" className="animate-in fade-in-50 slide-in-from-bottom-2 duration-300 outline-none">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Numéro BL</TableHead>
+                                            <TableHead>Commande</TableHead>
+                                            <TableHead>Client</TableHead>
+                                            <TableHead>Date</TableHead>
+                                            <TableHead>Statut</TableHead>
+                                            <TableHead>Action</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {pendingBonsLivraison.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">
+                                                    Aucun bon de livraison en attente
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : pendingBonsLivraison.map((b) => (
+                                            <TableRow key={b.id}>
+                                                <TableCell>{b.numero_bon_livraison}</TableCell>
+                                                <TableCell>{b.numero_commande || "—"}</TableCell>
+                                                <TableCell>{b.client_nom || "—"}</TableCell>
+                                                <TableCell>{new Date(b.date_bon_livraison).toLocaleDateString()}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700">
+                                                        {b.statut}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="flex items-center gap-2">
+                                                    <ActionButton
+                                                        type="approve"
+                                                        label="Valider le bon de livraison"
+                                                        isLoading={actionLoadingId === b.id}
+                                                        onClick={() => handleApprove("bon_livraison", b.id)}
+                                                    />
+                                                    <ActionButton
+                                                        type="reject"
+                                                        label="Rejeter le bon de livraison"
+                                                        isLoading={actionLoadingId === b.id}
+                                                        onClick={() => handleReject("bon_livraison", b.id)}
                                                     />
                                                 </TableCell>
                                             </TableRow>

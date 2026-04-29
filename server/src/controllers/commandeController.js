@@ -101,6 +101,7 @@ exports.getCommandeById = async (req, res) => {
                    ) AS sous_societe_nom_from_numero,
                    (SELECT numero_facture FROM factures WHERE commande_id = c.id LIMIT 1) as facture_numero,
                    (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) as facture_id,
+                   (SELECT id FROM bon_de_livraison WHERE commande_id = c.id LIMIT 1) as bon_livraison_id,
                    (SELECT 1 FROM avoirs WHERE commande_id = c.id LIMIT 1) as has_avoir,
                    (SELECT 1 FROM avoirs WHERE facture_id = (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) LIMIT 1) as has_avoir_facture
             FROM commandes c
@@ -524,6 +525,7 @@ exports.getAllCommandes = async (req, res) => {
                 COALESCE(SUM(rc.montant), 0) AS total_regle_direct,
                 COALESCE(c.reduction, 0) AS reduction,
                 (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) AS facture_id,
+                (SELECT id FROM bon_de_livraison WHERE commande_id = c.id LIMIT 1) AS bon_livraison_id,
                 (SELECT 1 FROM avoirs WHERE commande_id = c.id LIMIT 1) AS has_avoir,
                 (SELECT 1 FROM avoirs WHERE facture_id = (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) LIMIT 1) AS has_avoir_facture,
                 (SELECT COALESCE(SUM(rc2.montant), 0) FROM reglements_clients rc2

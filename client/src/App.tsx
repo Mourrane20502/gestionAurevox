@@ -64,6 +64,8 @@ import Impots from "@/pages/Impots";
 import TVA from "@/pages/TVA";
 import Recus from "@/pages/Recus";
 import EmailMarketing from "@/pages/EmailMarketing";
+import BonsLivraison from "@/pages/BonsLivraison";
+import BonLivraisonDetails from "@/pages/BonLivraisonDetails";
 import NotificationManager from "./components/common/NotificationManager";
 import PageTitle from "./components/common/PageTitle";
 
@@ -96,6 +98,8 @@ export default function App() {
             <Route path="commandes-gros" element={<CommandeGros />} />
             <Route path="commandes-gros/:id" element={<CommandeGrosDetails />} />
             <Route path="commandes" element={<Commandes />} />
+            <Route path="bons-livraison" element={<BonsLivraison />} />
+            <Route path="bons-livraison/:id" element={<BonLivraisonDetails />} />
             <Route path="commandes/:id" element={<CommandeDetails />} />
             <Route path="recus" element={<Recus />} />
             <Route path="achats" element={<Achats />} />

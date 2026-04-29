@@ -95,6 +95,7 @@ const sidebarItems: SidebarItem[] = [
         subItems: [
             { name: "Devis", href: "/dashboard/devis", icon: FileText, permission: "devis_view", section: "Vente classique" },
             { name: "Commandes", href: "/dashboard/commandes", icon: FileText, permission: "commandes_view", section: "Vente classique" },
+            { name: "Bons de livraison", href: "/dashboard/bons-livraison", icon: FileText, permission: "commandes_view", section: "Vente classique" },
             { name: "Factures", href: "/dashboard/factures", icon: FileText, permission: "factures_view", section: "Vente classique" },
             { name: "Reçus", href: "/dashboard/recus", icon: FileText, permission: "reglements_view", section: "Vente classique" },
             { name: "Avoirs", href: "/dashboard/avoirs", icon: RotateCcw, permission: "avoirs_view", section: "Vente classique" },
@@ -299,10 +300,11 @@ export default function Sidebar({ onNavigate, onToggle }: {
                     return;
                 }
 
-                const [devisRes, devisGrosRes, cmdRes, cmdGrosRes, facRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
+                const [devisRes, devisGrosRes, cmdRes, blRes, cmdGrosRes, facRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
                     fetch("/api/devis", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/devis-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/commandes", { headers: { Authorization: `Bearer ${token}` } }),
+                    fetch("/api/bons-livraison", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/commandes-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/factures", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/factures-gros", { headers: { Authorization: `Bearer ${token}` } }),
@@ -316,6 +318,10 @@ export default function Sidebar({ onNavigate, onToggle }: {
                     fetch("/api/remboursements", { headers: { Authorization: `Bearer ${token}` } }),
                 ]);
                 let total = 0;
+                const isPendingBlStatus = (status: unknown) => {
+                    const s = String(status || "").trim().toLowerCase();
+                    return s === "en_attente" || s === "en attente" || s === "brouillon";
+                };
 
                 const canApproveEverything = roleLower === "superadmin" || roleLower === "admin";
 
@@ -335,6 +341,10 @@ export default function Sidebar({ onNavigate, onToggle }: {
                 if (cmdRes.ok && (canApproveEverything || rights.includes('commande'))) {
                     const data = await cmdRes.json();
                     total += Array.isArray(data) ? data.filter((c: any) => c.statut === "en_attente").length : 0;
+                }
+                if (blRes.ok && (canApproveEverything || rights.includes('commande'))) {
+                    const data = await blRes.json();
+                    total += Array.isArray(data) ? data.filter((b: any) => isPendingBlStatus(b.statut)).length : 0;
                 }
                 if (cmdGrosRes.ok && (canApproveEverything || rights.includes('commande'))) {
                     const data = await cmdGrosRes.json();
