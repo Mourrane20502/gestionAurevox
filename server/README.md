@@ -1,6 +1,6 @@
-# Bijouterie Aurevox - Server
+# Gestion Aurevox - Server
 
-This is the backend server for the Bijouterie Aurevox application, built with Node.js, Express, and MySQL.
+This is the backend server for the Gestion Aurevox application, built with Node.js, Express, and MySQL.
 
 ## Prerequisites
 

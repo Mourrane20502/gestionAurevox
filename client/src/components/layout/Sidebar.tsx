@@ -147,6 +147,7 @@ const sidebarItems: SidebarItem[] = [
             { name: "Congés", href: "/dashboard/conges", icon: FileText, permission: 'conges_view' },
             { name: "Salaires", href: "/dashboard/salaires", icon: FileText, permission: 'salaries_view' },
             { name: "Paie", href: "/dashboard/paiement", icon: FileText, permission: 'paie_view' },
+            { name: "Pointage", href: "/dashboard/pointage", icon: FileText, permission: 'paie_view' },
         ]
     },
     { name: "Tickets", href: "/dashboard/tickets", icon: Ticket, permission: 'tickets_view' },

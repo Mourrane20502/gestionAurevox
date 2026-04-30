@@ -21,6 +21,7 @@ import Employees from "./pages/Employees";
 import Conges from "./pages/Conges";
 import Salaries from "./pages/Salaries";
 import GestionPaie from "./pages/GestionPaie";
+import Pointage from "./pages/Pointage";
 import PaieDetails from "./pages/PaieDetails";
 import Commandes from "./pages/Commandes";
 import Achats from "./pages/Achats";
@@ -128,6 +129,7 @@ export default function App() {
             <Route path="conges" element={<Conges />} />
             <Route path="salaires" element={<Salaries />} />
             <Route path="paiement" element={<GestionPaie />} />
+            <Route path="pointage" element={<Pointage />} />
             <Route path="paiement/:id" element={<PaieDetails />} />
             <Route path="users" element={<Users />} />
             <Route path="tickets" element={<Tickets />} />

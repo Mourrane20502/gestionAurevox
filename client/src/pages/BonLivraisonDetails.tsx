@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Calendar, CheckCircle2, FileText, Truck, User, Printer, Mail, Send, Link as LinkIcon, ExternalLink, Package } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { buildReglementCode } from "@/lib/reglementCode";
 
 interface BonLivraisonItem {
     id: number;
@@ -41,10 +42,23 @@ interface BonLivraisonDetails {
     items?: BonLivraisonItem[];
 }
 
+interface ReglementLink {
+    id: number;
+    numero_recu?: number | null;
+    statut?: string;
+    facture_id?: number | null;
+    commande_id?: number | null;
+    date_reglement?: string | null;
+    created_at?: string | null;
+    sous_societe_nom?: string | null;
+    numero_facture?: string | null;
+    numero_commande?: string | null;
+}
+
 const normalizeBlStatus = (status: string | null | undefined) => {
     const s = String(status || "").trim().toLowerCase();
     if (s === "livree" || s === "livré" || s === "livre" || s === "validee") return "livree";
-    if (s === "annulee" || s === "annulée") return "annulee";
+    if (s === "annulee" || s === "annulée" || s === "annule" || s === "annulé") return "annulee";
     return "en_attente";
 };
 
@@ -53,9 +67,13 @@ export default function BonLivraisonDetails() {
     const navigate = useNavigate();
     const token = localStorage.getItem("token");
     const [bl, setBl] = useState<BonLivraisonDetails | null>(null);
+    const [linkedReglements, setLinkedReglements] = useState<ReglementLink[]>([]);
+    const [linkedDevisCode, setLinkedDevisCode] = useState<string | null>(null);
+    const [linkedFactureCode, setLinkedFactureCode] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
     const [emailData, setEmailData] = useState({ to: "", subject: "", message: "" });
+    const [autoDownloadHandled, setAutoDownloadHandled] = useState(false);
 
     useEffect(() => {
         const fetchDetails = async () => {
@@ -82,29 +100,156 @@ export default function BonLivraisonDetails() {
         fetchDetails();
     }, [id, token]);
 
+    useEffect(() => {
+        const fetchLinkedDocumentCodes = async () => {
+            if (!token || !bl) {
+                setLinkedDevisCode(null);
+                setLinkedFactureCode(null);
+                return;
+            }
+            try {
+                if (bl.devis_id) {
+                    const devisRes = await fetch(`/api/devis/${bl.devis_id}`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    });
+                    if (devisRes.ok) {
+                        const devisData = await devisRes.json();
+                        setLinkedDevisCode(devisData?.numero_devis || null);
+                    } else {
+                        setLinkedDevisCode(null);
+                    }
+                } else {
+                    setLinkedDevisCode(null);
+                }
+
+                if (bl.facture_id) {
+                    const facRes = await fetch(`/api/factures/${bl.facture_id}`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    });
+                    if (facRes.ok) {
+                        const facData = await facRes.json();
+                        setLinkedFactureCode(facData?.numero_facture || null);
+                    } else {
+                        setLinkedFactureCode(null);
+                    }
+                } else {
+                    setLinkedFactureCode(null);
+                }
+            } catch {
+                setLinkedDevisCode(null);
+                setLinkedFactureCode(null);
+            }
+        };
+        fetchLinkedDocumentCodes();
+    }, [bl, token]);
+
+    useEffect(() => {
+        const fetchLinkedReglements = async () => {
+            if (!token || !bl) {
+                setLinkedReglements([]);
+                return;
+            }
+            if (!bl.commande_id && !bl.facture_id) {
+                setLinkedReglements([]);
+                return;
+            }
+            try {
+                const res = await fetch("/api/reglements-clients", {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) throw new Error();
+                const rows = (await res.json()) as ReglementLink[];
+                const filtered = (rows || []).filter((r) => {
+                    const byFacture = bl.facture_id && Number(r.facture_id) === Number(bl.facture_id);
+                    const byCommande = bl.commande_id && Number(r.commande_id) === Number(bl.commande_id);
+                    return Boolean(byFacture || byCommande);
+                });
+                setLinkedReglements(filtered);
+            } catch {
+                setLinkedReglements([]);
+            }
+        };
+        fetchLinkedReglements();
+    }, [bl, token]);
+
     const normalizedStatus = useMemo(() => normalizeBlStatus(bl?.statut), [bl?.statut]);
     const formatDate = (value?: string) => String(value || "").slice(0, 10);
 
-    const handlePrint = () => window.print();
-
-    const handleCopyLink = async () => {
+    const downloadBlPdf = async () => {
+        if (!id || !token) return;
         try {
-            await navigator.clipboard.writeText(window.location.href);
-            toast.success("Lien copié");
+            const res = await fetch(`/api/bons-livraison/${id}/pdf/download`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) throw new Error();
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `Bon_Livraison_${bl?.numero_bon_livraison || id}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            toast.success("PDF généré avec succès");
+        } catch {
+            toast.error("Erreur lors de la génération du PDF");
+        }
+    };
+
+    useEffect(() => {
+        if (!id || !bl || autoDownloadHandled) return;
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("downloadPdf") !== "1") return;
+        setAutoDownloadHandled(true);
+        downloadBlPdf();
+        params.delete("downloadPdf");
+        const nextQuery = params.toString();
+        const cleanUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+        window.history.replaceState({}, document.title, cleanUrl);
+    }, [id, bl, autoDownloadHandled]);
+
+    const handlePrint = async () => downloadBlPdf();
+    const handleCopyLink = async () => {
+        if (!id) return;
+        const link = `${window.location.origin}/dashboard/bons-livraison/${id}?downloadPdf=1`;
+        try {
+            await navigator.clipboard.writeText(link);
+            toast.success("Lien de téléchargement copié");
         } catch {
             toast.error("Impossible de copier le lien");
         }
     };
 
-    const handleSendEmail = () => {
+    const handleSendEmail = async () => {
         if (!emailData.to?.trim()) {
             toast.error("Veuillez renseigner un email");
             return;
         }
-        const subject = encodeURIComponent(emailData.subject || "");
-        const body = encodeURIComponent(`${emailData.message || ""}\n\nLien: ${window.location.href}`);
-        window.location.href = `mailto:${emailData.to}?subject=${subject}&body=${body}`;
-        setIsEmailModalOpen(false);
+        if (!id || !token) {
+            toast.error("Session invalide");
+            return;
+        }
+        try {
+            const res = await fetch(`/api/bons-livraison/${id}/send-email`, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    to: emailData.to.trim(),
+                    subject: emailData.subject || "",
+                    message: emailData.message || "",
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || "Erreur lors de l'envoi de l'email");
+            toast.success("Email envoyé avec succès");
+            setIsEmailModalOpen(false);
+        } catch (e: any) {
+            toast.error(e.message || "Erreur lors de l'envoi");
+        }
     };
 
     return (
@@ -140,7 +285,14 @@ export default function BonLivraisonDetails() {
                             <Mail className="h-4 w-4 mr-2" />
                             Envoyer par Email
                         </Button>
-                        <Button className="bg-indigo-600 hover:bg-indigo-700" onClick={() => navigate("/dashboard/bons-livraison")}>
+                        <Button
+                            className="bg-indigo-600 hover:bg-indigo-700"
+                            onClick={() =>
+                                bl?.id
+                                    ? navigate("/dashboard/bons-livraison", { state: { editBonId: bl.id } })
+                                    : toast.error("BL introuvable")
+                            }
+                        >
                             Modifier BL
                             <ExternalLink className="h-4 w-4 ml-2" />
                         </Button>
@@ -241,14 +393,35 @@ export default function BonLivraisonDetails() {
                                 ) : <p className="text-xs text-muted-foreground">Aucune commande liée</p>}
                                 {bl.devis_id ? (
                                     <Link to={`/dashboard/devis/${bl.devis_id}`} className="text-[10px] text-emerald-600 flex items-center gap-1 font-bold uppercase bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
-                                        <CheckCircle2 className="h-3 w-3" /> Devis
+                                        <CheckCircle2 className="h-3 w-3" /> Devis {linkedDevisCode || `#${bl.devis_id}`}
                                     </Link>
                                 ) : <p className="text-xs text-muted-foreground">Aucun devis lié</p>}
                                 {bl.facture_id ? (
                                     <Link to={`/dashboard/factures/${bl.facture_id}`} className="text-[10px] text-blue-600 flex items-center gap-1 font-bold uppercase bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20">
-                                        <CheckCircle2 className="h-3 w-3" /> Facture
+                                        <CheckCircle2 className="h-3 w-3" /> Facture {linkedFactureCode || `#${bl.facture_id}`}
                                     </Link>
                                 ) : <p className="text-xs text-muted-foreground">Aucune facture liée</p>}
+                                {linkedReglements.length > 0 ? (
+                                    linkedReglements.slice(0, 3).map((reg) => (
+                                        <Link
+                                            key={reg.id}
+                                            to={`/dashboard/reglements/details/client/${reg.id}`}
+                                            className="text-[10px] text-violet-600 flex items-center gap-1 font-bold uppercase bg-violet-500/10 px-2 py-1 rounded border border-violet-500/20"
+                                        >
+                                            <CheckCircle2 className="h-3 w-3" />
+                                            Règlement {buildReglementCode(
+                                                "client",
+                                                reg.id,
+                                                String(reg.date_reglement || reg.created_at || ""),
+                                                Number(reg.numero_recu || 0) || null,
+                                                reg.sous_societe_nom,
+                                                reg.numero_facture || reg.numero_commande
+                                            )}
+                                        </Link>
+                                    ))
+                                ) : (
+                                    <p className="text-xs text-muted-foreground">Aucun règlement lié</p>
+                                )}
                             </CardContent>
                         </Card>
                     </div>

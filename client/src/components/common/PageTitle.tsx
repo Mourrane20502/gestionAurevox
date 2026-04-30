@@ -53,18 +53,18 @@ export default function PageTitle() {
 
     useEffect(() => {
         const path = location.pathname;
-        let title = "Bijouterie Aurevox";
+        let title = "Gestion Aurevox";
 
         // Try exact match
         if (routeTitles[path]) {
-            title = `${routeTitles[path]} | Bijouterie Aurevox`;
+            title = `${routeTitles[path]} | Gestion Aurevox`;
         } else {
             // Try prefix match for dynamic routes like /dashboard/devis/123
             const parts = path.split("/");
             if (parts.length > 3) {
                 const base = `/${parts[1]}/${parts[2]}`;
                 if (routeTitles[base]) {
-                    title = `${routeTitles[base]} | Bijouterie Aurevox`;
+                    title = `${routeTitles[base]} | Gestion Aurevox`;
                 }
             }
         }

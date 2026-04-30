@@ -741,10 +741,21 @@ export default function Approvals() {
         const handler = () => {
             fetchAll();
         };
+        const focusHandler = () => {
+            fetchAll();
+        };
+        const intervalId = window.setInterval(() => {
+            fetchAll();
+        }, 10000);
 
         window.addEventListener("approvals-updated", handler);
+        window.addEventListener("focus", focusHandler);
+        document.addEventListener("visibilitychange", focusHandler);
         return () => {
+            window.clearInterval(intervalId);
             window.removeEventListener("approvals-updated", handler);
+            window.removeEventListener("focus", focusHandler);
+            document.removeEventListener("visibilitychange", focusHandler);
         };
     }, [token, role, isAdminOrResponsable]);
 

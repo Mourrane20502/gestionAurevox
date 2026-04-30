@@ -10,6 +10,8 @@ const {
     rejectBonLivraison,
     updateBonLivraison,
     deleteBonLivraison,
+    downloadBonLivraisonPdf,
+    sendBonLivraisonEmail,
 } = require("../controllers/bonLivraisonController");
 
 router.get("/", authenticate, authorizePermission("commandes_view"), getAllBonsLivraison);
@@ -19,5 +21,7 @@ router.put("/:id", authenticate, authorizePermission("commandes_view"), updateBo
 router.delete("/:id", authenticate, authorizePermission("commandes_view"), deleteBonLivraison);
 router.put("/:id/approve", authenticate, authorizePermission("commandes_view"), approveBonLivraison);
 router.put("/:id/reject", authenticate, authorizePermission("commandes_view"), rejectBonLivraison);
+router.get("/:id/pdf/download", authenticate, authorizePermission("commandes_view"), downloadBonLivraisonPdf);
+router.post("/:id/send-email", authenticate, authorizePermission("commandes_view"), sendBonLivraisonEmail);
 
 module.exports = router;

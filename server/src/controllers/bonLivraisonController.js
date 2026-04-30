@@ -89,7 +89,27 @@ exports.getAllBonsLivraison = async (_req, res) => {
                    cl.nom_complet AS client_nom,
                    CONCAT(u.prenom, ' ', u.nom) AS user_nom,
                    pv.nom AS point_de_vente_nom,
-                   ss.NOM_SOUS_SOCIETE AS sous_societe_nom,
+                   COALESCE(
+                        (
+                            SELECT ss_items.NOM_SOUS_SOCIETE
+                            FROM commande_items ci
+                            INNER JOIN products p ON p.id = ci.produit_id
+                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
+                            LEFT JOIN sous_societe ss_items ON ss_items.ID = pv_items.id_sous_gestionnaire
+                            WHERE ci.commande_id = c.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY ci.id
+                            LIMIT 1
+                        ),
+                        ss.NOM_SOUS_SOCIETE,
+                        (
+                            SELECT ssn.NOM_SOUS_SOCIETE
+                            FROM sous_societe ssn
+                            WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
+                            ORDER BY ssn.ID
+                            LIMIT 1
+                        )
+                   ) AS sous_societe_nom,
                    (
                         SELECT f.id
                         FROM factures f
@@ -125,7 +145,27 @@ exports.getBonLivraisonById = async (req, res) => {
                    cl.nom_complet AS client_nom,
                    CONCAT(u.prenom, ' ', u.nom) AS user_nom,
                    pv.nom AS point_de_vente_nom,
-                   ss.NOM_SOUS_SOCIETE AS sous_societe_nom,
+                   COALESCE(
+                        (
+                            SELECT ss_items.NOM_SOUS_SOCIETE
+                            FROM commande_items ci
+                            INNER JOIN products p ON p.id = ci.produit_id
+                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
+                            LEFT JOIN sous_societe ss_items ON ss_items.ID = pv_items.id_sous_gestionnaire
+                            WHERE ci.commande_id = c.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY ci.id
+                            LIMIT 1
+                        ),
+                        ss.NOM_SOUS_SOCIETE,
+                        (
+                            SELECT ssn.NOM_SOUS_SOCIETE
+                            FROM sous_societe ssn
+                            WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
+                            ORDER BY ssn.ID
+                            LIMIT 1
+                        )
+                   ) AS sous_societe_nom,
                    (
                         SELECT f.id
                         FROM factures f
@@ -313,10 +353,9 @@ exports.rejectBonLivraison = async (req, res) => {
     try {
         await ensureBonLivraisonSchema();
         const { id } = req.params;
-        // Schema utilisateur: enum('en_attente','livré') -> on garde en_attente pour un "rejet".
         const [result] = await db.query(
             `UPDATE bon_de_livraison
-             SET statut = 'en_attente'
+             SET statut = 'annulee'
              WHERE id = ?`,
             [id]
         );
@@ -331,58 +370,120 @@ exports.rejectBonLivraison = async (req, res) => {
 };
 
 exports.updateBonLivraison = async (req, res) => {
+    const connection = await db.getConnection();
     try {
         await ensureBonLivraisonSchema();
         const { id } = req.params;
-        const { numero_bon_livraison, date_bon_livraison, statut } = req.body || {};
+        const {
+            numero_bon_livraison,
+            date_bon_livraison,
+            statut,
+            montant_ht,
+            montant_tva,
+            montant_ttc,
+            items,
+        } = req.body || {};
+
+        const blId = Number(id);
+        if (!Number.isFinite(blId) || blId <= 0) {
+            return res.status(400).json({ message: "ID BL invalide" });
+        }
+
+        await connection.beginTransaction();
+
+        const [existing] = await connection.query(
+            "SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1",
+            [blId]
+        );
+        if (!Array.isArray(existing) || existing.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: "Bon de livraison introuvable" });
+        }
 
         const fields = [];
         const values = [];
 
-        if (numero_bon_livraison) {
+        if (numero_bon_livraison != null && String(numero_bon_livraison).trim()) {
+            const numero = String(numero_bon_livraison).trim();
             fields.push("numero_bon_livraison = ?");
-            values.push(String(numero_bon_livraison).trim());
+            values.push(numero);
             if (await hasColumn("bon_de_livraison", "numero_bl")) {
                 fields.push("numero_bl = ?");
-                values.push(String(numero_bon_livraison).trim());
+                values.push(numero);
             }
         }
 
-        if (date_bon_livraison) {
+        if (date_bon_livraison != null && String(date_bon_livraison).trim()) {
+            const date = String(date_bon_livraison).slice(0, 10);
             fields.push("date_bon_livraison = ?");
-            values.push(String(date_bon_livraison).slice(0, 10));
+            values.push(date);
             if (await hasColumn("bon_de_livraison", "date_livraison")) {
                 fields.push("date_livraison = ?");
-                values.push(String(date_bon_livraison).slice(0, 10));
+                values.push(date);
             }
             if (await hasColumn("bon_de_livraison", "date_bl")) {
                 fields.push("date_bl = ?");
-                values.push(String(date_bon_livraison).slice(0, 10));
+                values.push(date);
             }
         }
 
-        if (statut) {
+        if (statut != null && String(statut).trim()) {
             fields.push("statut = ?");
-            values.push(statut);
+            values.push(String(statut).trim());
         }
 
-        if (fields.length === 0) {
-            return res.status(400).json({ message: "Aucun champ à mettre à jour" });
+        if (montant_ht != null) {
+            fields.push("montant_ht = ?");
+            values.push(Number(montant_ht) || 0);
+        }
+        if (montant_tva != null) {
+            fields.push("montant_tva = ?");
+            values.push(Number(montant_tva) || 0);
+        }
+        if (montant_ttc != null) {
+            fields.push("montant_ttc = ?");
+            values.push(Number(montant_ttc) || 0);
         }
 
-        values.push(id);
-        const [result] = await db.query(
-            `UPDATE bon_de_livraison SET ${fields.join(", ")} WHERE id = ?`,
-            values
-        );
-
-        if (!result?.affectedRows) {
-            return res.status(404).json({ message: "Bon de livraison introuvable" });
+        if (Array.isArray(items)) {
+            await connection.query("DELETE FROM bon_de_livraison_items WHERE bon_livraison_id = ?", [blId]);
+            for (const item of items) {
+                const designation = String(item?.designation || "").trim();
+                if (!designation) continue;
+                await connection.query(
+                    `INSERT INTO bon_de_livraison_items
+                        (bon_livraison_id, produit_id, designation, quantite, prix_unitaire, tva, reduction, montant_ht)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        blId,
+                        item?.produit_id ? Number(item.produit_id) : null,
+                        designation,
+                        Number(item?.quantite) || 0,
+                        Number(item?.prix_unitaire) || 0,
+                        Number(item?.tva) || 0,
+                        Number(item?.reduction) || 0,
+                        Number(item?.montant_ht) || 0,
+                    ]
+                );
+            }
         }
+
+        if (fields.length > 0) {
+            values.push(blId);
+            await connection.query(
+                `UPDATE bon_de_livraison SET ${fields.join(", ")} WHERE id = ?`,
+                values
+            );
+        }
+
+        await connection.commit();
         res.json({ message: "Bon de livraison mis à jour" });
     } catch (error) {
+        await connection.rollback().catch(() => {});
         console.error("Error updating bon de livraison:", error);
         res.status(500).json({ message: "Server error" });
+    } finally {
+        connection.release();
     }
 };
 
@@ -412,5 +513,214 @@ exports.deleteBonLivraison = async (req, res) => {
         res.status(500).json({ message: "Server error" });
     } finally {
         connection.release();
+    }
+};
+
+const blPdfConfig = {
+    type: "BON_LIVRAISON",
+    title: "BON DE LIVRAISON",
+    infoTitle: "Bon de livraison",
+    numberField: "numero_bon_livraison",
+    dateField: "date_bon_livraison",
+    statusField: "statut",
+    defaultStatus: "En attente",
+    footerLeft: "Merci pour votre confiance.",
+};
+
+exports.sendBonLivraisonEmail = async (req, res) => {
+    const { id } = req.params;
+    const { to, subject, message } = req.body || {};
+
+    if (!to) {
+        return res.status(400).json({ message: "Le destinataire est requis" });
+    }
+
+    try {
+        const [rows] = await db.query(
+            `
+            SELECT bl.*,
+                   COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
+                   COALESCE(bl.date_bon_livraison, bl.date_livraison) AS date_bon_livraison,
+                   COALESCE(
+                        (
+                            SELECT p.id_point_de_vente
+                            FROM bon_de_livraison_items bi
+                            INNER JOIN products p ON p.id = bi.produit_id
+                            WHERE bi.bon_livraison_id = bl.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY bi.id
+                            LIMIT 1
+                        ),
+                        c.point_de_vente_id
+                   ) AS point_de_vente_id,
+                   COALESCE(
+                        (
+                            SELECT pv_items.logo
+                            FROM bon_de_livraison_items bi
+                            INNER JOIN products p ON p.id = bi.produit_id
+                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
+                            WHERE bi.bon_livraison_id = bl.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY bi.id
+                            LIMIT 1
+                        ),
+                        pv.logo
+                   ) AS point_de_vente_logo,
+                   cl.nom_complet AS client_nom,
+                   cl.type AS client_type,
+                   cl.ice AS client_ice,
+                   cl.telephone AS client_telephone,
+                   cl.email AS client_email,
+                   cl.adresse AS client_adresse,
+                   COALESCE(
+                        (
+                            SELECT ss_items.NOM_SOUS_SOCIETE
+                            FROM bon_de_livraison_items bi
+                            INNER JOIN products p ON p.id = bi.produit_id
+                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
+                            LEFT JOIN sous_societe ss_items ON ss_items.ID = pv_items.id_sous_gestionnaire
+                            WHERE bi.bon_livraison_id = bl.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY bi.id
+                            LIMIT 1
+                        ),
+                        ss.NOM_SOUS_SOCIETE,
+                        (
+                            SELECT ssn.NOM_SOUS_SOCIETE
+                            FROM sous_societe ssn
+                            WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
+                            ORDER BY ssn.ID
+                            LIMIT 1
+                        )
+                   ) AS sous_societe_nom
+            FROM bon_de_livraison bl
+            LEFT JOIN commandes c ON c.id = bl.commande_id
+            LEFT JOIN clients cl ON cl.id = bl.client_id
+            LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
+            LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
+            WHERE bl.id = ?
+            LIMIT 1
+            `,
+            [id]
+        );
+
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return res.status(404).json({ message: "Bon de livraison introuvable" });
+        }
+
+        const [items] = await db.query(
+            `SELECT * FROM bon_de_livraison_items WHERE bon_livraison_id = ? ORDER BY id ASC`,
+            [id]
+        );
+
+        const docData = rows[0];
+        const { buildGenericPdf } = require("../services/pdfGeneratorService");
+        const pdfBuffer = await buildGenericPdf(docData, items || [], blPdfConfig);
+
+        const emailSubject = subject || `[BL] ${docData.numero_bon_livraison}`;
+        const emailText = message || `Veuillez trouver ci-joint le bon de livraison ${docData.numero_bon_livraison}.`;
+
+        const { sendMail } = require("../services/emailService");
+        await sendMail(to, emailSubject, emailText, [
+            { filename: `Bon_Livraison_${docData.numero_bon_livraison}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
+        ]);
+
+        res.status(200).json({ message: "Email envoyé avec succès" });
+    } catch (error) {
+        console.error("Error sending bon livraison email:", error);
+        res.status(500).json({ message: "Erreur lors de l'envoi de l'email" });
+    }
+};
+
+exports.downloadBonLivraisonPdf = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [rows] = await db.query(
+            `
+            SELECT bl.*,
+                   COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
+                   COALESCE(bl.date_bon_livraison, bl.date_livraison) AS date_bon_livraison,
+                   COALESCE(
+                        (
+                            SELECT p.id_point_de_vente
+                            FROM bon_de_livraison_items bi
+                            INNER JOIN products p ON p.id = bi.produit_id
+                            WHERE bi.bon_livraison_id = bl.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY bi.id
+                            LIMIT 1
+                        ),
+                        c.point_de_vente_id
+                   ) AS point_de_vente_id,
+                   COALESCE(
+                        (
+                            SELECT pv_items.logo
+                            FROM bon_de_livraison_items bi
+                            INNER JOIN products p ON p.id = bi.produit_id
+                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
+                            WHERE bi.bon_livraison_id = bl.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY bi.id
+                            LIMIT 1
+                        ),
+                        pv.logo
+                   ) AS point_de_vente_logo,
+                   cl.nom_complet AS client_nom,
+                   cl.type AS client_type,
+                   cl.ice AS client_ice,
+                   cl.telephone AS client_telephone,
+                   cl.email AS client_email,
+                   cl.adresse AS client_adresse,
+                   COALESCE(
+                        (
+                            SELECT ss_items.NOM_SOUS_SOCIETE
+                            FROM bon_de_livraison_items bi
+                            INNER JOIN products p ON p.id = bi.produit_id
+                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
+                            LEFT JOIN sous_societe ss_items ON ss_items.ID = pv_items.id_sous_gestionnaire
+                            WHERE bi.bon_livraison_id = bl.id
+                              AND p.id_point_de_vente IS NOT NULL
+                            ORDER BY bi.id
+                            LIMIT 1
+                        ),
+                        ss.NOM_SOUS_SOCIETE,
+                        (
+                            SELECT ssn.NOM_SOUS_SOCIETE
+                            FROM sous_societe ssn
+                            WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
+                            ORDER BY ssn.ID
+                            LIMIT 1
+                        )
+                   ) AS sous_societe_nom
+            FROM bon_de_livraison bl
+            LEFT JOIN commandes c ON c.id = bl.commande_id
+            LEFT JOIN clients cl ON cl.id = bl.client_id
+            LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
+            LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
+            WHERE bl.id = ?
+            LIMIT 1
+            `,
+            [id]
+        );
+
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return res.status(404).json({ message: "Bon de livraison introuvable" });
+        }
+
+        const [items] = await db.query(
+            `SELECT * FROM bon_de_livraison_items WHERE bon_livraison_id = ? ORDER BY id ASC`,
+            [id]
+        );
+
+        const docData = rows[0];
+        const { buildGenericPdf } = require("../services/pdfGeneratorService");
+        const pdfBuffer = await buildGenericPdf(docData, items || [], blPdfConfig);
+
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename=Bon_Livraison_${docData.numero_bon_livraison}.pdf`);
+        res.send(pdfBuffer);
+    } catch (error) {
+        console.error("Error generating bon livraison PDF for download:", error);
+        res.status(500).json({ message: "Erreur serveur lors de la génération du PDF" });
     }
 };

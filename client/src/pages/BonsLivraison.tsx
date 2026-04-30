@@ -36,7 +36,7 @@ import {
     DialogTitle,
 } from "@/components/common/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { PackageOpen, Plus, FileText, ArrowRight, Search, ListOrdered, MoreVertical, Calendar, User, Pencil, Filter, FileSpreadsheet, Printer, BarChart3, CheckCircle2, Trash } from "lucide-react";
+import { PackageOpen, Plus, FileText, ArrowRight, Search, ListOrdered, MoreVertical, Calendar, User, Pencil, Filter, FileSpreadsheet, Printer, BarChart3, CheckCircle2, Trash, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
@@ -46,6 +46,8 @@ interface Commande {
     id: number;
     numero_commande: string;
     client_nom?: string;
+    point_de_vente_nom?: string;
+    sous_societe_nom?: string;
     bon_livraison_id?: number | null;
     date_commande?: string;
     montant_ttc?: number;
@@ -72,6 +74,7 @@ interface BonLivraison {
     id: number;
     numero_bon_livraison: string;
     date_bon_livraison: string;
+    commande_id?: number;
     numero_commande?: string;
     devis_id?: number | null;
     facture_id?: number | null;
@@ -79,14 +82,17 @@ interface BonLivraison {
     user_nom?: string;
     point_de_vente_nom?: string;
     sous_societe_nom?: string;
+    montant_ht?: number;
+    montant_tva?: number;
     montant_ttc?: number;
     statut?: string;
+    items?: CommandeItem[];
 }
 
 const normalizeBlStatus = (status: string | null | undefined) => {
     const s = String(status || "").trim().toLowerCase();
     if (s === "livree" || s === "livré" || s === "livre" || s === "validee") return "livree";
-    if (s === "annulee" || s === "annulée") return "annulee";
+    if (s === "annulee" || s === "annulée" || s === "annule" || s === "annulé") return "annulee";
     return "en_attente";
 };
 
@@ -122,6 +128,12 @@ export default function BonsLivraison() {
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+    const [editingBon, setEditingBon] = useState<BonLivraison | null>(null);
+    const [editNumeroBon, setEditNumeroBon] = useState("");
+    const [editDateBon, setEditDateBon] = useState("");
+    const [editStatutBon, setEditStatutBon] = useState("en_attente");
+    const [editItems, setEditItems] = useState<CommandeItem[]>([]);
+    const [isLoadingEditDetails, setIsLoadingEditDetails] = useState(false);
 
     const fetchData = async () => {
         if (!token) return;
@@ -157,7 +169,7 @@ export default function BonsLivraison() {
 
     useEffect(() => {
         const fetchCommandeDetails = async () => {
-            if (!token || !selectedCommandeId) {
+            if (!token || !selectedCommandeId || editingBon) {
                 setSelectedCommandeDetails(null);
                 return;
             }
@@ -178,7 +190,18 @@ export default function BonsLivraison() {
             }
         };
         fetchCommandeDetails();
-    }, [selectedCommandeId, token]);
+    }, [selectedCommandeId, token, editingBon]);
+
+    const editTotals = useMemo(() => {
+        const totalHT = editItems.reduce((sum, it) => sum + Number(it.montant_ht || 0), 0);
+        const totalTVA = editItems.reduce((sum, it) => {
+            const ht = Number(it.montant_ht || 0);
+            const tva = Number(it.tva || 0);
+            return sum + (ht * tva) / 100;
+        }, 0);
+        const totalTTC = totalHT + totalTVA;
+        return { totalHT, totalTVA, totalTTC };
+    }, [editItems]);
 
     const filteredBons = useMemo(() => {
         const s = searchTerm.trim().toLowerCase();
@@ -351,46 +374,108 @@ export default function BonsLivraison() {
         }
     };
 
-    const updateBon = async (bl: BonLivraison) => {
-        if (!token) return;
-        const currentNumber = String(bl.numero_bon_livraison || "").trim();
-        const currentDate = String(bl.date_bon_livraison || "").slice(0, 10);
+    const openEditBonForm = (bl: BonLivraison) => {
+        setEditingBon(bl);
+        setEditNumeroBon(String(bl.numero_bon_livraison || "").trim());
+        setEditDateBon(String(bl.date_bon_livraison || "").slice(0, 10));
+        setEditStatutBon(normalizeBlStatus(bl.statut));
+        setEditItems([]);
+        setSelectedCommandeId("");
+        setSelectedCommandeDetails(null);
+        setActiveTab("form");
+    };
 
-        const numero_bon_livraison = window.prompt("Modifier le numéro du bon de livraison", currentNumber)?.trim();
-        if (numero_bon_livraison === undefined || numero_bon_livraison === null) return;
+    const cancelEditBon = () => {
+        setEditingBon(null);
+        setEditNumeroBon("");
+        setEditDateBon("");
+        setEditStatutBon("en_attente");
+        setEditItems([]);
+        setSelectedCommandeId("");
+        setActiveTab("liste");
+    };
+
+    useEffect(() => {
+        const fetchEditDetails = async () => {
+            if (!token || !editingBon?.id) return;
+            setIsLoadingEditDetails(true);
+            try {
+                const res = await fetch(`/api/bons-livraison/${editingBon.id}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) throw new Error("Impossible de charger le détail BL");
+                const data = await res.json();
+                setEditNumeroBon(String(data?.numero_bon_livraison || editingBon.numero_bon_livraison || "").trim());
+                setEditDateBon(String(data?.date_bon_livraison || editingBon.date_bon_livraison || "").slice(0, 10));
+                setEditStatutBon(normalizeBlStatus(data?.statut));
+                setEditItems(Array.isArray(data?.items) ? data.items : []);
+            } catch (e) {
+                console.error(e);
+                toast.error("Erreur lors du chargement complet du BL");
+            } finally {
+                setIsLoadingEditDetails(false);
+            }
+        };
+        fetchEditDetails();
+    }, [editingBon?.id, token]);
+
+    const updateEditItem = (idx: number, patch: Partial<CommandeItem>) => {
+        setEditItems((prev) =>
+            prev.map((it, i) => {
+                if (i !== idx) return it;
+                const next = { ...it, ...patch };
+                const qte = Number(next.quantite || 0);
+                const pu = Number(next.prix_unitaire || 0);
+                const red = Number(next.reduction || 0);
+                const brut = qte * pu;
+                next.montant_ht = brut - (brut * red) / 100;
+                return next;
+            })
+        );
+    };
+
+    const updateBon = async () => {
+        if (!token) return;
+        if (!editingBon) return;
+        const numero_bon_livraison = String(editNumeroBon || "").trim();
         if (!numero_bon_livraison) {
             toast.error("Le numéro de BL est obligatoire");
             return;
         }
-
-        const date_bon_livraison = window.prompt("Modifier la date du bon de livraison (YYYY-MM-DD)", currentDate)?.trim();
-        if (date_bon_livraison === undefined || date_bon_livraison === null) return;
+        const date_bon_livraison = String(editDateBon || "").trim();
         if (!date_bon_livraison) {
             toast.error("La date du BL est obligatoire");
             return;
         }
 
+        setIsSubmitting(true);
         try {
-            const res = await fetch(`/api/bons-livraison/${bl.id}`, {
+            const res = await fetch(`/api/bons-livraison/${editingBon.id}`, {
                 method: "PUT",
                 headers: {
                     Authorization: `Bearer ${token}`,
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({ numero_bon_livraison, date_bon_livraison }),
+                body: JSON.stringify({
+                    numero_bon_livraison,
+                    date_bon_livraison,
+                    statut: editStatutBon,
+                    montant_ht: editTotals.totalHT,
+                    montant_tva: editTotals.totalTVA,
+                    montant_ttc: editTotals.totalTTC,
+                    items: editItems,
+                }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || "Erreur lors de la modification du BL");
             toast.success("Bon de livraison modifié");
+            cancelEditBon();
             await fetchData();
         } catch (e: any) {
             toast.error(e.message || "Erreur lors de la modification");
+        } finally {
+            setIsSubmitting(false);
         }
-    };
-
-    const openDeleteDialog = (bl: BonLivraison) => {
-        setBonToDelete(bl);
-        setDeleteDialogOpen(true);
     };
 
     const confirmDeleteBon = async () => {
@@ -444,13 +529,22 @@ export default function BonsLivraison() {
     };
 
     useEffect(() => {
-        const state = location.state as { commandeId?: number } | null;
+        const state = location.state as { commandeId?: number; editBonId?: number } | null;
+        if (state?.editBonId) {
+            const target = bons.find((b) => b.id === Number(state.editBonId));
+            if (target) openEditBonForm(target);
+            window.history.replaceState({}, document.title);
+            return;
+        }
         if (!state?.commandeId) return;
         const cmdId = String(state.commandeId);
+        setEditingBon(null);
+        setEditNumeroBon("");
+        setEditDateBon("");
         setActiveTab("form");
         setSelectedCommandeId(cmdId);
         window.history.replaceState({}, document.title);
-    }, [location.state]);
+    }, [location.state, bons]);
 
     return (
         <div className="space-y-6">
@@ -465,7 +559,13 @@ export default function BonsLivraison() {
                     </p>
                 </div>
                 <Button
-                    onClick={() => setActiveTab("form")}
+                    onClick={() => {
+                        setEditingBon(null);
+                        setEditNumeroBon("");
+                        setEditDateBon("");
+                        setSelectedCommandeId("");
+                        setActiveTab("form");
+                    }}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white"
                 >
                     <Plus className="h-4 w-4 mr-2" />
@@ -700,12 +800,23 @@ export default function BonsLivraison() {
                                                         />
                                                     </TableCell>
                                                     <TableCell className="pl-6 py-4">
-                                                        <Link
-                                                            to={`/dashboard/bons-livraison/${bl.id}`}
-                                                            className="text-left text-[15px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
-                                                        >
-                                                            {bl.numero_bon_livraison}
-                                                        </Link>
+                                                        <div className="inline-flex items-center gap-1">
+                                                            <Link
+                                                                to={`/dashboard/bons-livraison/${bl.id}`}
+                                                                className="text-left text-[15px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                                                            >
+                                                                {bl.numero_bon_livraison}
+                                                            </Link>
+                                                            <a
+                                                                href={`/dashboard/bons-livraison/${bl.id}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                                                                aria-label={`Ouvrir BL ${bl.numero_bon_livraison} dans un nouvel onglet`}
+                                                            >
+                                                                <ArrowUpRight className="h-3.5 w-3.5" />
+                                                            </a>
+                                                        </div>
                                                         <div className="flex gap-2 mt-1">
                                                             {Boolean(bl.numero_commande) && (
                                                                 <span className="text-[9px] text-indigo-600 dark:text-indigo-400 flex items-center gap-0.5 font-bold uppercase tracking-tighter bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
@@ -725,7 +836,16 @@ export default function BonsLivraison() {
                                                         </div>
                                                     </TableCell>
                                                     <TableCell className="py-4">
-                                                        <span className="font-medium">{bl.numero_commande || "—"}</span>
+                                                        {bl.commande_id && bl.numero_commande ? (
+                                                            <Link
+                                                                to={`/dashboard/commandes/${bl.commande_id}`}
+                                                                className="font-medium text-indigo-600 hover:underline"
+                                                            >
+                                                                {bl.numero_commande}
+                                                            </Link>
+                                                        ) : (
+                                                            <span className="font-medium">{bl.numero_commande || "—"}</span>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="py-4">
                                                         <div className="flex items-start gap-2">
@@ -778,14 +898,8 @@ export default function BonsLivraison() {
                                                                 </Button>
                                                             </DropdownMenuTrigger>
                                                             <DropdownMenuContent align="end" className="w-56">
-                                                                <DropdownMenuItem className="cursor-pointer" onClick={() => updateBon(bl)}>
+                                                                <DropdownMenuItem className="cursor-pointer" onClick={() => openEditBonForm(bl)}>
                                                                     <Pencil className="h-4 w-4" /> Modifier
-                                                                </DropdownMenuItem>
-                                                                <DropdownMenuItem
-                                                                    className="cursor-pointer text-red-600 focus:text-red-600"
-                                                                    onClick={() => openDeleteDialog(bl)}
-                                                                >
-                                                             <Trash className="h-4 w-4" color="red" />        Supprimer
                                                                 </DropdownMenuItem>
                                                             </DropdownMenuContent>
                                                         </DropdownMenu>
@@ -803,20 +917,145 @@ export default function BonsLivraison() {
                 </TabsContent>
 
                 <TabsContent value="form" className="mt-4">
-                    <Card className="border border-border shadow-2xl bg-card animate-in fade-in zoom-in-95 duration-300 overflow-hidden">
-                        <div className="h-2 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-t-2xl"></div>
-                        <CardHeader>
+                    {editingBon ? (
+                        <Card className="border border-border shadow-md bg-card overflow-hidden">
+                            <div className="h-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-red-500" />
+                            <CardHeader className="pb-4">
+                                <CardTitle className="text-lg">Modifier le bon de livraison</CardTitle>
+                                <CardDescription>
+                                    Mise à jour directe du BL <span className="font-semibold">{editingBon.numero_bon_livraison}</span>.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">N° BL *</Label>
+                                        <Input
+                                            value={editNumeroBon}
+                                            onChange={(e) => setEditNumeroBon(e.target.value)}
+                                            placeholder="BL-20260430-0001"
+                                            className="h-11"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Date BL *</Label>
+                                        <Input
+                                            type="date"
+                                            value={editDateBon}
+                                            onChange={(e) => setEditDateBon(e.target.value)}
+                                            className="h-11"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Statut</Label>
+                                        <Select value={editStatutBon} onValueChange={setEditStatutBon}>
+                                            <SelectTrigger className="h-11">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="en_attente">En attente</SelectItem>
+                                                <SelectItem value="livree">Livré</SelectItem>
+                                                <SelectItem value="annulee">Annulé</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+                                <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                                    <span className="font-medium">Commande liée :</span> {editingBon.numero_commande || "—"}
+                                </div>
+                                <div className="rounded-xl border border-border overflow-hidden">
+                                    <div className="px-4 py-3 border-b border-border bg-muted/40">
+                                        <p className="text-sm font-semibold text-foreground">Lignes BL (modifiable)</p>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow className="bg-muted/50 border-b border-border">
+                                                    <TableHead>Désignation</TableHead>
+                                                    <TableHead className="text-center">Qté</TableHead>
+                                                    <TableHead className="text-right">PU</TableHead>
+                                                    <TableHead className="text-center">TVA %</TableHead>
+                                                    <TableHead className="text-center">Réduction %</TableHead>
+                                                    <TableHead className="text-right">Montant HT</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {isLoadingEditDetails ? (
+                                                    <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">Chargement...</TableCell></TableRow>
+                                                ) : editItems.length === 0 ? (
+                                                    <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">Aucune ligne.</TableCell></TableRow>
+                                                ) : (
+                                                    editItems.map((it, idx) => (
+                                                        <TableRow key={idx}>
+                                                            <TableCell className="min-w-[220px]">
+                                                                <Input value={it.designation || ""} onChange={(e) => updateEditItem(idx, { designation: e.target.value })} />
+                                                            </TableCell>
+                                                            <TableCell className="text-center min-w-[100px]">
+                                                                <Input type="number" value={Number(it.quantite || 0)} onChange={(e) => updateEditItem(idx, { quantite: Number(e.target.value) })} />
+                                                            </TableCell>
+                                                            <TableCell className="text-right min-w-[140px]">
+                                                                <Input type="number" value={Number(it.prix_unitaire || 0)} onChange={(e) => updateEditItem(idx, { prix_unitaire: Number(e.target.value) })} />
+                                                            </TableCell>
+                                                            <TableCell className="text-center min-w-[120px]">
+                                                                <Input type="number" value={Number(it.tva || 0)} onChange={(e) => updateEditItem(idx, { tva: Number(e.target.value) })} />
+                                                            </TableCell>
+                                                            <TableCell className="text-center min-w-[140px]">
+                                                                <Input type="number" value={Number(it.reduction || 0)} onChange={(e) => updateEditItem(idx, { reduction: Number(e.target.value) })} />
+                                                            </TableCell>
+                                                            <TableCell className="text-right font-semibold">
+                                                                {Number(it.montant_ht || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))
+                                                )}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div className="rounded-lg border border-border p-3">
+                                        <p className="text-[11px] uppercase text-muted-foreground">Total HT</p>
+                                        <p className="font-semibold">{editTotals.totalHT.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD</p>
+                                    </div>
+                                    <div className="rounded-lg border border-border p-3">
+                                        <p className="text-[11px] uppercase text-muted-foreground">Montant TVA</p>
+                                        <p className="font-semibold">{editTotals.totalTVA.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD</p>
+                                    </div>
+                                    <div className="rounded-lg border border-border p-3">
+                                        <p className="text-[11px] uppercase text-muted-foreground">Total TTC</p>
+                                        <p className="font-semibold text-indigo-700">{editTotals.totalTTC.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD</p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-4 pt-2 border-t border-border">
+                                    <Button variant="ghost" onClick={cancelEditBon} className="h-12 px-8 text-muted-foreground hover:text-foreground">
+                                        Annuler
+                                    </Button>
+                                    <Button
+                                        onClick={updateBon}
+                                        disabled={isSubmitting || !editNumeroBon.trim() || !editDateBon.trim()}
+                                        className="h-12 flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md shadow-indigo-200 dark:shadow-none"
+                                    >
+                                        {isSubmitting ? "Enregistrement..." : "Enregistrer les modifications"}
+                                        <ArrowRight className="h-4 w-4 ml-2" />
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                    <Card className="border border-border shadow-md bg-card overflow-hidden">
+                        <div className="h-1.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
+                        <CardHeader className="pb-4">
                             <CardTitle className="text-lg">Création du bon de livraison</CardTitle>
                             <CardDescription>
-                                Sélectionnez une commande validée/non liée pour importer automatiquement ses éléments.
+                                Choisissez une commande validée/non liée pour importer ses lignes automatiquement.
                             </CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <CardContent className="space-y-5">
+                            <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4">
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Commande source *</Label>
                                     <Select value={selectedCommandeId} onValueChange={setSelectedCommandeId}>
-                                        <SelectTrigger className="h-11 border-indigo-200 bg-indigo-50/30">
+                                        <SelectTrigger className="h-11 border-indigo-200 bg-background">
                                             <SelectValue placeholder="Choisir une commande" />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -827,135 +1066,124 @@ export default function BonsLivraison() {
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    <p className="text-xs text-muted-foreground">
+                                        Les lignes, montants et informations client seront importés depuis cette commande.
+                                    </p>
                                 </div>
                             </div>
 
                             {selectedCommande && (
-                                <div className="rounded-xl border border-border bg-muted/20 p-4 text-sm grid grid-cols-1 md:grid-cols-3 gap-3">
-                                    <div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                                    <div className="rounded-lg border border-border bg-card p-3">
                                         <p className="text-[11px] uppercase text-muted-foreground">Commande</p>
-                                        <p className="font-semibold">{selectedCommande.numero_commande}</p>
+                                        <p className="font-semibold">{selectedCommande.numero_commande || "—"}</p>
                                     </div>
-                                    <div>
+                                    <div className="rounded-lg border border-border bg-card p-3">
                                         <p className="text-[11px] uppercase text-muted-foreground">Client</p>
                                         <p className="font-semibold">{selectedCommande.client_nom || "—"}</p>
                                     </div>
-                                    <div>
-                                        <p className="text-[11px] uppercase text-muted-foreground">Montant TTC</p>
-                                        <p className="font-semibold">
-                                            {Number(selectedCommande.montant_ttc || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
-                                        </p>
+                                    <div className="rounded-lg border border-border bg-card p-3">
+                                        <p className="text-[11px] uppercase text-muted-foreground">Point de vente</p>
+                                        <p className="font-semibold">{selectedCommande.point_de_vente_nom || "—"}</p>
+                                    </div>
+                                    <div className="rounded-lg border border-border bg-card p-3">
+                                        <p className="text-[11px] uppercase text-muted-foreground">Société</p>
+                                        <p className="font-semibold">{selectedCommande.sous_societe_nom || "—"}</p>
                                     </div>
                                 </div>
                             )}
 
-                            <div className="rounded-xl border border-border overflow-x-auto">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow className="bg-muted/50 border-b border-border">
-                                            <TableHead className="text-xs font-bold uppercase text-muted-foreground">Désignation</TableHead>
-                                            <TableHead className="text-xs font-bold uppercase text-muted-foreground text-center">Qté</TableHead>
-                                            <TableHead className="text-xs font-bold uppercase text-muted-foreground text-right">Prix unitaire</TableHead>
-                                            <TableHead className="text-xs font-bold uppercase text-muted-foreground text-center">TVA</TableHead>
-                                            <TableHead className="text-xs font-bold uppercase text-muted-foreground text-center">Réduction</TableHead>
-                                            <TableHead className="text-xs font-bold uppercase text-muted-foreground text-right">Montant HT</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {!selectedCommandeId ? (
-                                            <TableRow>
-                                                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                                                    Sélectionnez une commande pour importer ses éléments.
-                                                </TableCell>
+                            <div className="rounded-xl border border-border overflow-hidden">
+                                <div className="px-4 py-3 border-b border-border bg-muted/40">
+                                    <p className="text-sm font-semibold text-foreground">Lignes importées</p>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow className="bg-muted/50 border-b border-border">
+                                                <TableHead className="text-xs font-bold uppercase text-muted-foreground">Désignation</TableHead>
+                                                <TableHead className="text-xs font-bold uppercase text-muted-foreground text-center">Qté</TableHead>
+                                                <TableHead className="text-xs font-bold uppercase text-muted-foreground text-right">Prix unitaire</TableHead>
+                                                <TableHead className="text-xs font-bold uppercase text-muted-foreground text-center">TVA</TableHead>
+                                                <TableHead className="text-xs font-bold uppercase text-muted-foreground text-center">Réduction</TableHead>
+                                                <TableHead className="text-xs font-bold uppercase text-muted-foreground text-right">Montant HT</TableHead>
                                             </TableRow>
-                                        ) : isLoadingCommandeDetails ? (
-                                            <TableRow><TableCell colSpan={6} className="h-14" /></TableRow>
-                                        ) : !selectedCommandeDetails?.items?.length ? (
-                                            <TableRow>
-                                                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                                                    Aucun élément trouvé sur cette commande.
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : (
-                                            selectedCommandeDetails.items.map((it, idx) => (
-                                                <TableRow key={idx}>
-                                                    <TableCell className="font-medium">{it.designation || "—"}</TableCell>
-                                                    <TableCell className="text-center">{Number(it.quantite || 0)}</TableCell>
-                                                    <TableCell className="text-right">
-                                                        {Number(it.prix_unitaire || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
-                                                    </TableCell>
-                                                    <TableCell className="text-center">{Number(it.tva || 20).toFixed(2)} %</TableCell>
-                                                    <TableCell className="text-center">{Number(it.reduction || 0).toFixed(2)} %</TableCell>
-                                                    <TableCell className="text-right font-semibold">
-                                                        {Number(it.montant_ht || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
+                                        </TableHeader>
+                                        <TableBody>
+                                            {!selectedCommandeId ? (
+                                                <TableRow>
+                                                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                                                        Sélectionnez une commande pour afficher les lignes.
                                                     </TableCell>
                                                 </TableRow>
-                                            ))
-                                        )}
-                                    </TableBody>
-                                </Table>
+                                            ) : isLoadingCommandeDetails ? (
+                                                <TableRow><TableCell colSpan={6} className="h-14" /></TableRow>
+                                            ) : !selectedCommandeDetails?.items?.length ? (
+                                                <TableRow>
+                                                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                                                        Aucun élément trouvé sur cette commande.
+                                                    </TableCell>
+                                                </TableRow>
+                                            ) : (
+                                                selectedCommandeDetails.items.map((it, idx) => (
+                                                    <TableRow key={idx}>
+                                                        <TableCell className="font-medium">{it.designation || "—"}</TableCell>
+                                                        <TableCell className="text-center">{Number(it.quantite || 0)}</TableCell>
+                                                        <TableCell className="text-right">
+                                                            {Number(it.prix_unitaire || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
+                                                        </TableCell>
+                                                        <TableCell className="text-center">{Number(it.tva || 20).toFixed(2)} %</TableCell>
+                                                        <TableCell className="text-center">{Number(it.reduction || 0).toFixed(2)} %</TableCell>
+                                                        <TableCell className="text-right font-semibold">
+                                                            {Number(it.montant_ht || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))
+                                            )}
+                                        </TableBody>
+                                    </Table>
+                                </div>
                             </div>
 
-                            {selectedCommandeDetails && (
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                    <div className="rounded-lg border border-border p-3">
-                                        <p className="text-[11px] uppercase text-muted-foreground">Total HT</p>
-                                        <p className="font-semibold">
-                                            {Number(selectedCommandeDetails.montant_ht || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
-                                        </p>
-                                    </div>
-                                    <div className="rounded-lg border border-border p-3">
-                                        <p className="text-[11px] uppercase text-muted-foreground">Montant TVA</p>
-                                        <p className="font-semibold">
-                                            {Number(selectedCommandeDetails.montant_tva || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
-                                        </p>
-                                    </div>
-                                    <div className="rounded-lg border border-border p-3">
-                                        <p className="text-[11px] uppercase text-muted-foreground">Total TTC</p>
-                                        <p className="font-semibold text-indigo-700">
-                                            {Number(selectedCommandeDetails.montant_ttc || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
-                                        </p>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="bg-muted/50 rounded-2xl p-6 border border-border flex flex-col md:flex-row gap-8 justify-between items-center bg-card/50">
-                                <div className="flex gap-10 text-center md:text-left">
+                            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/80 via-background to-blue-50/70 p-5">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                                     <div>
-                                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant HT</p>
+                                        <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Montant HT</p>
                                         <p className="text-xl font-bold text-foreground">
                                             {Number(selectedCommandeDetails?.montant_ht || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">TVA</p>
+                                        <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">TVA</p>
                                         <p className="text-xl font-bold text-amber-600">
                                             {Number(selectedCommandeDetails?.montant_tva || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
                                         </p>
                                     </div>
-                                </div>
-                                <div className="h-16 w-px bg-border hidden md:block"></div>
-                                <div className="text-center md:text-right">
-                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Total TTC</p>
-                                    <p className="text-4xl font-black text-indigo-600 dark:text-indigo-400 drop-shadow-sm">
-                                        {Number(selectedCommandeDetails?.montant_ttc || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
-                                    </p>
+                                    <div className="md:text-right">
+                                        <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Total TTC</p>
+                                        <p className="text-3xl font-black text-indigo-600 dark:text-indigo-400">
+                                            {Number(selectedCommandeDetails?.montant_ttc || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="flex gap-4 pt-1 border-t border-border">
-                                <Button variant="ghost" onClick={() => setActiveTab("liste")} className="h-12 px-8 text-muted-foreground hover:text-foreground">Annuler</Button>
+                            <div className="flex gap-4 pt-2 border-t border-border">
+                                <Button variant="ghost" onClick={() => setActiveTab("liste")} className="h-12 px-8 text-muted-foreground hover:text-foreground">
+                                    Annuler
+                                </Button>
                                 <Button
                                     onClick={() => createFromCommande(Number(selectedCommandeId))}
                                     disabled={isSubmitting || !selectedCommandeId}
-                                    className="h-12 flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-100 dark:shadow-none"
+                                    className="h-12 flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md shadow-indigo-200 dark:shadow-none"
                                 >
-                                    {isSubmitting ? "Création..." : "Enregistrer le bon de livraison"}
+                                    {isSubmitting ? "Création..." : "Créer le bon de livraison"}
                                     <ArrowRight className="h-4 w-4 ml-2" />
                                 </Button>
                             </div>
                         </CardContent>
                     </Card>
+                    )}
                 </TabsContent>
             </Tabs>
 
