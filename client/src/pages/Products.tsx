@@ -1424,12 +1424,12 @@ export default function Products() {
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
-                                            <Label htmlFor="date_expiration" className="text-sm font-medium">Date d'expiration</Label>
-                                            <Input id="date_expiration" name="date_expiration" type="date" value={formData.date_expiration} onChange={handleInputChange} className="h-10" />
-                                        </div>
-                                        <div className="grid gap-1.5">
                                             <Label htmlFor="date_fabrication" className="text-sm font-medium">Date de fabrication</Label>
                                             <Input id="date_fabrication" name="date_fabrication" type="date" value={formData.date_fabrication} onChange={handleInputChange} className="h-10" />
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="date_expiration" className="text-sm font-medium">Date d'expiration</Label>
+                                            <Input id="date_expiration" name="date_expiration" type="date" value={formData.date_expiration} onChange={handleInputChange} className="h-10" />
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2462,14 +2462,15 @@ export default function Products() {
 
             {/* View Dialog */}
             <Dialog open={!!viewingProduct} onOpenChange={(open) => !open && setViewingProduct(null)}>
-                <DialogContent className="max-w-3xl">
-                    <DialogHeader>
+                <DialogContent className="w-[95vw] max-w-3xl h-[85vh] max-h-[85vh] overflow-hidden p-0 flex flex-col">
+                    <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
                         <DialogTitle className="flex items-center gap-2">
                             <Package className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
                             Détails du produit
                         </DialogTitle>
                     </DialogHeader>
                     {viewingProduct && (
+                        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="flex items-center justify-center bg-muted rounded-xl p-6 border border-border">
                                 {viewingProduct.photo ? (
@@ -2563,6 +2564,7 @@ export default function Products() {
                                     </div>
                                 )}
                             </div>
+                        </div>
                         </div>
                     )}
                 </DialogContent>
