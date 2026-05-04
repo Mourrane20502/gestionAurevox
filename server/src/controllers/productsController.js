@@ -11,6 +11,8 @@ const IMPORT_EXCLUDED_COLUMNS = new Set([
     "etat",
     "disponible",
     "code_barre",
+    "marge",
+    "date_creation",
 ]);
 
 const toNullableNumber = (value) => {
@@ -77,7 +79,13 @@ exports.createProduct = async (req, res) => {
         disponible,
         grammage,
         poids,
-        product_type_id
+        product_type_id,
+        prix_achat,
+        fournisseur_id,
+        num_serie,
+        date_expiration,
+        marque_id,
+        date_fabrication
     } = req.body;
     const photo = req.file ? req.file.filename : null;
 
@@ -97,10 +105,16 @@ exports.createProduct = async (req, res) => {
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
 
         const poidsValue = poids ?? grammage;
+        const parsedPrixAchat = toNullableNumber(prix_achat);
+        const fournisseurIdVal = toNullableNumber(fournisseur_id);
+        const marqueIdVal = toNullableNumber(marque_id);
+        const numSerieVal = toNullableString(num_serie);
+        const dateExpirationVal = toNullableString(date_expiration);
+        const dateFabricationVal = toNullableString(date_fabrication);
         const query = `
             INSERT INTO products
-            (id_point_de_vente, nom, id_categorie, photo, description, prix, poids, stock, code_barre, stock_alert, reference, etat, disponible, user_id, product_type_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id_point_de_vente, nom, id_categorie, photo, description, prix, prix_achat, fournisseur_id, poids, stock, code_barre, stock_alert, reference, etat, disponible, user_id, product_type_id, num_serie, date_expiration, date_fabrication, marque_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const [result] = await db.execute(query, [
@@ -110,6 +124,8 @@ exports.createProduct = async (req, res) => {
             photo,
             description || null,
             prixVal,
+            parsedPrixAchat,
+            fournisseurIdVal,
             poidsValue ? Number(poidsValue) : 0,
             stockVal,
             code_barre || null,
@@ -118,7 +134,11 @@ exports.createProduct = async (req, res) => {
             etat ?? 1,
             disponibleVal,
             req.user.id,
-            product_type_id || null
+            product_type_id || null,
+            numSerieVal,
+            dateExpirationVal,
+            dateFabricationVal,
+            marqueIdVal
         ]);
 
         // Log mouvement creation
@@ -155,7 +175,7 @@ exports.getAllProducts = async (req, res) => {
     try {
 
         const query = `
-            SELECT p.*, p.poids AS grammage, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name,
+            SELECT p.*, p.poids AS grammage, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom, m.nom AS marque_nom,
                    EXISTS(SELECT 1 FROM devis_items di WHERE di.produit_id = p.id LIMIT 1) AS has_devis_link,
                    EXISTS(SELECT 1 FROM commande_items ci WHERE ci.produit_id = p.id LIMIT 1) AS has_commande_link,
                    EXISTS(SELECT 1 FROM facture_items fi WHERE fi.produit_id = p.id LIMIT 1) AS has_facture_link
@@ -164,6 +184,8 @@ exports.getAllProducts = async (req, res) => {
             LEFT JOIN point_de_vente pdv ON p.id_point_de_vente = pdv.id
             LEFT JOIN users u ON p.user_id = u.id
             LEFT JOIN product_types pt ON p.product_type_id = pt.id
+            LEFT JOIN fournisseur f ON p.fournisseur_id = f.id
+            LEFT JOIN marques m ON p.marque_id = m.id
         `;
 
         const [rows] = await db.execute(query);
@@ -183,12 +205,14 @@ exports.getProductById = async (req, res) => {
     try {
 
         const [rows] = await db.execute(`
-            SELECT p.*, p.poids AS grammage, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name
+            SELECT p.*, p.poids AS grammage, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom, m.nom AS marque_nom
             FROM products p
             LEFT JOIN category c ON p.id_categorie = c.id
             LEFT JOIN point_de_vente pdv ON p.id_point_de_vente = pdv.id
             LEFT JOIN users u ON p.user_id = u.id
             LEFT JOIN product_types pt ON p.product_type_id = pt.id
+            LEFT JOIN fournisseur f ON p.fournisseur_id = f.id
+            LEFT JOIN marques m ON p.marque_id = m.id
             WHERE p.id = ?
         `, [id]);
 
@@ -223,7 +247,13 @@ exports.updateProduct = async (req, res) => {
         disponible,
         grammage,
         poids,
-        product_type_id
+        product_type_id,
+        prix_achat,
+        fournisseur_id,
+        num_serie,
+        date_expiration,
+        marque_id,
+        date_fabrication
     } = req.body;
 
     const newPhoto = req.file ? req.file.filename : null;
@@ -259,6 +289,12 @@ exports.updateProduct = async (req, res) => {
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
 
         const poidsValue = poids ?? grammage;
+        const parsedPrixAchat = toNullableNumber(prix_achat);
+        const fournisseurIdVal = toNullableNumber(fournisseur_id);
+        const marqueIdVal = toNullableNumber(marque_id);
+        const numSerieVal = toNullableString(num_serie);
+        const dateExpirationVal = toNullableString(date_expiration);
+        const dateFabricationVal = toNullableString(date_fabrication);
         const query = `
             UPDATE products SET
             id_point_de_vente = ?,
@@ -267,6 +303,8 @@ exports.updateProduct = async (req, res) => {
             photo = ?,
             description = ?,
             prix = ?,
+            prix_achat = ?,
+            fournisseur_id = ?,
             poids = ?,
             stock = ?,
             code_barre = ?,
@@ -274,7 +312,11 @@ exports.updateProduct = async (req, res) => {
             reference = ?,
             etat = ?,
             disponible = ?,
-            product_type_id = ?
+            product_type_id = ?,
+            num_serie = ?,
+            date_expiration = ?,
+            date_fabrication = ?,
+            marque_id = ?
             WHERE id = ?
         `;
 
@@ -285,6 +327,8 @@ exports.updateProduct = async (req, res) => {
             finalPhoto,
             description || null,
             prixVal,
+            parsedPrixAchat,
+            fournisseurIdVal,
             poidsValue ? Number(poidsValue) : 0,
             stockVal,
             code_barre || null,
@@ -293,6 +337,10 @@ exports.updateProduct = async (req, res) => {
             etat ?? 1,
             disponibleVal,
             product_type_id || null,
+            numSerieVal,
+            dateExpirationVal,
+            dateFabricationVal,
+            marqueIdVal,
             id
         ]);
 

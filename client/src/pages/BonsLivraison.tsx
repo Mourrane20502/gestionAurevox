@@ -36,7 +36,7 @@ import {
     DialogTitle,
 } from "@/components/common/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { PackageOpen, Plus, FileText, ArrowRight, Search, ListOrdered, MoreVertical, Calendar, User, Pencil, Filter, FileSpreadsheet, Printer, BarChart3, CheckCircle2, Trash, ArrowUpRight } from "lucide-react";
+import { PackageOpen, Plus, FileText, ArrowRight, Search, ListOrdered, MoreVertical, Calendar, User, Pencil, Filter, FileSpreadsheet, Printer, BarChart3, CheckCircle2, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
@@ -122,12 +122,6 @@ export default function BonsLivraison() {
     const [filterSociete, setFilterSociete] = useState<string>("all");
     const [filterUser, setFilterUser] = useState<string>("all");
     const [reportOpen, setReportOpen] = useState(false);
-    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-    const [bonToDelete, setBonToDelete] = useState<BonLivraison | null>(null);
-    const [isDeleting, setIsDeleting] = useState(false);
-    const [selectedIds, setSelectedIds] = useState<number[]>([]);
-    const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
-    const [isBulkDeleting, setIsBulkDeleting] = useState(false);
     const [editingBon, setEditingBon] = useState<BonLivraison | null>(null);
     const [editNumeroBon, setEditNumeroBon] = useState("");
     const [editDateBon, setEditDateBon] = useState("");
@@ -288,20 +282,6 @@ export default function BonsLivraison() {
         };
     }, [filteredBons]);
 
-    useEffect(() => {
-        const visibleIds = new Set(filteredBons.map((b) => b.id));
-        setSelectedIds((prev) => prev.filter((id) => visibleIds.has(id)));
-    }, [filteredBons]);
-
-    const toggleSelectAll = () => {
-        const ids = filteredBons.map((b) => b.id);
-        const allSelected = ids.length > 0 && ids.every((id) => selectedIds.includes(id));
-        setSelectedIds(allSelected ? [] : ids);
-    };
-
-    const toggleSelectOne = (id: number) => {
-        setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-    };
 
     const handleExportExcel = () => {
         const headers = ["N° BL", "Commande", "Client", "Date", "Montant TTC", "Statut"];
@@ -478,55 +458,6 @@ export default function BonsLivraison() {
         }
     };
 
-    const confirmDeleteBon = async () => {
-        if (!token) return;
-        if (!bonToDelete) return;
-        setIsDeleting(true);
-
-        try {
-            const res = await fetch(`/api/bons-livraison/${bonToDelete.id}`, {
-                method: "DELETE",
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.message || "Erreur lors de la suppression du BL");
-            toast.success("Bon de livraison supprimé");
-            setDeleteDialogOpen(false);
-            setBonToDelete(null);
-            await fetchData();
-        } catch (e: any) {
-            toast.error(e.message || "Erreur lors de la suppression");
-        } finally {
-            setIsDeleting(false);
-        }
-    };
-
-    const confirmBulkDelete = async () => {
-        if (!token || selectedIds.length === 0) return;
-        setIsBulkDeleting(true);
-        try {
-            await Promise.all(
-                selectedIds.map(async (id) => {
-                    const res = await fetch(`/api/bons-livraison/${id}`, {
-                        method: "DELETE",
-                        headers: { Authorization: `Bearer ${token}` },
-                    });
-                    if (!res.ok) {
-                        const data = await res.json().catch(() => ({}));
-                        throw new Error(data.message || `Suppression BL ${id} impossible`);
-                    }
-                })
-            );
-            toast.success("Bons de livraison supprimés");
-            setBulkDeleteDialogOpen(false);
-            setSelectedIds([]);
-            await fetchData();
-        } catch (e: any) {
-            toast.error(e.message || "Erreur lors de la suppression en masse");
-        } finally {
-            setIsBulkDeleting(false);
-        }
-    };
 
     useEffect(() => {
         const state = location.state as { commandeId?: number; editBonId?: number } | null;
@@ -671,16 +602,6 @@ export default function BonsLivraison() {
                                         <BarChart3 className="h-4 w-4" />
                                         <span className="hidden sm:inline">Rapport</span>
                                     </Button>
-                                    {selectedIds.length > 0 && (
-                                        <Button
-                                            variant="destructive"
-                                            className="h-11 px-4 rounded-xl gap-2 bg-red-600 hover:bg-red-700"
-                                            onClick={() => setBulkDeleteDialogOpen(true)}
-                                        >
-                                            <Trash className="h-4 w-4" />
-                                            <span>Supprimer ({selectedIds.length})</span>
-                                        </Button>
-                                    )}
                                 </div>
                             </div>
                             {showFilters && (
@@ -746,14 +667,6 @@ export default function BonsLivraison() {
                                 <Table className="min-w-[980px]">
                                     <TableHeader>
                                         <TableRow className="bg-muted/50 border-b border-border">
-                                            <TableHead className="w-12 py-4 pl-6">
-                                                <input
-                                                    type="checkbox"
-                                                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                                                    checked={filteredBons.length > 0 && filteredBons.every((b) => selectedIds.includes(b.id))}
-                                                    onChange={toggleSelectAll}
-                                                />
-                                            </TableHead>
                                             <TableHead className="w-[180px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap pl-6">N° BL</TableHead>
                                             <TableHead className="w-[180px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Commande source</TableHead>
                                             <TableHead className="w-[300px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Client / Point de vente</TableHead>
@@ -768,7 +681,6 @@ export default function BonsLivraison() {
                                         {isLoading ? (
                                             Array.from({ length: 5 }).map((_, i) => (
                                                 <TableRow key={i} className="animate-pulse border-b border-border">
-                                                    <TableCell className="pl-6"><div className="h-4 w-4 bg-muted rounded" /></TableCell>
                                                     <TableCell className="pl-6"><div className="h-4 w-24 bg-muted rounded" /></TableCell>
                                                     <TableCell><div className="h-4 w-24 bg-muted rounded" /></TableCell>
                                                     <TableCell><div className="h-4 w-32 bg-muted rounded" /></TableCell>
@@ -781,7 +693,7 @@ export default function BonsLivraison() {
                                             ))
                                         ) : filteredBons.length === 0 ? (
                                             <TableRow>
-                                                <TableCell colSpan={9} className="py-20 text-center text-muted-foreground">
+                                                <TableCell colSpan={8} className="py-20 text-center text-muted-foreground">
                                                     Aucun bon de livraison pour le moment.
                                                 </TableCell>
                                             </TableRow>
@@ -791,14 +703,6 @@ export default function BonsLivraison() {
                                                     const normalizedStatus = normalizeBlStatus(bl.statut);
                                                     return (
                                                 <TableRow key={bl.id} className="group hover:bg-muted/30 transition-colors border-b border-border last:border-0">
-                                                    <TableCell className="w-12 py-4 pl-6">
-                                                        <input
-                                                            type="checkbox"
-                                                            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                                                            checked={selectedIds.includes(bl.id)}
-                                                            onChange={() => toggleSelectOne(bl.id)}
-                                                        />
-                                                    </TableCell>
                                                     <TableCell className="pl-6 py-4">
                                                         <div className="inline-flex items-center gap-1">
                                                             <Link
@@ -1186,62 +1090,6 @@ export default function BonsLivraison() {
                     )}
                 </TabsContent>
             </Tabs>
-
-            <Dialog
-                open={deleteDialogOpen}
-                onOpenChange={(open) => {
-                    setDeleteDialogOpen(open);
-                    if (!open) setBonToDelete(null);
-                }}
-            >
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle className="text-red-500">Supprimer le bon de livraison ?</DialogTitle>
-                        <DialogDescription>
-                            Cette action est irreversible. Le BL{" "}
-                            <span className="font-semibold">{bonToDelete?.numero_bon_livraison || ""}</span> sera supprime
-                            definitivement avec ses lignes.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)} disabled={isDeleting}>
-                            Annuler
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={confirmDeleteBon}
-                            disabled={isDeleting || !bonToDelete}
-                            className="bg-red-600 hover:bg-red-700"
-                        >
-                            {isDeleting ? "Suppression..." : "Supprimer"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle className="text-red-500">Supprimer la sélection ?</DialogTitle>
-                        <DialogDescription>
-                            Cette action est irreversible. {selectedIds.length} bon(s) de livraison vont être supprimés.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setBulkDeleteDialogOpen(false)} disabled={isBulkDeleting}>
-                            Annuler
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={confirmBulkDelete}
-                            disabled={isBulkDeleting || selectedIds.length === 0}
-                            className="bg-red-600 hover:bg-red-700"
-                        >
-                            {isBulkDeleting ? "Suppression..." : "Supprimer"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
 
             <Dialog open={reportOpen} onOpenChange={setReportOpen}>
                 <DialogContent className="max-w-2xl">

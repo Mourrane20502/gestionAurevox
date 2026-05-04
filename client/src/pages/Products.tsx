@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Plus, Search, Package, AlertTriangle, Tag, Store, QrCode, ShoppingCart, Bell, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, SlidersHorizontal, X, RotateCcw, Download, FileSpreadsheet, Camera, MoreVertical, Trash2, LayoutGrid, Upload, Table as TableIcon } from "lucide-react";
@@ -76,6 +76,16 @@ interface Product {
     creator_prenom?: string;
     product_type_id?: number;
     product_type_name?: string;
+    prix_achat?: number;
+    fournisseur_id?: number;
+    fournisseur_nom?: string;
+    num_serie?: string;
+    date_expiration?: string;
+    date_fabrication?: string;
+    date_creation?: string;
+    marque_id?: number;
+    marque_nom?: string;
+    marge?: number;
     has_devis_link?: number | boolean;
     has_commande_link?: number | boolean;
     has_facture_link?: number | boolean;
@@ -98,6 +108,17 @@ interface Category {
 }
 
 interface PointDeVente {
+    id: number;
+    nom: string;
+}
+
+interface Marque {
+    id: number;
+    nom: string;
+    etat?: number;
+}
+
+interface Fournisseur {
     id: number;
     nom: string;
 }
@@ -134,6 +155,8 @@ export default function Products() {
     const [categories, setCategories] = useState<Category[]>([]);
     const [pointsDeVente, setPointsDeVente] = useState<PointDeVente[]>([]);
     const [productTypes, setProductTypes] = useState<ProductType[]>([]);
+    const [marques, setMarques] = useState<Marque[]>([]);
+    const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
     const [gestionnaireName, setGestionnaireName] = useState<string>("AUREVOX AGENCY");
     const [gestionnaireLogoPath, setGestionnaireLogoPath] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -142,10 +165,17 @@ export default function Products() {
     const [filterPdv, setFilterPdv] = useState("");
     const [filterCategory, setFilterCategory] = useState("");
     const [filterProductType, setFilterProductType] = useState("");
+    const [filterFournisseur, setFilterFournisseur] = useState("");
+    const [filterMarque, setFilterMarque] = useState("");
+    const [filterNumSerie, setFilterNumSerie] = useState("");
+    const [filterDateExpiration, setFilterDateExpiration] = useState("");
+    const [filterDateFabrication, setFilterDateFabrication] = useState("");
+    const [filterMargeMin, setFilterMargeMin] = useState("");
+    const [filterMargeMax, setFilterMargeMax] = useState("");
     const [filterPriceSort, setFilterPriceSort] = useState<"" | "asc" | "desc">("");
     const [filterDisponibilite, setFilterDisponibilite] = useState<"" | "disponible" | "epuise">("");
     const [showFilters, setShowFilters] = useState(false);
-    const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+    const [viewMode, setViewMode] = useState<"grid" | "table">("table");
 
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
@@ -180,28 +210,44 @@ export default function Products() {
         disponible: "true",
         poids: "",
         product_type_id: "",
+        prix_achat: "",
+        fournisseur_id: "",
+        num_serie: "",
+        date_expiration: "",
+        date_fabrication: "",
+        marque_id: "",
         photo: null as File | null,
     });
     const [productActionsByRole, setProductActionsByRole] = useState<Record<string, ProductActionConfig>>(
         defaultProductActionsByRole
     );
+    const computedMarge = useMemo(() => {
+        const prixVente = Number(formData.prix);
+        const prixAchat = Number(formData.prix_achat);
+        if (!Number.isFinite(prixVente) || !Number.isFinite(prixAchat)) return "";
+        return (prixVente - prixAchat).toFixed(2);
+    }, [formData.prix, formData.prix_achat]);
 
     const token = localStorage.getItem("token");
 
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [productsRes, categoriesRes, pdvRes, productTypesRes, gestionnaireRes] = await Promise.all([
+            const [productsRes, categoriesRes, pdvRes, productTypesRes, gestionnaireRes, marquesRes, fournisseursRes] = await Promise.all([
                 fetch("/api/products", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/categories", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/pdv", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/product-types", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/gestionnaires", { headers: { Authorization: `Bearer ${token}` } }),
+                fetch("/api/settings/marques", { headers: { Authorization: `Bearer ${token}` } }),
+                fetch("/api/fournisseurs", { headers: { Authorization: `Bearer ${token}` } }),
             ]);
             if (productsRes.ok) setProducts(await productsRes.json());
             if (categoriesRes.ok) setCategories(await categoriesRes.json());
             if (pdvRes.ok) setPointsDeVente(await pdvRes.json());
             if (productTypesRes.ok) setProductTypes(await productTypesRes.json());
+            if (marquesRes.ok) setMarques(await marquesRes.json());
+            if (fournisseursRes.ok) setFournisseurs(await fournisseursRes.json());
             if (gestionnaireRes.ok) {
                 const gestionnaires = await gestionnaireRes.json();
                 if (Array.isArray(gestionnaires) && gestionnaires.length > 0) {
@@ -578,6 +624,12 @@ export default function Products() {
             disponible: product.disponible === 0 || product.disponible === false ? "false" : "true",
             poids: (product.poids ?? product.grammage)?.toString() || "",
             product_type_id: product.product_type_id?.toString() || "",
+            prix_achat: product.prix_achat?.toString() || "",
+            fournisseur_id: product.fournisseur_id?.toString() || "",
+            num_serie: product.num_serie || "",
+            date_expiration: product.date_expiration ? String(product.date_expiration).slice(0, 10) : "",
+            date_fabrication: product.date_fabrication ? String(product.date_fabrication).slice(0, 10) : "",
+            marque_id: product.marque_id?.toString() || "",
             photo: null,
         });
         setIsDialogOpen(true);
@@ -588,7 +640,7 @@ export default function Products() {
             nom: "", description: "", prix: "", stock: "",
             id_categorie: "", id_point_de_vente: "", code_barre: "",
             stock_alert: "1", reference: "", etat: "1", disponible: "true", poids: "",
-            product_type_id: "", photo: null,
+            product_type_id: "", prix_achat: "", fournisseur_id: "", num_serie: "", date_expiration: "", date_fabrication: "", marque_id: "", photo: null,
         });
     };
 
@@ -598,6 +650,13 @@ export default function Products() {
         filterPdv,
         filterCategory,
         filterProductType,
+        filterFournisseur,
+        filterMarque,
+        filterNumSerie,
+        filterDateExpiration,
+        filterDateFabrication,
+        filterMargeMin,
+        filterMargeMax,
         filterPriceSort,
         filterDisponibilite,
     ].filter(Boolean).length;
@@ -608,6 +667,13 @@ export default function Products() {
         setFilterPdv("");
         setFilterCategory("");
         setFilterProductType("");
+        setFilterFournisseur("");
+        setFilterMarque("");
+        setFilterNumSerie("");
+        setFilterDateExpiration("");
+        setFilterDateFabrication("");
+        setFilterMargeMin("");
+        setFilterMargeMax("");
         setFilterPriceSort("");
         setFilterDisponibilite("");
     };
@@ -633,13 +699,44 @@ export default function Products() {
         const matchesProductType = filterProductType
             ? p.product_type_id?.toString() === filterProductType
             : true;
+        const matchesFournisseur = filterFournisseur
+            ? p.fournisseur_id?.toString() === filterFournisseur
+            : true;
+        const matchesMarque = filterMarque
+            ? p.marque_id?.toString() === filterMarque
+            : true;
+        const matchesNumSerie = filterNumSerie
+            ? (p.num_serie || "").toLowerCase().includes(filterNumSerie.toLowerCase())
+            : true;
+        const rowExpiration = p.date_expiration ? String(p.date_expiration).slice(0, 10) : "";
+        const rowFabrication = p.date_fabrication ? String(p.date_fabrication).slice(0, 10) : "";
+        const matchesDateExpiration = filterDateExpiration ? rowExpiration === filterDateExpiration : true;
+        const matchesDateFabrication = filterDateFabrication ? rowFabrication === filterDateFabrication : true;
+        const margeValue = Number(p.marge ?? ((Number(p.prix) || 0) - (Number(p.prix_achat) || 0)));
+        const margeMinVal = filterMargeMin === "" ? null : Number(filterMargeMin);
+        const margeMaxVal = filterMargeMax === "" ? null : Number(filterMargeMax);
+        const matchesMargeMin = margeMinVal == null || Number.isNaN(margeMinVal) ? true : margeValue >= margeMinVal;
+        const matchesMargeMax = margeMaxVal == null || Number.isNaN(margeMaxVal) ? true : margeValue <= margeMaxVal;
         const matchesDisponibilite = filterDisponibilite
             ? (filterDisponibilite === "disponible"
                 ? isProductAvailableForFilter(p)
                 : !isProductAvailableForFilter(p))
             : true;
         const matchesLowStock = showOnlyLowStock ? (p.stock_alert && p.stock <= p.stock_alert) : true;
-        return matchesSearch && matchesReference && matchesPdv && matchesCategory && matchesProductType && matchesDisponibilite && matchesLowStock;
+        return matchesSearch
+            && matchesReference
+            && matchesPdv
+            && matchesCategory
+            && matchesProductType
+            && matchesFournisseur
+            && matchesMarque
+            && matchesNumSerie
+            && matchesDateExpiration
+            && matchesDateFabrication
+            && matchesMargeMin
+            && matchesMargeMax
+            && matchesDisponibilite
+            && matchesLowStock;
     })
     .sort((a, b) => {
         if (!filterPriceSort) return 0;
@@ -698,6 +795,13 @@ export default function Products() {
         "Catégorie": p.category_name || "—",
         "Type": p.product_type_name || "—",
         "Prix (DH)": formatProductPrice(p),
+        "Prix d'achat (DH)": p.prix_achat != null ? `${Number(p.prix_achat).toFixed(2)} DH` : "—",
+        "Marge (DH)": p.marge != null ? `${Number(p.marge).toFixed(2)} DH` : `${((Number(p.prix) || 0) - (Number(p.prix_achat) || 0)).toFixed(2)} DH`,
+        "Marque": p.marque_nom || "—",
+        "Fournisseur": p.fournisseur_nom || "—",
+        "N° série": p.num_serie || "—",
+        "Date fabrication": p.date_fabrication ? String(p.date_fabrication).slice(0, 10) : "—",
+        "Date expiration": p.date_expiration ? String(p.date_expiration).slice(0, 10) : "—",
         "Stock": p.stock,
         "Point de vente": p.point_de_vente_name || "—",
         "Disponibilité": (p.disponible === 0 || p.disponible === false) ? "Non disponible" : "Disponible",
@@ -705,7 +809,7 @@ export default function Products() {
 
     const exportToPDF = async () => {
         try {
-            const doc = new jsPDF({ orientation: "landscape" });
+            const doc = new jsPDF({ orientation: "landscape", format: "a3" });
             const pageWidth = doc.internal.pageSize.getWidth();
 
             // Image loading helper (converts to base64 for better PDF reliability)
@@ -789,6 +893,13 @@ export default function Products() {
                 p.reference || "—",
                 p.category_name || "—",
                 formatProductPrice(p),
+                p.prix_achat != null ? `${Number(p.prix_achat).toFixed(2)} DH` : "—",
+                p.marge != null ? `${Number(p.marge).toFixed(2)} DH` : `${((Number(p.prix) || 0) - (Number(p.prix_achat) || 0)).toFixed(2)} DH`,
+                p.marque_nom || "—",
+                p.fournisseur_nom || "—",
+                p.num_serie || "—",
+                p.date_fabrication ? String(p.date_fabrication).slice(0, 10) : "—",
+                p.date_expiration ? String(p.date_expiration).slice(0, 10) : "—",
                 p.stock.toString(),
                 p.point_de_vente_name || "—",
                 (p.disponible === 0 || p.disponible === false) ? "Non disponible" : "Disponible",
@@ -796,20 +907,36 @@ export default function Products() {
 
             autoTable(doc, {
                 startY: 48,
-                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix", "Stock", "Point de vente", "Disponibilité"]],
+                head: [[
+                    "Photo",
+                    "Nom",
+                    "Référence",
+                    "Catégorie",
+                    "Prix",
+                    "Achat",
+                    "Marge",
+                    "Marque",
+                    "Fournisseur",
+                    "Série",
+                    "Fab",
+                    "Exp",
+                    "Stock",
+                    "PDV",
+                    "Dispo"
+                ]],
                 body: tableData,
                 theme: "grid",
                 headStyles: {
                     fillColor: [67, 56, 202],
                     textColor: 255,
-                    fontSize: 9,
+                    fontSize: 8,
                     fontStyle: "bold",
                     halign: "center",
-                    cellPadding: 4,
+                    cellPadding: 3,
                 },
                 bodyStyles: {
-                    fontSize: 8,
-                    cellPadding: 4,
+                    fontSize: 7,
+                    cellPadding: 3,
                     minCellHeight: 18,
                     valign: "middle",
                 },
@@ -818,10 +945,20 @@ export default function Products() {
                 },
                 columnStyles: {
                     0: { cellWidth: 20, halign: "center" }, // Photo
-                    1: { fontStyle: "bold", cellWidth: 40 }, // Nom
-                    4: { halign: "right" }, // Prix
-                    5: { halign: "center" }, // Stock
-                    7: { halign: "center" }, // Disponibilité
+                    1: { fontStyle: "bold", cellWidth: 42 }, // Nom
+                    2: { cellWidth: 30 }, // Référence
+                    3: { cellWidth: 28 }, // Catégorie
+                    4: { halign: "right", cellWidth: 22 }, // Prix
+                    5: { halign: "right", cellWidth: 22 }, // Achat
+                    6: { halign: "right", cellWidth: 22 }, // Marge
+                    7: { cellWidth: 22 }, // Marque
+                    8: { cellWidth: 30 }, // Fournisseur
+                    9: { cellWidth: 24 }, // Série
+                    10: { cellWidth: 20 }, // Fab
+                    11: { cellWidth: 20 }, // Exp
+                    12: { halign: "center", cellWidth: 16 }, // Stock
+                    13: { cellWidth: 32 }, // PDV
+                    14: { halign: "center", cellWidth: 20 }, // Dispo
                 },
                 didDrawCell: (data) => {
                     if (data.section === "body" && data.column.index === 0) {
@@ -884,7 +1021,15 @@ export default function Products() {
                 { wch: 30 }, // Nom
                 { wch: 18 }, // Référence
                 { wch: 18 }, // Catégorie
+                { wch: 16 }, // Type
                 { wch: 14 }, // Prix
+                { wch: 16 }, // Prix d'achat
+                { wch: 14 }, // Marge
+                { wch: 16 }, // Marque
+                { wch: 20 }, // Fournisseur
+                { wch: 18 }, // N° série
+                { wch: 16 }, // Date fabrication
+                { wch: 16 }, // Date expiration
                 { wch: 10 }, // Stock
                 { wch: 20 }, // Point de vente
                 { wch: 18 }, // Disponibilité
@@ -1176,11 +1321,12 @@ export default function Products() {
                                         </div>
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Type de produit</Label>
-                                            <Select onValueChange={(v) => handleSelectChange("product_type_id", v)} value={formData.product_type_id}>
+                                            <Select onValueChange={(v) => handleSelectChange("product_type_id", v === "__none__" ? "" : v)} value={formData.product_type_id || "__none__"}>
                                                 <SelectTrigger className="h-10">
                                                     <SelectValue placeholder="Choisir..." />
                                                 </SelectTrigger>
                                                 <SelectContent>
+                                                    <SelectItem value="__none__">Aucun type</SelectItem>
                                                     {productTypes.map((type) => (
                                                         <SelectItem key={type.id} value={type.id.toString()}>{type.name}</SelectItem>
                                                     ))}
@@ -1196,9 +1342,10 @@ export default function Products() {
                                         </div>
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Point de vente</Label>
-                                            <Select onValueChange={(v) => handleSelectChange("id_point_de_vente", v)} value={formData.id_point_de_vente}>
+                                            <Select onValueChange={(v) => handleSelectChange("id_point_de_vente", v === "__none__" ? "" : v)} value={formData.id_point_de_vente || "__none__"}>
                                                 <SelectTrigger className="h-10"><SelectValue placeholder="Choisir..." /></SelectTrigger>
                                                 <SelectContent>
+                                                    <SelectItem value="__none__">Aucun point de vente</SelectItem>
                                                     {pointsDeVente.map((pdv) => (
                                                         <SelectItem key={pdv.id} value={pdv.id.toString()}>{pdv.nom}</SelectItem>
                                                     ))}
@@ -1207,9 +1354,9 @@ export default function Products() {
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                         <div className="grid gap-1.5">
-                                            <Label htmlFor="poids" className="text-sm font-medium">Poids (g)</Label>
+                                            <Label htmlFor="poids" className="text-sm font-medium">Unité de mesure</Label>
                                             <Input id="poids" name="poids" type="number" step="0.01" min={0} value={formData.poids} onChange={handleInputChange} className="h-10" />
                                             <p className="text-[11px] text-muted-foreground leading-snug">
                                                 Renseignez le poids si nécessaire pour ce produit.
@@ -1217,9 +1364,72 @@ export default function Products() {
                                         </div>
                                         <div className="grid gap-1.5">
                                             <Label htmlFor="prix" className="text-sm font-medium">
-                                                Prix (DH) *
+                                                Prix De Vente (HT) *
                                             </Label>
                                             <Input id="prix" name="prix" type="number" step="0.01" value={formData.prix} onChange={handleInputChange} required className="h-10" />
+                                            <p className="text-[11px] text-muted-foreground leading-snug opacity-0 select-none">
+                                                Texte d'alignement
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="prix_achat" className="text-sm font-medium">Prix d'achat (HT)</Label>
+                                            <Input id="prix_achat" name="prix_achat" type="number" step="0.01" value={formData.prix_achat} onChange={handleInputChange} className="h-10" />
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="marge_auto" className="text-sm font-medium">Marge (auto)</Label>
+                                            <Input
+                                                id="marge_auto"
+                                                value={computedMarge === "" ? "—" : `${computedMarge} DH`}
+                                                readOnly
+                                                className="h-10 bg-muted/40 font-semibold"
+                                            />
+                                            <p className="text-[11px] text-muted-foreground leading-snug">
+                                                Calcul automatique: prix de vente - prix d'achat.
+                                            </p>
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-sm font-medium text-foreground">Marque</Label>
+                                            <Select onValueChange={(v) => handleSelectChange("marque_id", v === "__none__" ? "" : v)} value={formData.marque_id || "__none__"}>
+                                                <SelectTrigger className="h-10"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__none__">Aucune marque</SelectItem>
+                                                    {marques
+                                                        .filter((m) => Number(m.etat ?? 1) === 1 || String(m.id) === formData.marque_id)
+                                                        .map((m) => (
+                                                            <SelectItem key={m.id} value={m.id.toString()}>{m.nom}</SelectItem>
+                                                        ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-sm font-medium text-foreground">Fournisseur</Label>
+                                            <Select onValueChange={(v) => handleSelectChange("fournisseur_id", v === "__none__" ? "" : v)} value={formData.fournisseur_id || "__none__"}>
+                                                <SelectTrigger className="h-10"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="__none__">Aucun fournisseur</SelectItem>
+                                                    {fournisseurs.map((f) => (
+                                                        <SelectItem key={f.id} value={f.id.toString()}>{f.nom}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="num_serie" className="text-sm font-medium">Numéro de série</Label>
+                                            <Input id="num_serie" name="num_serie" value={formData.num_serie} onChange={handleInputChange} className="h-10" />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="date_expiration" className="text-sm font-medium">Date d'expiration</Label>
+                                            <Input id="date_expiration" name="date_expiration" type="date" value={formData.date_expiration} onChange={handleInputChange} className="h-10" />
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="date_fabrication" className="text-sm font-medium">Date de fabrication</Label>
+                                            <Input id="date_fabrication" name="date_fabrication" type="date" value={formData.date_fabrication} onChange={handleInputChange} className="h-10" />
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1258,9 +1468,10 @@ export default function Products() {
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Catégorie</Label>
-                                            <Select onValueChange={(v) => handleSelectChange("id_categorie", v)} value={formData.id_categorie}>
+                                            <Select onValueChange={(v) => handleSelectChange("id_categorie", v === "__none__" ? "" : v)} value={formData.id_categorie || "__none__"}>
                                                 <SelectTrigger className="h-10"><SelectValue placeholder="Choisir..." /></SelectTrigger>
                                                 <SelectContent>
+                                                    <SelectItem value="__none__">Aucune catégorie</SelectItem>
                                                     {categories.map((cat) => (
                                                         <SelectItem key={cat.id} value={cat.id.toString()}>{cat.nom}</SelectItem>
                                                     ))}
@@ -1397,7 +1608,7 @@ export default function Products() {
                 <div
                     className={cn(
                         "overflow-hidden transition-all duration-400 ease-in-out",
-                        showFilters ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
+                        showFilters ? "max-h-[900px] opacity-100" : "max-h-0 opacity-0"
                     )}
                 >
                     <div className="bg-card rounded-xl border border-border shadow-sm p-5">
@@ -1541,6 +1752,55 @@ export default function Products() {
                                     </SelectContent>
                                 </Select>
                             </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Fournisseur</Label>
+                                <Select onValueChange={(v) => setFilterFournisseur(v === "__all__" ? "" : v)} value={filterFournisseur || "__all__"}>
+                                    <SelectTrigger className="h-9 bg-background border-border text-sm"><SelectValue placeholder="Tous les fournisseurs" /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__all__">Tous les fournisseurs</SelectItem>
+                                        {fournisseurs.map((f) => (
+                                            <SelectItem key={f.id} value={f.id.toString()}>{f.nom}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Marque</Label>
+                                <Select onValueChange={(v) => setFilterMarque(v === "__all__" ? "" : v)} value={filterMarque || "__all__"}>
+                                    <SelectTrigger className="h-9 bg-background border-border text-sm"><SelectValue placeholder="Toutes les marques" /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__all__">Toutes les marques</SelectItem>
+                                        {marques.map((m) => (
+                                            <SelectItem key={m.id} value={m.id.toString()}>{m.nom}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">N° série</Label>
+                                <Input
+                                    placeholder="Filtrer par n° série..."
+                                    className="h-9 bg-background border-border text-sm"
+                                    value={filterNumSerie}
+                                    onChange={(e) => setFilterNumSerie(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Date expiration</Label>
+                                <Input type="date" className="h-9 bg-background border-border text-sm" value={filterDateExpiration} onChange={(e) => setFilterDateExpiration(e.target.value)} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Date fabrication</Label>
+                                <Input type="date" className="h-9 bg-background border-border text-sm" value={filterDateFabrication} onChange={(e) => setFilterDateFabrication(e.target.value)} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Marge min (DH)</Label>
+                                <Input type="number" step="0.01" className="h-9 bg-background border-border text-sm" value={filterMargeMin} onChange={(e) => setFilterMargeMin(e.target.value)} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Marge max (DH)</Label>
+                                <Input type="number" step="0.01" className="h-9 bg-background border-border text-sm" value={filterMargeMax} onChange={(e) => setFilterMargeMax(e.target.value)} />
+                            </div>
                         </div>
 
                         {/* Active filters tags */}
@@ -1587,6 +1847,48 @@ export default function Products() {
                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-400 border border-rose-100 dark:border-rose-800">
                                         Disponibilité: {filterDisponibilite === "disponible" ? "Disponible" : "Epuisé"}
                                         <button onClick={() => setFilterDisponibilite("")} className="ml-0.5 hover:text-rose-900 dark:hover:text-rose-200"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterFournisseur && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100">
+                                        Fournisseur: {fournisseurs.find((f) => String(f.id) === filterFournisseur)?.nom || filterFournisseur}
+                                        <button onClick={() => setFilterFournisseur("")} className="ml-0.5 hover:text-amber-900"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterMarque && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-lime-50 text-lime-700 border border-lime-100">
+                                        Marque: {marques.find((m) => String(m.id) === filterMarque)?.nom || filterMarque}
+                                        <button onClick={() => setFilterMarque("")} className="ml-0.5 hover:text-lime-900"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterNumSerie && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700 border border-zinc-200">
+                                        N° série: "{filterNumSerie}"
+                                        <button onClick={() => setFilterNumSerie("")} className="ml-0.5 hover:text-zinc-900"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterDateExpiration && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-100">
+                                        Expiration: {filterDateExpiration}
+                                        <button onClick={() => setFilterDateExpiration("")} className="ml-0.5 hover:text-orange-900"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterDateFabrication && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                                        Fabrication: {filterDateFabrication}
+                                        <button onClick={() => setFilterDateFabrication("")} className="ml-0.5 hover:text-slate-900"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterMargeMin && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                        Marge min: {filterMargeMin}
+                                        <button onClick={() => setFilterMargeMin("")} className="ml-0.5 hover:text-emerald-900"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {filterMargeMax && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-100">
+                                        Marge max: {filterMargeMax}
+                                        <button onClick={() => setFilterMargeMax("")} className="ml-0.5 hover:text-teal-900"><X className="h-3 w-3" /></button>
                                     </span>
                                 )}
                             </div>
@@ -1688,11 +1990,42 @@ export default function Products() {
                                             <Store className="h-3.5 w-3.5" /> {product.point_de_vente_name}
                                         </span>
                                     )}
+                                    {product.marque_nom && (
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-lime-100 text-lime-700">
+                                            {product.marque_nom}
+                                        </span>
+                                    )}
+                                    {product.fournisseur_nom && (
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700">
+                                            {product.fournisseur_nom}
+                                        </span>
+                                    )}
+                                    {product.num_serie && (
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-zinc-100 text-zinc-700">
+                                            N° série: {product.num_serie}
+                                        </span>
+                                    )}
+                                    {product.date_fabrication && (
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-700">
+                                            Fab: {String(product.date_fabrication).slice(0, 10)}
+                                        </span>
+                                    )}
+                                    {product.date_expiration && (
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-orange-100 text-orange-700">
+                                            Exp: {String(product.date_expiration).slice(0, 10)}
+                                        </span>
+                                    )}
                                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
                                         Stock: {product.stock}
                                     </span>
                                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">
                                         {formatProductPrice(product)}
+                                    </span>
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-cyan-50 text-cyan-700">
+                                        Achat: {product.prix_achat != null ? `${Number(product.prix_achat).toFixed(2)} DH` : "—"}
+                                    </span>
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-violet-50 text-violet-700">
+                                        Marge: {product.marge != null ? `${Number(product.marge).toFixed(2)} DH` : `${((Number(product.prix) || 0) - (Number(product.prix_achat) || 0)).toFixed(2)} DH`}
                                     </span>
                                     <span className={cn(
                                         "inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold",
@@ -1750,6 +2083,13 @@ export default function Products() {
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Catégorie</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Type</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix d'achat</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Marge</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Marque</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Fournisseur</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">N° série</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Fabrication</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Expiration</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Stock</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Point de vente</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Disponibilité</TableHead>
@@ -1760,7 +2100,7 @@ export default function Products() {
                         {isLoading ? (
                             Array.from({ length: 5 }).map((_, i) => (
                                 <TableRow key={i} className="border-b border-border">
-                                    {Array.from({ length: 8 }).map((_, j) => (
+                                    {Array.from({ length: 15 }).map((_, j) => (
                                         <TableCell key={j}>
                                             <div className="h-4 bg-muted rounded animate-pulse w-24" />
                                         </TableCell>
@@ -1769,7 +2109,7 @@ export default function Products() {
                             ))
                         ) : filteredProducts.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={8} className="text-center py-16">
+                                <TableCell colSpan={15} className="text-center py-16">
                                     <Package className="h-10 w-10 text-muted mx-auto mb-3" />
                                     <p className="text-muted-foreground font-medium">Aucun produit trouvé</p>
                                     <p className="text-muted text-sm mt-1">Essayez un autre terme de recherche</p>
@@ -1833,6 +2173,45 @@ export default function Products() {
                                     <TableCell>
                                         <span className="font-semibold text-foreground text-sm">
                                             {formatProductPrice(product)}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="font-semibold text-foreground text-sm">
+                                            {product.prix_achat != null ? `${Number(product.prix_achat).toFixed(2)} DH` : "—"}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="font-semibold text-foreground text-sm">
+                                            {product.marge != null ? `${Number(product.marge).toFixed(2)} DH` : "—"}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell>
+                                        {product.marque_nom ? (
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-lime-100 text-lime-700">
+                                                {product.marque_nom}
+                                            </span>
+                                        ) : <span className="text-muted-foreground text-sm">—</span>}
+                                    </TableCell>
+                                    <TableCell>
+                                        {product.fournisseur_nom ? (
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                                                {product.fournisseur_nom}
+                                            </span>
+                                        ) : <span className="text-muted-foreground text-sm">—</span>}
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="text-sm text-foreground">
+                                            {product.num_serie || "—"}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="text-sm text-foreground">
+                                            {product.date_fabrication ? String(product.date_fabrication).slice(0, 10) : "—"}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="text-sm text-foreground">
+                                            {product.date_expiration ? String(product.date_expiration).slice(0, 10) : "—"}
                                         </span>
                                     </TableCell>
                                     <TableCell>{getStockBadge(product)}</TableCell>
@@ -2128,6 +2507,14 @@ export default function Products() {
                                                 label: "Prix",
                                                 value: formatProductPrice(viewingProduct),
                                             },
+                                            {
+                                                label: "Prix d'achat",
+                                                value: viewingProduct.prix_achat != null ? `${Number(viewingProduct.prix_achat).toFixed(2)} DH` : "—",
+                                            },
+                                            {
+                                                label: "Marge",
+                                                value: viewingProduct.marge != null ? `${Number(viewingProduct.marge).toFixed(2)} DH` : "—",
+                                            },
                                             { label: "Stock", value: viewingProduct.stock.toString() },
                                             {
                                                 label: "Alerte stock",
@@ -2135,6 +2522,11 @@ export default function Products() {
                                             },
                                             { label: "Catégorie", value: viewingProduct.category_name || "—" },
                                             { label: "Type", value: viewingProduct.product_type_name || "—" },
+                                            { label: "Marque", value: viewingProduct.marque_nom || "—" },
+                                            { label: "Fournisseur", value: viewingProduct.fournisseur_nom || "—" },
+                                            { label: "N° série", value: viewingProduct.num_serie || "—" },
+                                            { label: "Expiration", value: viewingProduct.date_expiration ? String(viewingProduct.date_expiration).slice(0, 10) : "—" },
+                                            { label: "Fabrication", value: viewingProduct.date_fabrication ? String(viewingProduct.date_fabrication).slice(0, 10) : "—" },
                                             { label: "Point de vente", value: viewingProduct.point_de_vente_name || "—" },
                                             { label: "Disponibilité", value: viewingProduct.disponible === 0 || viewingProduct.disponible === false ? "Non disponible" : "Disponible" },
                                         ];

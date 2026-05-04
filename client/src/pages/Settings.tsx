@@ -90,6 +90,7 @@ export default function Settings() {
     const [newModeValue, setNewModeValue] = useState("");
 
     const [productTypes, setProductTypes] = useState<{ id: number; name: string; description: string | null }[]>([]);
+    const [marques, setMarques] = useState<{ id: number; nom: string; etat: number }[]>([]);
     const [isProductTypeDialogOpen, setIsProductTypeDialogOpen] = useState(false);
     const [editingProductType, setEditingProductType] = useState<{ id: number; name: string; description: string | null } | null>(null);
     const [newProductTypeName, setNewProductTypeName] = useState("");
@@ -102,6 +103,7 @@ export default function Settings() {
     const [showAutoApproval, setShowAutoApproval] = useState(false);
     const [showSousSocietes, setShowSousSocietes] = useState(false);
     const [showProductTypes, setShowProductTypes] = useState(false);
+    const [showMarques, setShowMarques] = useState(false);
     const [showDevisAdvanced, setShowDevisAdvanced] = useState(false);
     const [showPaymentModes, setShowPaymentModes] = useState(false);
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);
@@ -109,6 +111,11 @@ export default function Settings() {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [modeToDelete, setModeToDelete] = useState<any>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [newMarqueNom, setNewMarqueNom] = useState("");
+    const [newMarqueEtat, setNewMarqueEtat] = useState<"1" | "0">("1");
+    const [editingMarqueId, setEditingMarqueId] = useState<number | null>(null);
+    const [editingMarqueNom, setEditingMarqueNom] = useState("");
+    const [editingMarqueEtat, setEditingMarqueEtat] = useState<"1" | "0">("1");
 
     const selectedSousSocieteName =
         sousSocietes.find((s) => String(s.id) === selectedSousSocieteId)?.nom_sous_societe || "";
@@ -132,14 +139,112 @@ export default function Settings() {
     const fetchPaymentModes = async () => {
         if (!token) return;
         try {
-            const [pRes, ptRes] = await Promise.all([
+            const [pRes, ptRes, mRes] = await Promise.all([
                 fetch("/api/settings/payment-modes", { headers: { Authorization: `Bearer ${token}` } }),
-                fetch("/api/product-types", { headers: { Authorization: `Bearer ${token}` } })
+                fetch("/api/product-types", { headers: { Authorization: `Bearer ${token}` } }),
+                fetch("/api/settings/marques", { headers: { Authorization: `Bearer ${token}` } }),
             ]);
             if (pRes.ok) setPaymentModes(await pRes.json());
             if (ptRes.ok) setProductTypes(await ptRes.json());
+            if (mRes.ok) setMarques(await mRes.json());
         } catch {
             console.error("Failed to load settings data");
+        }
+    };
+
+    const handleCreateMarque = async () => {
+        const nom = newMarqueNom.trim();
+        if (!nom) {
+            toast.error("Le nom de la marque est requis.");
+            return;
+        }
+        try {
+            const res = await fetch("/api/settings/marques", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    nom,
+                    etat: Number(newMarqueEtat),
+                }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                toast.error(data.message || "Erreur lors de l'ajout de la marque.");
+                return;
+            }
+            toast.success("Marque ajoutée.");
+            setNewMarqueNom("");
+            setNewMarqueEtat("1");
+            fetchPaymentModes();
+        } catch {
+            toast.error("Erreur de connexion.");
+        }
+    };
+
+    const startEditMarque = (m: { id: number; nom: string; etat: number }) => {
+        setEditingMarqueId(m.id);
+        setEditingMarqueNom(m.nom || "");
+        setEditingMarqueEtat(Number(m.etat) ? "1" : "0");
+    };
+
+    const cancelEditMarque = () => {
+        setEditingMarqueId(null);
+        setEditingMarqueNom("");
+        setEditingMarqueEtat("1");
+    };
+
+    const saveEditMarque = async () => {
+        if (!editingMarqueId) return;
+        const nom = editingMarqueNom.trim();
+        if (!nom) {
+            toast.error("Le nom de la marque est requis.");
+            return;
+        }
+        try {
+            const res = await fetch(`/api/settings/marques/${editingMarqueId}`, {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    nom,
+                    etat: Number(editingMarqueEtat),
+                }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                toast.error(data.message || "Erreur lors de la mise à jour de la marque.");
+                return;
+            }
+            toast.success("Marque mise à jour.");
+            cancelEditMarque();
+            fetchPaymentModes();
+        } catch {
+            toast.error("Erreur de connexion.");
+        }
+    };
+
+    const handleDeleteMarque = async (m: { id: number; nom: string }) => {
+        if (!confirm(`Supprimer la marque "${m.nom}" ?`)) return;
+        try {
+            const res = await fetch(`/api/settings/marques/${m.id}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                toast.error(data.message || "Erreur lors de la suppression de la marque.");
+                return;
+            }
+            toast.success("Marque supprimée.");
+            if (editingMarqueId === m.id) cancelEditMarque();
+            fetchPaymentModes();
+        } catch {
+            toast.error("Erreur de connexion.");
         }
     };
 
@@ -1307,6 +1412,144 @@ export default function Settings() {
                                                 </div>
                                             ))
                                         )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex flex-col gap-4 border border-border/40 rounded-lg p-3 bg-muted/30">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-medium text-muted-foreground">Marques</span>
+                                        <span className="text-xs text-muted-foreground">
+                                            Gérez les marques produits (ajout, modification, suppression).
+                                        </span>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 px-3 text-xs"
+                                        onClick={() => setShowMarques((v) => !v)}
+                                    >
+                                        {showMarques ? "Masquer" : "Gérer"}
+                                    </Button>
+                                </div>
+
+                                {showMarques && (
+                                    <div className="mt-3 space-y-3">
+                                        <div className="flex flex-col gap-2 md:flex-row">
+                                            <input
+                                                type="text"
+                                                placeholder="Nom de la marque"
+                                                value={newMarqueNom}
+                                                onChange={(e) => setNewMarqueNom(e.target.value)}
+                                                className="h-9 flex-1 border rounded-md px-2 text-sm bg-background"
+                                            />
+                                            <Select value={newMarqueEtat} onValueChange={(v) => setNewMarqueEtat(v as "1" | "0")}>
+                                                <SelectTrigger className="h-9 w-full md:w-40">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="1">Active</SelectItem>
+                                                    <SelectItem value="0">Inactive</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                            <Button type="button" size="sm" className="h-9 px-4" onClick={handleCreateMarque}>
+                                                <Plus className="h-3.5 w-3.5 mr-1" />
+                                                Ajouter
+                                            </Button>
+                                        </div>
+
+                                        <div className="max-h-60 overflow-y-auto border rounded-md text-foreground">
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-muted text-muted-foreground sticky top-0">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left">Nom</th>
+                                                        <th className="px-3 py-2 text-left">Etat</th>
+                                                        <th className="px-3 py-2 text-right">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-border/40">
+                                                    {marques.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan={3} className="px-3 py-4 text-center text-xs text-muted-foreground">
+                                                                Aucune marque configurée.
+                                                            </td>
+                                                        </tr>
+                                                    ) : (
+                                                        marques.map((m) => {
+                                                            const isEditing = editingMarqueId === m.id;
+                                                            return (
+                                                                <tr key={m.id} className="hover:bg-muted/30">
+                                                                    <td className="px-3 py-2">
+                                                                        {isEditing ? (
+                                                                            <input
+                                                                                type="text"
+                                                                                value={editingMarqueNom}
+                                                                                onChange={(e) => setEditingMarqueNom(e.target.value)}
+                                                                                className="h-8 w-full border rounded-md px-2 text-sm bg-background"
+                                                                            />
+                                                                        ) : (
+                                                                            m.nom
+                                                                        )}
+                                                                    </td>
+                                                                    <td className="px-3 py-2">
+                                                                        {isEditing ? (
+                                                                            <Select value={editingMarqueEtat} onValueChange={(v) => setEditingMarqueEtat(v as "1" | "0")}>
+                                                                                <SelectTrigger className="h-8 w-28">
+                                                                                    <SelectValue />
+                                                                                </SelectTrigger>
+                                                                                <SelectContent>
+                                                                                    <SelectItem value="1">Active</SelectItem>
+                                                                                    <SelectItem value="0">Inactive</SelectItem>
+                                                                                </SelectContent>
+                                                                            </Select>
+                                                                        ) : Number(m.etat) ? (
+                                                                            <span className="text-emerald-700 text-xs font-semibold">Active</span>
+                                                                        ) : (
+                                                                            <span className="text-zinc-500 text-xs font-semibold">Inactive</span>
+                                                                        )}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 text-right">
+                                                                        {isEditing ? (
+                                                                            <div className="inline-flex items-center gap-1">
+                                                                                <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-emerald-700 hover:bg-emerald-50" onClick={saveEditMarque}>
+                                                                                    Enregistrer
+                                                                                </Button>
+                                                                                <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={cancelEditMarque}>
+                                                                                    Annuler
+                                                                                </Button>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="inline-flex items-center gap-1">
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    variant="ghost"
+                                                                                    size="icon"
+                                                                                    className="h-8 w-8 text-indigo-600 hover:bg-indigo-50"
+                                                                                    onClick={() => startEditMarque(m)}
+                                                                                >
+                                                                                    <Edit className="h-3.5 w-3.5" />
+                                                                                </Button>
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    variant="ghost"
+                                                                                    size="icon"
+                                                                                    className="h-8 w-8 text-red-600 hover:bg-red-50"
+                                                                                    onClick={() => handleDeleteMarque(m)}
+                                                                                >
+                                                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                                                </Button>
+                                                                            </div>
+                                                                        )}
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 )}
                             </div>

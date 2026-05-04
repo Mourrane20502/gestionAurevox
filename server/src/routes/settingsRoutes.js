@@ -25,6 +25,10 @@ const {
     addSousSociete,
     updateSousSociete,
     deleteSousSociete,
+    getMarques,
+    addMarque,
+    updateMarque,
+    deleteMarque,
 } = require("../controllers/settingsController");
 
 // Numbering settings
@@ -68,6 +72,12 @@ router.get("/sous-societes", authorize("admin", "responsable", "directeur"), get
 router.post("/sous-societes", authorize("admin", "responsable", "directeur"), addSousSociete);
 router.put("/sous-societes/:id", authorize("admin", "responsable", "directeur"), updateSousSociete);
 router.delete("/sous-societes/:id", authorize("admin", "responsable", "directeur"), deleteSousSociete);
+
+// Marques
+router.get("/marques", authorize("admin", "responsable", "directeur"), getMarques);
+router.post("/marques", authorize("admin", "responsable", "directeur"), addMarque);
+router.put("/marques/:id", authorize("admin", "responsable", "directeur"), updateMarque);
+router.delete("/marques/:id", authorize("admin", "responsable", "directeur"), deleteMarque);
 
 module.exports = router;
 
