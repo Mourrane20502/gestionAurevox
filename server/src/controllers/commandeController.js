@@ -101,7 +101,6 @@ exports.getCommandeById = async (req, res) => {
                    ) AS sous_societe_nom_from_numero,
                    (SELECT numero_facture FROM factures WHERE commande_id = c.id LIMIT 1) as facture_numero,
                    (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) as facture_id,
-                   (SELECT id FROM bon_de_livraison WHERE commande_id = c.id LIMIT 1) as bon_livraison_id,
                    (SELECT 1 FROM avoirs WHERE commande_id = c.id LIMIT 1) as has_avoir,
                    (SELECT 1 FROM avoirs WHERE facture_id = (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) LIMIT 1) as has_avoir_facture
             FROM commandes c
@@ -314,7 +313,7 @@ exports.createCommande = async (req, res) => {
                     it.designation,
                     it.quantite || 1,
                     it.prix_unitaire || 0,
-                    it.tva ?? 20,
+                    it.tva || 0,
                     it.reduction || 0,
                     (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0) * (1 - (Number(it.reduction) || 0) / 100)
                 ]);
@@ -351,7 +350,7 @@ exports.createCommande = async (req, res) => {
             const redTaux = Number(item.reduction) || 0;
             const itemReductionAmount = bruteHT * (redTaux / 100);
             const montant_ht = bruteHT - itemReductionAmount;
-            const montant_tva = montant_ht * (Number(item.tva ?? 20) / 100);
+            const montant_tva = montant_ht * (Number(item.tva) / 100);
 
             montant_ht_total += montant_ht;
             montant_tva_total += montant_tva;
@@ -525,12 +524,28 @@ exports.getAllCommandes = async (req, res) => {
                 COALESCE(SUM(rc.montant), 0) AS total_regle_direct,
                 COALESCE(c.reduction, 0) AS reduction,
                 (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) AS facture_id,
-                (SELECT id FROM bon_de_livraison WHERE commande_id = c.id LIMIT 1) AS bon_livraison_id,
                 (SELECT 1 FROM avoirs WHERE commande_id = c.id LIMIT 1) AS has_avoir,
                 (SELECT 1 FROM avoirs WHERE facture_id = (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) LIMIT 1) AS has_avoir_facture,
-                (SELECT COALESCE(SUM(rc2.montant), 0) FROM reglements_clients rc2
-                 INNER JOIN factures f2 ON f2.id = rc2.facture_id AND f2.commande_id = c.id
-                 WHERE rc2.statut = 'approuve') AS total_regle_facture,
+                (
+                    SELECT rc3.mode_paiement
+                    FROM reglements_clients rc3
+                    WHERE rc3.statut = 'approuve'
+                      AND (
+                        rc3.commande_id = c.id
+                        OR rc3.facture_id IN (SELECT f2.id FROM factures f2 WHERE f2.commande_id = c.id)
+                      )
+                    ORDER BY rc3.date_reglement DESC, rc3.id DESC
+                    LIMIT 1
+                ) AS mode_paiement,
+                (
+                    SELECT COALESCE(SUM(rc2.montant), 0)
+                    FROM reglements_clients rc2
+                    WHERE rc2.statut = 'approuve'
+                      AND (
+                        rc2.commande_id = c.id
+                        OR rc2.facture_id IN (SELECT f2.id FROM factures f2 WHERE f2.commande_id = c.id)
+                      )
+                ) AS total_regle_combined,
                 (SELECT f3.montant_ttc FROM factures f3 WHERE f3.commande_id = c.id LIMIT 1) AS facture_montant_ttc
             FROM commandes c
             LEFT JOIN clients cl ON c.client_id = cl.id
@@ -561,7 +576,7 @@ exports.getAllCommandes = async (req, res) => {
             const red = row.reduction;
             const hasFacture = row.facture_id != null;
             const totalRegleDirect = Number(row.total_regle_direct) || 0;
-            const totalRegleFacture = Number(row.total_regle_facture) || 0;
+            const totalRegleCombined = Number(row.total_regle_combined) || 0;
             const factureMontant = row.facture_montant_ttc != null ? Number(row.facture_montant_ttc) : null;
             const montantTtcCommande = Number(row.montant_ttc) || 0;
             const pdvCount = Number(row.pdv_count_from_items) || 0;
@@ -571,13 +586,13 @@ exports.getAllCommandes = async (req, res) => {
                     : (row.point_de_vente_nom_from_items || row.point_de_vente_nom || null);
             // Si la commande a une facture liée : on affiche le règlement au niveau facture (reste à payer = facture - réglé sur facture)
             const total_regle = hasFacture && factureMontant != null
-                ? (totalRegleDirect + totalRegleFacture)
+                ? totalRegleCombined
                 : totalRegleDirect;
             const montantRef = hasFacture && factureMontant != null ? factureMontant : montantTtcCommande;
             const reste_a_payer = Math.max(montantRef - total_regle, 0);
             const {
                 total_regle_direct,
-                total_regle_facture,
+                total_regle_combined,
                 facture_montant_ttc,
                 pdv_count_from_items,
                 point_de_vente_nom_from_items,
@@ -645,7 +660,7 @@ exports.updateCommande = async (req, res) => {
                 const redTaux = Number(item.reduction) || 0;
                 const itemReductionAmount = bruteHT * (redTaux / 100);
                 const ht = bruteHT - itemReductionAmount;
-                const tva = ht * (Number(item.tva ?? 20) / 100);
+                const tva = ht * (Number(item.tva) / 100);
                 totalHT += ht;
                 totalTVA += tva;
                 totalItemsRed += itemReductionAmount;

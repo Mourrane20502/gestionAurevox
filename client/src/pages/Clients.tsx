@@ -479,31 +479,29 @@ export default function Clients() {
                     </h1>
                     <p className="text-sm text-muted-foreground mt-0.5">Gérez votre base de données clients</p>
                 </div>
-                {isAdmin && (
-                    <Button
-                        onClick={() => {
-                            setEditingClient(null);
-                            setFormData({
-                                nom_complet: "",
-                                type: "particulier",
-                                ice: "",
-                                numero_tva: "",
-                                rc: "",
-                                if_number: "",
-                                cnss: "",
-                                patente: "",
-                                telephone: "",
-                                email: "",
-                                adresse: "",
-                            });
-                            setFormErrors({});
-                            setIsFormVisible(true);
-                        }}
-                        className="shadow-sm transition-all cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700"
-                    >
-                        <Plus className="mr-2 h-4 w-4" /> Nouveau Client
-                    </Button>
-                )}
+                <Button
+                    onClick={() => {
+                        setEditingClient(null);
+                        setFormData({
+                            nom_complet: "",
+                            type: "particulier",
+                            ice: "",
+                            numero_tva: "",
+                            rc: "",
+                            if_number: "",
+                            cnss: "",
+                            patente: "",
+                            telephone: "",
+                            email: "",
+                            adresse: "",
+                        });
+                        setFormErrors({});
+                        setIsFormVisible(true);
+                    }}
+                    className="shadow-sm transition-all cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                    <Plus className="mr-2 h-4 w-4" /> Nouveau Client
+                </Button>
             </div>
 
             {/* Stats Cards */}

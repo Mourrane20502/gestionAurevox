@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 import { matchesSousSocieteListFilter } from "@/utils/sousSocieteListFilter";
 import { DeleteSvgIcon, EditSvgIcon, ViewSvgIcon } from "@/components/icons/actionSvgIcons";
 import { generateCommandePdf } from "@/components/pdf/CommandePdf";
+import { generateRecuPaiementPdf } from "@/components/pdf/RecuPaiementPdf";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -104,8 +105,8 @@ interface Commande {
     reste_a_payer?: number;
     has_avoir?: boolean;
     has_avoir_facture?: boolean;
-    bon_livraison_id?: number | null;
     banque_id?: number | null;
+    mode_paiement?: string | null;
     sous_societe_nom?: string | null;
 }
 
@@ -206,9 +207,6 @@ function commandePeutEtreConvertieEnFacture(
 }
 
 function Commandes() {
-    const role = localStorage.getItem("role");
-    const isCommercial = role === "user" || role === "commercial";
-
     const navigate = useNavigate();
     const location = useLocation();
     const [commandes, setCommandes] = useState<Commande[]>([]);
@@ -251,6 +249,7 @@ function Commandes() {
     const [filterClient, setFilterClient] = useState<string>("all");
     const [filterSousSociete, setFilterSousSociete] = useState<string>("all");
     const [filterPointDeVente, setFilterPointDeVente] = useState<string>("all");
+    const [filterModePaiement, setFilterModePaiement] = useState<string>("all");
     const [allSousSocieteNames, setAllSousSocieteNames] = useState<string[]>([]);
     const [banques, setBanques] = useState<any[]>([]);
     const [paymentModes, setPaymentModes] = useState<any[]>([]);
@@ -273,14 +272,10 @@ function Commandes() {
     });
 
     const [items, setItems] = useState<CommandeItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
     ]);
 
     const token = localStorage.getItem("token");
-
-    const createBonLivraisonFromCommande = async (commande: Commande) => {
-        navigate("/dashboard/bons-livraison", { state: { commandeId: commande.id } });
-    };
 
     const devisLinkedByCommande = useMemo(
         () => getCommandeLinkedDevisIds(commandes, editingCommande?.id ?? null),
@@ -429,7 +424,7 @@ function Commandes() {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm, filterSousSociete, filterPointDeVente]);
+    }, [searchTerm, filterSousSociete, filterPointDeVente, filterModePaiement]);
 
     useEffect(() => {
         const state = location.state as any;
@@ -594,7 +589,7 @@ function Commandes() {
     const handleDevisSelect = async (devisId: string) => {
         if (devisId === "none") {
             setFormData(prev => ({ ...prev, devis_id: null }));
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
             setSelectedClient(null);
             setClientSearch("");
             return;
@@ -647,7 +642,7 @@ function Commandes() {
     };
 
     const addItem = () => {
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
@@ -772,7 +767,7 @@ function Commandes() {
             banque_id: "none",
             paiement_espece_type: "total"
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setDevisSearch("");
@@ -919,6 +914,9 @@ function Commandes() {
         const matchesPointDeVente =
             filterPointDeVente === "all" ||
             String(c.point_de_vente_nom || "").trim().toLowerCase() === filterPointDeVente;
+        const matchesModePaiement =
+            filterModePaiement === "all" ||
+            String(c.mode_paiement || "").trim().toLowerCase() === filterModePaiement;
         const matchesSousSociete = matchesSousSocieteListFilter(
             filterSousSociete,
             c.sous_societe_nom,
@@ -934,6 +932,7 @@ function Commandes() {
             matchesUser &&
             matchesClient &&
             matchesPointDeVente &&
+            matchesModePaiement &&
             matchesSousSociete
         );
     });
@@ -945,6 +944,25 @@ function Commandes() {
                 .filter(Boolean)
         )
     ).sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
+
+    const modePaiementOptions = useMemo(() => {
+        const fromSettings = paymentModes
+            .map((m: any) => ({
+                value: String(m?.value || "").trim().toLowerCase(),
+                label: String(m?.label || m?.value || "").trim(),
+            }))
+            .filter((m) => m.value && m.value !== "all");
+
+        const knownFromCommandes = commandes
+            .map((c) => String(c.mode_paiement || "").trim().toLowerCase())
+            .filter((value) => value && value !== "all")
+            .filter((value) => !fromSettings.some((m) => m.value === value))
+            .map((value) => ({ value, label: value }));
+
+        return [...fromSettings, ...knownFromCommandes].sort((a, b) =>
+            a.label.localeCompare(b.label, "fr", { sensitivity: "base" })
+        );
+    }, [paymentModes, commandes]);
 
     const exportToXLS = () => {
         const headers = ["N° Commande", "Client", "Date", "Montant HT", "Montant TVA", "Total TTC", "Status"];
@@ -1171,6 +1189,127 @@ function Commandes() {
             await generateCommandePdf(fullCommande);
         } catch {
             toast.error("Erreur lors de la génération du PDF");
+        }
+    };
+
+    const handleDownloadFullReceipt = async (commande: Commande) => {
+        const loadingToastId = toast.loading("Génération du reçu complet...");
+        try {
+            const linkedFacture = factures.find((f: any) => Number(f?.commande_id) === Number(commande.id));
+            const commandeRes = await fetch(`/api/commandes/${commande.id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const fullCommande = commandeRes.ok ? await commandeRes.json().catch(() => null) : null;
+            const endpoints = [`/api/reglements-clients?commandeId=${commande.id}`];
+            if (linkedFacture?.id) endpoints.push(`/api/reglements-clients?factureId=${linkedFacture.id}`);
+
+            const responses = await Promise.all(
+                endpoints.map((url) =>
+                    fetch(url, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    })
+                )
+            );
+
+            if (responses.some((r) => !r.ok)) {
+                throw new Error("Impossible de charger les règlements");
+            }
+
+            const payloads = await Promise.all(responses.map((r) => r.json().catch(() => [])));
+            const mergedById = new Map<number, any>();
+            payloads.flat().forEach((r: any) => {
+                const id = Number(r?.id);
+                if (Number.isFinite(id) && id > 0) mergedById.set(id, r);
+            });
+
+            const reglements = Array.from(mergedById.values())
+                .filter((r: any) => String(r?.statut || "").toLowerCase() === "approuve")
+                .sort(
+                    (a: any, b: any) =>
+                        new Date(a?.date_reglement || 0).getTime() - new Date(b?.date_reglement || 0).getTime()
+                );
+
+            if (reglements.length === 0) {
+                toast.dismiss(loadingToastId);
+                toast.info("Aucun règlement approuvé trouvé pour cette commande.");
+                return;
+            }
+
+            const montantCommande =
+                Number(commande.montant_ttc) ||
+                (Number(commande.montant_ht) + Number(commande.montant_tva)) ||
+                0;
+            const totalRegle = reglements.reduce((sum: number, r: any) => sum + (Number(r?.montant) || 0), 0);
+            const reste = Math.max(montantCommande - totalRegle, 0);
+
+            const commandeItems = Array.isArray(fullCommande?.items) ? fullCommande.items : [];
+            const items = commandeItems.map((it: any) => {
+                const productMatch = products.find((p: any) => Number(p?.id) === Number(it?.produit_id));
+                const rawImg =
+                    it?.photo ||
+                    it?.produit_photo ||
+                    it?.image ||
+                    it?.image_url ||
+                    (productMatch as any)?.photo ||
+                    (productMatch as any)?.image ||
+                    (productMatch as any)?.image_url ||
+                    null;
+                const imageUrl = rawImg
+                    ? (String(rawImg).startsWith("http")
+                        ? String(rawImg)
+                        : `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${encodeURIComponent(String(rawImg))}`)
+                    : null;
+                const typeHint = String(
+                    it?.type_or_silver ||
+                    it?.type ||
+                    it?.product_type_name ||
+                    it?.pricing_metal ||
+                    (productMatch as any)?.type ||
+                    (productMatch as any)?.product_type_name ||
+                    (productMatch as any)?.pricing_metal ||
+                    it?.designation ||
+                    (productMatch as any)?.nom ||
+                    ""
+                ).toLowerCase();
+
+                return {
+                    designation: it?.designation || "—",
+                    type_or_silver:
+                        typeHint.includes("silver") || typeHint.includes("argent")
+                            ? "Silver"
+                            : (typeHint.includes("or") || typeHint.includes("gold") || /\b(14k|18k|22k|24k)\b/.test(typeHint))
+                                ? "Or"
+                                : "—",
+                    quantite: Number(it?.quantite) || 0,
+                    poids: (Number(it?.grammage) || 0) > 0 ? `${String(it.grammage)} g` : "—",
+                    montant_ht: Number(it?.montant_ht) || 0,
+                    image_url: imageUrl,
+                };
+            });
+
+            const safeNum = String(commande.numero_commande || commande.id).replace(/[^a-zA-Z0-9_-]/g, "_");
+            await generateRecuPaiementPdf(
+                {
+                    id: Number(commande.id),
+                    client_nom: commande.client_nom || "CLIENT DIVERS",
+                    client_code: (commande as any)?.client_code || undefined,
+                    document_type: "commande",
+                    document_numero: commande.numero_commande || `#${commande.id}`,
+                    montant: totalRegle,
+                    date_reglement: reglements[reglements.length - 1]?.date_reglement || new Date().toISOString(),
+                    mode_paiement: "multiple",
+                    prix_total: montantCommande,
+                    reste_a_payer: reste,
+                    items,
+                },
+                { filename: `recu_complet_${safeNum}.pdf` }
+            );
+            toast.dismiss(loadingToastId);
+            toast.success("Reçu complet téléchargé");
+        } catch (e) {
+            console.error(e);
+            toast.dismiss(loadingToastId);
+            toast.error("Erreur lors de la génération du reçu complet");
         }
     };
 
@@ -1420,6 +1559,22 @@ function Commandes() {
                                             <SelectItem value="validee">Validée</SelectItem>
                                             <SelectItem value="regle">Réglé</SelectItem>
                                             <SelectItem value="non_regle">Non réglé</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground ml-1">Mode paiement</Label>
+                                    <Select value={filterModePaiement} onValueChange={setFilterModePaiement}>
+                                        <SelectTrigger className="h-11 rounded-xl bg-background border-border">
+                                            <SelectValue placeholder="Tous les modes" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">Tous les modes</SelectItem>
+                                            {modePaiementOptions.map((mode) => (
+                                                <SelectItem key={`mode-${mode.value}`} value={mode.value}>
+                                                    {mode.label}
+                                                </SelectItem>
+                                            ))}
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -1736,14 +1891,6 @@ function Commandes() {
                                                             
                                                             return (
                                                                 <>
-                                                                    <DropdownMenuItem
-                                                                        className="cursor-pointer font-bold text-indigo-600"
-                                                                        disabled={Boolean(commande.bon_livraison_id)}
-                                                                        onClick={() => createBonLivraisonFromCommande(commande)}
-                                                                    >
-                                                                        <FileText className="h-4 w-4" />
-                                                                        {commande.bon_livraison_id ? "Bon de livraison déjà créé" : "Créer un bon de livraison"}
-                                                                    </DropdownMenuItem>
                                                                     {linkedFacture ? (
                                                                         <DropdownMenuItem className="cursor-pointer" onClick={() => navigate(`/dashboard/factures/${linkedFacture.id}`)}>
                                                                             <ArrowUpRight className="h-4 w-4" />
@@ -1854,7 +2001,14 @@ function Commandes() {
                                                             className="cursor-pointer"
                                                         >
                                                             <Printer className="h-4 w-4" />
-                                                            Télécharger
+                                                            Télécharger la commande
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                            onClick={() => handleDownloadFullReceipt(commande)}
+                                                            className="cursor-pointer text-indigo-600 focus:text-indigo-600"
+                                                        >
+                                                            <Download className="h-4 w-4" />
+                                                            Télécharger le reçu complet
                                                         </DropdownMenuItem>
                                                         <DropdownMenuItem onClick={() => { setEditingCommande(commande); setActiveTab("form"); }} className="cursor-pointer">
                                                             <EditSvgIcon className="h-4 w-4" />
@@ -2301,7 +2455,6 @@ function Commandes() {
                                                                 type="number"
                                                                 value={item.prix_unitaire}
                                                                 onChange={(e) => handleItemChange(index, 'prix_unitaire', parseFloat(e.target.value))}
-                                                                disabled={isCommercial && Boolean(item.produit_id)}
                                                                 className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-9 text-sm text-center disabled:opacity-70 disabled:cursor-not-allowed"
                                                             />
                                                         </TableCell>

@@ -603,20 +603,20 @@ export default function BonsLivraison() {
             </div>
 
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "liste" | "form")} className="w-full">
-                <TabsList className="bg-muted/50 p-2 rounded-2xl mb-8 h-14 w-auto inline-flex">
+                <TabsList className="mb-8 grid h-14 w-full max-w-[560px] grid-cols-2 rounded-2xl bg-muted/50 p-2">
                     <TabsTrigger
                         value="liste"
-                        className="gap-2 rounded-xl data-[state=active]:bg-card data-[state=active]:shadow-sm px-12 h-11 text-sm font-semibold"
+                        className="h-11 w-full gap-2 rounded-xl px-6 text-sm font-semibold data-[state=active]:bg-card data-[state=active]:shadow-sm"
                     >
                         <ListOrdered className="h-4 w-4" />
-                        Liste
+                        Liste des bons de livraison
                     </TabsTrigger>
                     <TabsTrigger
                         value="form"
-                        className="gap-2 rounded-xl data-[state=active]:bg-card data-[state=active]:shadow-sm px-12 h-11 text-sm font-semibold"
+                        className="h-11 w-full gap-2 rounded-xl px-6 text-sm font-semibold data-[state=active]:bg-card data-[state=active]:shadow-sm"
                     >
                         <FileText className="h-4 w-4" />
-                        Formulaire
+                        Nouveau bon de livraison
                     </TabsTrigger>
                 </TabsList>
 
