@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { exportToExcel } from "@/utils/exportExcel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/common/ui/card";
@@ -128,6 +128,8 @@ export default function BonsLivraison() {
     const [editStatutBon, setEditStatutBon] = useState("en_attente");
     const [editItems, setEditItems] = useState<CommandeItem[]>([]);
     const [isLoadingEditDetails, setIsLoadingEditDetails] = useState(false);
+    const consumedCommandeStateRef = useRef<number | null>(null);
+    const consumedEditStateRef = useRef<number | null>(null);
 
     const fetchData = async () => {
         if (!token) return;
@@ -462,18 +464,24 @@ export default function BonsLivraison() {
     useEffect(() => {
         const state = location.state as { commandeId?: number; editBonId?: number } | null;
         if (state?.editBonId) {
-            const target = bons.find((b) => b.id === Number(state.editBonId));
+            const editBonId = Number(state.editBonId);
+            if (consumedEditStateRef.current === editBonId) return;
+            const target = bons.find((b) => b.id === editBonId);
             if (target) openEditBonForm(target);
+            consumedEditStateRef.current = editBonId;
             window.history.replaceState({}, document.title);
             return;
         }
         if (!state?.commandeId) return;
-        const cmdId = String(state.commandeId);
+        const commandeId = Number(state.commandeId);
+        if (consumedCommandeStateRef.current === commandeId) return;
+        const cmdId = String(commandeId);
         setEditingBon(null);
         setEditNumeroBon("");
         setEditDateBon("");
         setActiveTab("form");
         setSelectedCommandeId(cmdId);
+        consumedCommandeStateRef.current = commandeId;
         window.history.replaceState({}, document.title);
     }, [location.state, bons]);
 

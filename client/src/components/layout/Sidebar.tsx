@@ -26,6 +26,7 @@ import {
     Receipt,
     Mail,
     Scale,
+    TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/common/ui/button";
@@ -115,6 +116,7 @@ const sidebarItems: SidebarItem[] = [
             { name: "Règlements Clients", href: "/dashboard/reglements", icon: FileText, permission: 'reglements_view', section: "Finance classique" },
             { name: "Règlements Fournisseurs", href: "/dashboard/fournisseurs/reglements", icon: Truck, permission: 'fournisseurs_view', section: "Finance classique" },
             { name: "TVA", href: "/dashboard/tva", icon: Scale, permission: 'factures_view', section: "Finance classique" },
+            { name: "Marge", href: "/dashboard/marge", icon: TrendingUp, permission: 'factures_view', section: "Finance classique" },
             { name: "Règlements Clients Gros", href: "/dashboard/reglements-gros", icon: Receipt, permission: 'reglements_view', section: "Finance gros" },
             { name: "Bilan", href: "/dashboard/bilan", icon: FileText, permission: 'bilan_view' },
         ]

@@ -387,18 +387,39 @@ export default function BonLivraisonDetails() {
                             </CardHeader>
                             <CardContent className="p-4 pt-1 space-y-1.5">
                                 {bl.commande_id ? (
-                                    <Link to={`/dashboard/commandes/${bl.commande_id}`} className="text-[10px] text-indigo-600 flex items-center gap-1 font-bold uppercase bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/20">
+                                    <Link
+                                        to={`/dashboard/commandes/${bl.commande_id}`}
+                                        className="text-[10px] text-indigo-600 flex items-center justify-between gap-2 font-bold uppercase bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/20 hover:bg-indigo-500/20 hover:underline cursor-pointer transition-colors"
+                                        title="Ouvrir la commande liée"
+                                    >
+                                        <span className="flex items-center gap-1">
                                         <CheckCircle2 className="h-3 w-3" /> Commande {bl.numero_commande || ""}
+                                        </span>
+                                        <ExternalLink className="h-3 w-3" />
                                     </Link>
                                 ) : <p className="text-xs text-muted-foreground">Aucune commande liée</p>}
                                 {bl.devis_id ? (
-                                    <Link to={`/dashboard/devis/${bl.devis_id}`} className="text-[10px] text-emerald-600 flex items-center gap-1 font-bold uppercase bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
+                                    <Link
+                                        to={`/dashboard/devis/${bl.devis_id}`}
+                                        className="text-[10px] text-emerald-600 flex items-center justify-between gap-2 font-bold uppercase bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 hover:bg-emerald-500/20 hover:underline cursor-pointer transition-colors"
+                                        title="Ouvrir le devis lié"
+                                    >
+                                        <span className="flex items-center gap-1">
                                         <CheckCircle2 className="h-3 w-3" /> Devis {linkedDevisCode || `#${bl.devis_id}`}
+                                        </span>
+                                        <ExternalLink className="h-3 w-3" />
                                     </Link>
                                 ) : <p className="text-xs text-muted-foreground">Aucun devis lié</p>}
                                 {bl.facture_id ? (
-                                    <Link to={`/dashboard/factures/${bl.facture_id}`} className="text-[10px] text-blue-600 flex items-center gap-1 font-bold uppercase bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20">
+                                    <Link
+                                        to={`/dashboard/factures/${bl.facture_id}`}
+                                        className="text-[10px] text-blue-600 flex items-center justify-between gap-2 font-bold uppercase bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20 hover:bg-blue-500/20 hover:underline cursor-pointer transition-colors"
+                                        title="Ouvrir la facture liée"
+                                    >
+                                        <span className="flex items-center gap-1">
                                         <CheckCircle2 className="h-3 w-3" /> Facture {linkedFactureCode || `#${bl.facture_id}`}
+                                        </span>
+                                        <ExternalLink className="h-3 w-3" />
                                     </Link>
                                 ) : <p className="text-xs text-muted-foreground">Aucune facture liée</p>}
                                 {linkedReglements.length > 0 ? (
@@ -406,17 +427,21 @@ export default function BonLivraisonDetails() {
                                         <Link
                                             key={reg.id}
                                             to={`/dashboard/reglements/details/client/${reg.id}`}
-                                            className="text-[10px] text-violet-600 flex items-center gap-1 font-bold uppercase bg-violet-500/10 px-2 py-1 rounded border border-violet-500/20"
+                                            className="text-[10px] text-violet-600 flex items-center justify-between gap-2 font-bold uppercase bg-violet-500/10 px-2 py-1 rounded border border-violet-500/20 hover:bg-violet-500/20 hover:underline cursor-pointer transition-colors"
+                                            title="Ouvrir le règlement lié"
                                         >
-                                            <CheckCircle2 className="h-3 w-3" />
-                                            Règlement {buildReglementCode(
-                                                "client",
-                                                reg.id,
-                                                String(reg.date_reglement || reg.created_at || ""),
-                                                Number(reg.numero_recu || 0) || null,
-                                                reg.sous_societe_nom,
-                                                reg.numero_facture || reg.numero_commande
-                                            )}
+                                            <span className="flex items-center gap-1">
+                                                <CheckCircle2 className="h-3 w-3" />
+                                                Règlement {buildReglementCode(
+                                                    "client",
+                                                    reg.id,
+                                                    String(reg.date_reglement || reg.created_at || ""),
+                                                    Number(reg.numero_recu || 0) || null,
+                                                    reg.sous_societe_nom,
+                                                    reg.numero_facture || reg.numero_commande
+                                                )}
+                                            </span>
+                                            <ExternalLink className="h-3 w-3" />
                                         </Link>
                                     ))
                                 ) : (

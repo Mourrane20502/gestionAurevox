@@ -254,6 +254,7 @@ function Commandes() {
     const [banques, setBanques] = useState<any[]>([]);
     const [paymentModes, setPaymentModes] = useState<any[]>([]);
     const [remboursementMap, setRemboursementMap] = useState<Record<number, number>>({});
+    const [commandesAvecBl, setCommandesAvecBl] = useState<Set<number>>(new Set());
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
     const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -388,6 +389,23 @@ function Commandes() {
             }
         } catch (e) { console.error(e); }
     };
+    const fetchBonsLivraisonLinks = async () => {
+        try {
+            const res = await fetch("/api/bons-livraison", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) return;
+            const rows = await res.json();
+            const ids = new Set<number>();
+            (Array.isArray(rows) ? rows : []).forEach((bl: any) => {
+                const cmdId = Number(bl?.commande_id);
+                if (Number.isFinite(cmdId) && cmdId > 0) ids.add(cmdId);
+            });
+            setCommandesAvecBl(ids);
+        } catch (e) {
+            console.error("Error fetching BL links:", e);
+        }
+    };
 
     useEffect(() => {
         fetchCommandes();
@@ -399,6 +417,7 @@ function Commandes() {
         fetchBanques();
         fetchPaymentModes();
         fetchRemboursements();
+        fetchBonsLivraisonLinks();
     }, []);
 
     useEffect(() => {
@@ -1727,6 +1746,14 @@ function Commandes() {
                                                                 </span>
                                                             );
                                                         })()}
+                                                        {commandesAvecBl.has(commande.id) && (
+                                                            <span
+                                                                className="text-[9px] text-violet-600 dark:text-violet-400 flex items-center gap-0.5 font-bold uppercase tracking-tighter bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20"
+                                                                title="Cette commande est liée à un bon de livraison"
+                                                            >
+                                                                <CheckCircle2 className="h-2.5 w-2.5" /> BL
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     {(() => {
                                                         const hasRemboursement = !!remboursementMap[commande.id];
@@ -1888,9 +1915,23 @@ function Commandes() {
                                                             );
                                                             const canConvert = commande.statut === "validee" || commande.statut === "validée" || commande.statut === "livree";
                                                             const isReglee = isCommandeReglee(commande, factures);
+                                                            const hasBonLivraison = commandesAvecBl.has(commande.id);
                                                             
                                                             return (
                                                                 <>
+                                                                    {!hasBonLivraison && (
+                                                                        <DropdownMenuItem
+                                                                            className="cursor-pointer text-indigo-600 focus:text-indigo-600"
+                                                                            onClick={() => {
+                                                                                navigate("/dashboard/bons-livraison", {
+                                                                                    state: { commandeId: commande.id },
+                                                                                });
+                                                                            }}
+                                                                        >
+                                                                            <FileText className="h-4 w-4" />
+                                                                            Générer bon de livraison
+                                                                        </DropdownMenuItem>
+                                                                    )}
                                                                     {linkedFacture ? (
                                                                         <DropdownMenuItem className="cursor-pointer" onClick={() => navigate(`/dashboard/factures/${linkedFacture.id}`)}>
                                                                             <ArrowUpRight className="h-4 w-4" />

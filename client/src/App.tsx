@@ -63,6 +63,7 @@ import Autoposting from "@/pages/Autoposting";
 import AlertsNotifications from "@/pages/AlertsNotifications";
 import Impots from "@/pages/Impots";
 import TVA from "@/pages/TVA";
+import Marge from "@/pages/Marge";
 import Recus from "@/pages/Recus";
 import EmailMarketing from "@/pages/EmailMarketing";
 import BonsLivraison from "@/pages/BonsLivraison";
@@ -110,6 +111,7 @@ export default function App() {
             <Route path="factures" element={<Factures />} />
             <Route path="impots" element={<Impots />} />
             <Route path="tva" element={<TVA />} />
+            <Route path="marge" element={<Marge />} />
             <Route path="factures/:id" element={<FactureDetails />} />
             <Route path="avoirs" element={<Avoirs />} />
             <Route path="avoirs/:id" element={<AvoirDetails />} />

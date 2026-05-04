@@ -79,6 +79,7 @@ const remboursementRoutes = require("./routes/remboursementRoutes");
 const productTypesRoutes = require("./routes/productTypesRoutes");
 const autopostRoutes = require("./routes/autopostRoutes");
 const bonLivraisonRoutes = require("./routes/bonLivraisonRoutes");
+const margeRoutes = require("./routes/margeRoutes");
 const { ensurePromotionsTable } = require("./utils/promotionUtils");
 const { ensureAutopostsTable } = require("./utils/autopostUtils");
 const { bootstrapScheduledAutoposts } = require("./services/autopostQueue");
@@ -131,6 +132,7 @@ app.use("/api/promotions", promotionsRoutes);
 app.use("/api/product-types", productTypesRoutes);
 app.use("/api/autoposts", autopostRoutes);
 app.use("/api/bons-livraison", bonLivraisonRoutes);
+app.use("/api/marge", margeRoutes);
 
 app.get("/profile", authenticate, authorize("user"), (req, res) => {
     res.json({ message: "profile" })

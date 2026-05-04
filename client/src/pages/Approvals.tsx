@@ -141,6 +141,7 @@ interface BonLivraisonApproval {
     id: number;
     numero_bon_livraison: string;
     date_bon_livraison: string;
+    commande_id?: number | null;
     numero_commande?: string | null;
     client_nom?: string | null;
     statut: string;
@@ -1478,8 +1479,28 @@ export default function Approvals() {
                                             </TableRow>
                                         ) : pendingBonsLivraison.map((b) => (
                                             <TableRow key={b.id}>
-                                                <TableCell>{b.numero_bon_livraison}</TableCell>
-                                                <TableCell>{b.numero_commande || "—"}</TableCell>
+                                                <TableCell>
+                                                    <button
+                                                        type="button"
+                                                        className="text-indigo-600 hover:underline font-semibold"
+                                                        onClick={() => window.open(`/dashboard/bons-livraison/${b.id}`, "_blank", "noopener,noreferrer")}
+                                                    >
+                                                        {b.numero_bon_livraison}
+                                                    </button>
+                                                </TableCell>
+                                                <TableCell>
+                                                    {b.commande_id ? (
+                                                        <button
+                                                            type="button"
+                                                            className="text-indigo-600 hover:underline font-semibold"
+                                                            onClick={() => window.open(`/dashboard/commandes/${b.commande_id}`, "_blank", "noopener,noreferrer")}
+                                                        >
+                                                            {b.numero_commande || `CMD #${b.commande_id}`}
+                                                        </button>
+                                                    ) : (
+                                                        b.numero_commande || "—"
+                                                    )}
+                                                </TableCell>
                                                 <TableCell>{b.client_nom || "—"}</TableCell>
                                                 <TableCell>{new Date(b.date_bon_livraison).toLocaleDateString()}</TableCell>
                                                 <TableCell>
