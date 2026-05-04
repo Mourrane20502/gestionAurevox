@@ -437,7 +437,6 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     const startTableY = currentY;
     const colX = {
         designation: 20,
-        grammage: 102,
         quantite: 118,
         prixUnitaire: 138,
         reduction: 160,
@@ -454,7 +453,6 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     doc.setTextColor(60, 60, 60);
 
     doc.text("Désignation", colX.designation, startTableY + 5);
-    doc.text("Gramme", colX.grammage, startTableY + 5, { align: "right" });
     doc.text("Qté", colX.quantite, startTableY + 5, { align: "right" });
     doc.text("PU", colX.prixUnitaire, startTableY + 5, { align: "right" });
     doc.text("Reduction", colX.reduction, startTableY + 5, { align: "right" });
@@ -494,12 +492,6 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
             const lineHeight = 4 * (designationLines as string[]).length;
             const rowMidY = currentY + 4;
 
-            doc.text(
-                (Number(item.grammage) || 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 }),
-                colX.grammage,
-                rowMidY,
-                { align: "right" }
-            );
             doc.text(String(item.quantite ?? 0), colX.quantite, rowMidY, { align: "right" });
             doc.text(
                 (item.prix_unitaire ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
