@@ -182,8 +182,20 @@ exports.updateUser = async (req, res) => {
         if (isNaN(parsedId)) {
             return res.status(400).json({ message: "Invalid user ID" });
         }
+        let passwordToStore = null;
+        const hasNewPassword = String(password || "").trim().length > 0;
+        if (hasNewPassword) {
+            passwordToStore = await bcrypt.hash(String(password), 10);
+        } else {
+            const [rows] = await db.promise().query("SELECT password FROM users WHERE id = ?", [parsedId]);
+            if (!rows || rows.length === 0) {
+                return res.status(404).json({ message: "User not found" });
+            }
+            passwordToStore = rows[0].password;
+        }
+
         const query = "UPDATE users SET nom = ?, prenom = ?, email = ?, password = ?, role = ? WHERE id = ?";
-        db.query(query, [nom, prenom, email, password, role, parsedId], (err, result) => {
+        db.query(query, [nom, prenom, email, passwordToStore, role, parsedId], (err, result) => {
             if (err) {
                 console.log(err);
                 return res.status(500).json({ message: "Internal server error" });
