@@ -487,7 +487,7 @@ export const generateCommandePdf = async (commande: CommandePdfData) => {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(120, 120, 120);
     doc.text(
-        "Commande générée via Aurevox. Merci pour votre confiance.",
+        "Commande générée via Gestion ERP. Merci pour votre confiance.",
         20,
         footerY
     );

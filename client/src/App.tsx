@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import Clients from "./pages/Clients";
 import ClientSituation from "./pages/ClientSituation";
+import Contrat from "./pages/Contrat";
 import PDV from "./pages/PDV";
 import Categories from "./pages/Categories";
 import Devis from "./pages/Devis";
@@ -91,6 +92,7 @@ export default function App() {
             <Route path="clients" element={<Clients />} />
             <Route path="clients/fidelite" element={<Navigate to="/dashboard" replace />} />
             <Route path="clients/situation" element={<ClientSituation />} />
+            <Route path="clients/contrat" element={<Contrat />} />
             <Route path="pdv" element={<PDV />} />
             <Route path="categories" element={<Categories />} />
             <Route path="devis" element={<Devis />} />

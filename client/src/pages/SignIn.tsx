@@ -135,7 +135,7 @@ export default function SignIn() {
                     >
                         <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/20 px-3 py-1">
                             <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
-                            <span className="text-[10px] font-black  tracking-[0.2em] text-indigo-600 dark:text-indigo-300">BusiVox ERP</span>
+                            <span className="text-[10px] font-black  tracking-[0.2em] text-indigo-600 dark:text-indigo-300">Gestion ERP</span>
                         </div>
                         <h1 className="text-2xl md:text-3xl mt-4 font-black text-slate-900 dark:text-white mb-3 tracking-tight leading-tight">
                         L'excellence digitale qui fait la diffèrence
@@ -336,7 +336,7 @@ export default function SignIn() {
                         transition={{ duration: 0.5, delay: 0.7 }}
                         className="mt-6"
                     >
-                        <p className="text-[11px] text-slate-400 font-medium">© {new Date().getFullYear()} BusiVox — Plateforme ERP/CRM Entreprise</p>
+                        <p className="text-[11px] text-slate-400 font-medium">© {new Date().getFullYear()} Gestion ERP — Plateforme ERP/CRM Entreprise</p>
                     </motion.div>
                 </div>
 

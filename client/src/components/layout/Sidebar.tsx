@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/common/ui/button";
-import SousLogoAurevox from "@/assets/aurevox_logo.png";
+import SousLogo from "@/assets/sous_logo.jpg";
 import { useState, useEffect, useRef, useCallback } from "react";
 
 interface SidebarItem {
@@ -76,6 +76,7 @@ const sidebarItems: SidebarItem[] = [
             { name: "Point fidélité", href: "/dashboard/clients/fidelite", icon: Award, permission: 'clients_view' },
         ]
     },
+    { name: "Contrat", href: "/dashboard/clients/contrat", icon: FileText, permission: 'contrat_view' },
     {
         name: "Fournisseurs",
         icon: Truck,
@@ -467,7 +468,7 @@ export default function Sidebar({ onNavigate, onToggle }: {
                         )}
                     >
                         <img
-                            src={gestionnaireLogo ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogo}` : SousLogoAurevox}
+                            src={gestionnaireLogo ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogo}` : SousLogo}
                             alt={gestionnaireName || "Logo"}
                             className="h-full w-full object-cover"
                         />
@@ -476,7 +477,7 @@ export default function Sidebar({ onNavigate, onToggle }: {
                     {!isCollapsed && (
                         <div className="flex flex-col min-w-0 animate-in fade-in duration-300">
                             <span className="text-[15px] font-semibold text-sidebar-foreground truncate leading-tight">
-                                {gestionnaireName || "Aurevox"}
+                                {gestionnaireName || "Gestion ERP"}
                             </span>
                             <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.14em] text-sidebar-foreground/65">
                                 <span className="h-1 w-1 rounded-full bg-emerald-500" />

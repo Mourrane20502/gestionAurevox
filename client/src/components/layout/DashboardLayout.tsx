@@ -203,7 +203,7 @@ export default function DashboardLayout() {
                                         Gestion Entreprise
                                     </span>
                                     <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mt-1">
-                                       BusiVox ERP
+                                       Gestion ERP
                                     </span>
                                 </div>
                             </div>

@@ -1,6 +1,6 @@
-# Gestion Aurevox - Server
+# Gestion ERP - Server
 
-This is the backend server for the Gestion Aurevox application, built with Node.js, Express, and MySQL.
+This is the backend server for the Gestion ERP application, built with Node.js, Express, and MySQL.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ PORT=3000
 DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=your_password
-DB_NAME=bijouterie_aurevox
+
 JWT_SECRET=your_jwt_secret_key
 ```
 
