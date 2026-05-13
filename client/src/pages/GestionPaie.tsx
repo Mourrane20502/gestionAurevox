@@ -29,7 +29,7 @@ import {
 } from "@/components/common/ui/dropdown-menu";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import AurevoxLogo from "@/assets/aurevox_logo.png";
+import gestion from "@/assets/gestion.jpg";
 
 interface Employee {
     id: number;
@@ -380,7 +380,7 @@ export default function GestionPaie() {
 
             const logoSource = gestionnaireLogoPath
                 ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogoPath}`
-                : AurevoxLogo;
+                : gestion;
             const logoImgData = await loadImgToBase64(logoSource);
             if (logoImgData) {
                 doc.addImage(logoImgData, "PNG", 20, 8, 26, 26);
@@ -503,7 +503,7 @@ export default function GestionPaie() {
 
             const logoSource = gestionnaireLogoPath
                 ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogoPath}`
-                : AurevoxLogo;
+                : gestion;
             const logoImgData = await loadImgToBase64(logoSource);
             if (logoImgData) {
                 doc.addImage(logoImgData, "PNG", 20, 8, 26, 26);

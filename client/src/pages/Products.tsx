@@ -52,7 +52,7 @@ import JsBarcode from "jsbarcode";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
-import AurevoxLogo from "@/assets/aurevox_logo.png";
+import gestion from "@/assets/gestion.jpg";
 
 interface Product {
     id: number;
@@ -351,7 +351,7 @@ export default function Products() {
     const [pointsDeVente, setPointsDeVente] = useState<PointDeVente[]>([]);
     const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
     const [productTypes, setProductTypes] = useState<ProductType[]>([]);
-    const [gestionnaireName, setGestionnaireName] = useState<string>("AUREVOX AGENCY");
+    const [gestionnaireName, setGestionnaireName] = useState<string>("Gestion ERP");
     const [gestionnaireLogoPath, setGestionnaireLogoPath] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -471,7 +471,7 @@ export default function Products() {
             if (gestionnaireRes.ok) {
                 const gestionnaires = await gestionnaireRes.json();
                 if (Array.isArray(gestionnaires) && gestionnaires.length > 0) {
-                    setGestionnaireName(gestionnaires[0]?.nom || "AUREVOX AGENCY");
+                    setGestionnaireName(gestionnaires[0]?.nom || "Gestion ERP");
                     setGestionnaireLogoPath(gestionnaires[0]?.logo || null);
                 }
             }
@@ -1243,7 +1243,7 @@ export default function Products() {
 
             const logoSource = gestionnaireLogoPath
                 ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogoPath}`
-                : AurevoxLogo;
+                : gestion;
             const logoImgPromise = loadImgToBase64(logoSource);
             const productImagesPromise = Promise.all(
                 filteredProducts.map(async (p) => {
@@ -1275,7 +1275,7 @@ export default function Products() {
             doc.setFontSize(22);
             doc.setTextColor(67, 56, 202); // indigo
             doc.setFont("helvetica", "bold");
-            doc.text((gestionnaireName || "AUREVOX AGENCY").toUpperCase(), 42, 20);
+            doc.text((gestionnaireName || "Gestion ERP").toUpperCase(), 42, 20);
 
             doc.setFontSize(14);
             doc.setTextColor(100, 116, 139);
@@ -1370,7 +1370,7 @@ export default function Products() {
                 doc.setPage(i);
                 doc.setFontSize(8);
                 doc.setTextColor(150, 150, 150);
-                doc.text(`Page ${i} / ${pageCount} — ${(gestionnaireName || "AUREVOX AGENCY").toUpperCase()}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: "center" });
+                doc.text(`Page ${i} / ${pageCount} — ${(gestionnaireName || "Gestion ERP").toUpperCase()}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: "center" });
             }
 
             doc.save(`produits_${new Date().toISOString().slice(0, 10)}.pdf`);

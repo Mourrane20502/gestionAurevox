@@ -52,7 +52,7 @@ import {
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
 import SignatureCanvas from "react-signature-canvas";
-import AurevoxLogo from "@/assets/aurevox_logo.png";
+import gestion from "@/assets/gestion.jpg";
 
 
 interface Employee {
@@ -388,7 +388,7 @@ export default function Conges() {
             try {
                 const logoSource = gestionnaireLogoPath
                     ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogoPath}`
-                    : AurevoxLogo;
+                    : gestion;
                 const logoData = await loadImgToBase64(logoSource);
                 if (logoData) {
                     doc.addImage(logoData, "PNG", margin, 10, 25, 25);
@@ -412,8 +412,8 @@ export default function Conges() {
 
             const paragraphs = [
                 "",
-                `Je soussigné(e) ${fullName}, employé(e) de la société AUREVOX,`,
-                `affecté(e) à l'établissement ${conge.pv_name || "Aurevox"}, sollicite un congé :`,
+                `Je soussigné(e) ${fullName}, employé(e) de la société Gestion,`,
+                `affecté(e) à l'établissement ${conge.pv_name || "Gestion"}, sollicite un congé :`,
                 ``,
                 `- Type de congé : ${conge.type}`,
                 `- Période : ${periode}`,

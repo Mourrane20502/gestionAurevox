@@ -117,7 +117,7 @@ export default function EmailMarketing() {
     const [isSending, setIsSending] = useState(false);
 
     const [template, setTemplate] = useState<TemplateType>("simple");
-    const [subject, setSubject] = useState("Nouveautés Bijouterie Aurevox");
+    const [subject, setSubject] = useState("Nouveautés  Gestion ERP");
     const [intro, setIntro] = useState(DEFAULT_CONTENT.simple.intro);
     const [body, setBody] = useState(DEFAULT_CONTENT.simple.body);
     const [ctaText, setCtaText] = useState(DEFAULT_CONTENT.simple.ctaText);
