@@ -37,6 +37,8 @@ import Remboursements from "./pages/Remboursements";
 import RemboursementDetails from "./pages/RemboursementDetails";
 import Bilan from "./pages/Bilan";
 import CA from "./pages/CA";
+import Tva from "./pages/Tva";
+import Marge from "./pages/Marge";
 import Reglements from "./pages/Reglements";
 import ReglementsClientsGros from "./pages/ReglementsClientsGros";
 import ReglementDetails from "./pages/ReglementDetails";
@@ -143,6 +145,8 @@ export default function App() {
             <Route path="banque" element={<Banque />} />
             <Route path="caisse" element={<Caisse />} />
             <Route path="bilan" element={<Bilan />} />
+            <Route path="tva" element={<Tva />} />
+            <Route path="marge" element={<Marge />} />
             <Route path="ca" element={isAdmin ? <CA /> : <Navigate to="/dashboard" replace />} />
             <Route path="approvals" element={<Approvals />} />
             <Route path="promotions" element={<Promotions />} />

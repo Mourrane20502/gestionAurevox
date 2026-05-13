@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
+import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
+import { normalizeLineTvaPercent } from "@/lib/normalizeLineTva";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
 import { Input } from "@/components/common/ui/input";
@@ -298,12 +300,7 @@ function Devis() {
 
         // Arrivée depuis un produit (création rapide)
         if (state?.selectedProduct) {
-            const nature = String(
-                state.selectedProduct?.nature_produit ?? state.selectedProduct?.Nature_Produit ?? ""
-            )
-                .trim()
-                .toLowerCase();
-            if (nature === "gros" || nature === "gro") {
+            if (state?.selectedProduct && isProductWholesaleGros(state.selectedProduct as any)) {
                 navigate("/dashboard/devis-gros", {
                     replace: true,
                     state: {
@@ -320,7 +317,7 @@ function Devis() {
                 designation: product.nom,
                 prix_unitaire: product.prix,
                 quantite: 1,
-                tva: 0,
+                tva: 20,
                 reduction: 0,
                 montant_ht: product.prix
             };
@@ -356,14 +353,14 @@ function Devis() {
                             numero_devis: fullDevis.numero_devis,
                             date_devis: fullDevis.date_devis.split('T')[0],
                             montant_ht: (fullDevis.montant_ht || 0).toString(),
-                            taux_tva: (fullDevis.taux_tva || 0).toString(),
+                            taux_tva: String(normalizeLineTvaPercent(fullDevis.taux_tva)),
                             reduction: (fullDevis.reduction || 0).toString(),
                             statuts_devis: fullDevis.statuts_devis,
                         });
                         const normalizedItems = (fullDevis.items || []).map((item: any) => ({
                             ...item,
                             designation: item.designation || "",
-                            tva: Number(item.tva) || 0,
+                            tva: normalizeLineTvaPercent(item.tva),
                             reduction: Number(item.reduction) || 0,
                             quantite: Number(item.quantite) || 0,
                             prix_unitaire: Number(item.prix_unitaire) || 0,
@@ -398,7 +395,7 @@ function Devis() {
         reduction: "0"
     });
     const [items, setItems] = useState<DevisItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     const calculateTotals = (currentItems: DevisItem[], forcedGlobalRed?: number) => {
@@ -497,7 +494,7 @@ function Devis() {
     };
 
     const addItem = () => {
-        const newItems = [...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }];
+        const newItems = [...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }];
         setItems(newItems);
     };
 
@@ -603,7 +600,7 @@ function Devis() {
 
     const resetForm = () => {
         setFormData({ numero_devis: "", date_devis: new Date().toISOString().split('T')[0], montant_ht: "", taux_tva: "20", statuts_devis: "en attente", reduction: "0" });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null); setClientSearch(""); setCalculatedValues({ montantTVA: 0, montantTTC: 0, totalReductionAmount: 0 }); setShowClientDropdown(false);
     };
 
@@ -966,14 +963,7 @@ function Devis() {
             return;
         }
         if (state?.selectedProduct) {
-            const nature = String(
-                (state.selectedProduct as any)?.nature_produit ??
-                    (state.selectedProduct as any)?.Nature_Produit ??
-                    ""
-            )
-                .trim()
-                .toLowerCase();
-            if (nature === "gros" || nature === "gro") {
+            if (state?.selectedProduct && isProductWholesaleGros(state.selectedProduct as any)) {
                 navigate("/dashboard/devis-gros", {
                     replace: true,
                     state: {
@@ -990,7 +980,7 @@ function Devis() {
                 designation: product.nom,
                 prix_unitaire: product.prix,
                 quantite: 1,
-                tva: 0,
+                tva: 20,
                 reduction: 0,
                 montant_ht: product.prix
             };

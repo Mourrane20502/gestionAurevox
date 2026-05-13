@@ -66,6 +66,7 @@ import {
 } from "@/components/common/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { matchesSousSocieteListFilter } from "@/utils/sousSocieteListFilter";
+import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
 
 interface Client {
     id: number;
@@ -89,8 +90,7 @@ interface Product {
     reference?: string | null;
     prix?: number;
     grammage?: number;
-    nature_produit?: string;
-    Nature_Produit?: string;
+    pricing_metal?: string | null;
 }
 
 interface DevisGrosOpt {
@@ -143,12 +143,6 @@ const getSousSocieteLabel = (doc: { sous_societe_nom?: string | null }) => {
     const fromName = String(doc.sous_societe_nom || "").trim();
     return fromName || "—";
 };
-
-function isProductNatureGros(p: Product): boolean {
-    const n = p.nature_produit ?? p.Nature_Produit;
-    const s = n == null ? "" : String(n).trim().toLowerCase();
-    return s === "gros" || s === "gro";
-}
 
 const GROS_FILTER_MONTHS = [
     { val: "1", label: "Janvier" },
@@ -270,7 +264,7 @@ export default function CommandeGros() {
     const [items, setItems] = useState<CommandeGrosItemForm[]>([{ designation: "", grammage: "", prix_unitaire: "", reduction: "0", taux_tva: "0" }]);
     const [activeProductSearchIndex, setActiveProductSearchIndex] = useState<number | null>(null);
 
-    const productsGros = products.filter(isProductNatureGros);
+    const productsGros = products.filter(isProductWholesaleGros);
 
     const filterYears = useMemo(
         () => Array.from({ length: 8 }, (_, i) => (new Date().getFullYear() - i).toString()),

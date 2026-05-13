@@ -1299,7 +1299,8 @@ exports.getFactureById = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.grammage, p.code_barre, p.reference, COALESCE(p.nom, fi.designation) as designation,
+            SELECT fi.*, p.photo, p.grammage, p.code_barre, p.reference, p.pricing_metal, p.pricing_variant,
+                   COALESCE(p.nom, fi.designation) as designation,
                    pt.name AS product_type_name
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id

@@ -1,6 +1,7 @@
 const db = require("../config/db").promise();
 const { getNextNumber } = require("../utils/numberingSettings");
 const { logProductMovement } = require("../utils/productMovementLogger");
+const { isGrosProductRow } = require("../utils/grosProduct");
 const fs = require("fs");
 const path = require("path");
 
@@ -18,11 +19,6 @@ const safeUnlink = async (filename) => {
 };
 
 const getNow = () => new Date().toISOString().slice(0, 19).replace("T", " ");
-
-function isGrosNature(val) {
-    const s = String(val || "").trim().toLowerCase();
-    return s === "gros" || s === "gro";
-}
 
 async function aggregateFactureGrosItemsByProduct(connection, factureId) {
     const [items] = await connection.execute(
@@ -55,7 +51,7 @@ async function aggregateFactureGrosItemsByProduct(connection, factureId) {
         const [rows] = await connection.execute(
             `SELECT id
              FROM products
-             WHERE nature_produit = 'Gros'
+             WHERE pricing_metal IN ('or','silver')
                AND LOWER(TRIM(nom)) = LOWER(TRIM(?))
              LIMIT 2`,
             [designation]
@@ -75,11 +71,11 @@ async function subtractGrosStockForFactureApproval(connection, factureId, refere
     const soldByProduct = await aggregateFactureGrosItemsByProduct(connection, factureId);
     for (const [pid, totalG] of soldByProduct.entries()) {
         const [rows] = await connection.execute(
-            "SELECT grammage, nature_produit FROM products WHERE id = ? FOR UPDATE",
+            "SELECT grammage, pricing_metal FROM products WHERE id = ? FOR UPDATE",
             [pid]
         );
         if (!Array.isArray(rows) || rows.length === 0) continue;
-        if (!isGrosNature(rows[0].nature_produit)) continue;
+        if (!isGrosProductRow(rows[0])) continue;
 
         const current = Number(rows[0].grammage) || 0;
         const toSubtract = Number(totalG || 0);

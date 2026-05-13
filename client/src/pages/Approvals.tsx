@@ -2308,6 +2308,7 @@ export default function Approvals() {
                     </CardContent>
                 </Card>
 
+                {false && (
                 <Card className="border-border/40 bg-card/60 backdrop-blur-sm shadow-xl mt-6">
                     <CardHeader className="pb-4">
                         <div className="flex items-center justify-between">
@@ -2643,6 +2644,7 @@ export default function Approvals() {
                         </Tabs>
                     </CardContent>
                 </Card>
+                )}
 
                 {highDiscountDevis && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

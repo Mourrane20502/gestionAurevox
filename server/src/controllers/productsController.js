@@ -2,6 +2,7 @@ const db = require("../config/db").promise();
 const fs = require("fs");
 const path = require("path");
 const { logProductMovement } = require("../utils/productMovementLogger");
+const { isGroByPricingMetal } = require("../utils/grosProduct");
 
 const IMPORT_EXCLUDED_COLUMNS = new Set([
     "id",
@@ -38,13 +39,6 @@ const toBooleanTinyInt = (value) => {
     return null;
 };
 
-/** ENUM côté base : Detail | Gros (accepte encore Gro en entrée pour compatibilité) */
-const normalizeNatureProduit = (value) => {
-    const v = String(value ?? "Detail").trim();
-    if (v === "Gro" || v === "Gros") return "Gros";
-    return "Detail";
-};
-
 const parseDisponibleBody = (value) => {
     if (value === undefined || value === null || value === "") return 1;
     const n = toBooleanTinyInt(value);
@@ -70,16 +64,14 @@ const ensureProductPricingColumns = async () => {
     ensuredProductPricingColumns = true;
 };
 
-let ensuredNatureProduitColumn = false;
-const ensureNatureProduitColumn = async () => {
-    if (ensuredNatureProduitColumn) return;
-    const [cols] = await db.execute("SHOW COLUMNS FROM products LIKE 'nature_produit'");
+let ensuredPrixDeVenteColumn = false;
+const ensurePrixDeVenteColumn = async () => {
+    if (ensuredPrixDeVenteColumn) return;
+    const [cols] = await db.execute("SHOW COLUMNS FROM products LIKE 'prix_de_vente'");
     if (!Array.isArray(cols) || cols.length === 0) {
-        await db.execute(
-            "ALTER TABLE products ADD COLUMN nature_produit ENUM('Detail','Gros') NOT NULL DEFAULT 'Detail'"
-        );
+        await db.execute("ALTER TABLE products ADD COLUMN prix_de_vente DECIMAL(14,4) NULL");
     }
-    ensuredNatureProduitColumn = true;
+    ensuredPrixDeVenteColumn = true;
 };
 
 exports.getProductsImportTemplateColumns = async (_req, res) => {
@@ -113,11 +105,10 @@ exports.createProduct = async (req, res) => {
         product_type_id,
         pricing_metal,
         pricing_variant,
-        nature_produit: natureProduitRaw
+        prix_de_vente: prixDeVenteRaw
     } = req.body;
 
-    const nature_produit = normalizeNatureProduit(natureProduitRaw);
-    const isGro = nature_produit === "Gros";
+    const isGro = isGroByPricingMetal(pricing_metal);
     const photo = !isGro && req.file ? req.file.filename : null;
 
     const prixMissing =
@@ -128,7 +119,7 @@ exports.createProduct = async (req, res) => {
 
     try {
         await ensureProductPricingColumns();
-        await ensureNatureProduitColumn();
+        await ensurePrixDeVenteColumn();
 
         const stockVal = isGro ? 0 : stock ? Number(stock) : 0;
         const stockAlertVal = isGro ? 0 : stock_alert ? Number(stock_alert) : 1;
@@ -137,10 +128,11 @@ exports.createProduct = async (req, res) => {
             : Number(stock || 0) > 0 ? 1 : 0;
         const parsedPrix = toNullableNumber(prix);
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
+        const prixDeVenteParsed = toNullableNumber(prixDeVenteRaw);
 
         const query = `
             INSERT INTO products
-            (id_point_de_vente, fournisseur_id, nom, id_categorie, photo, description, prix, grammage, stock, code_barre, stock_alert, reference, etat, disponible, user_id, product_type_id, pricing_metal, pricing_variant, nature_produit)
+            (id_point_de_vente, fournisseur_id, nom, id_categorie, photo, description, prix, grammage, stock, code_barre, stock_alert, reference, etat, disponible, user_id, product_type_id, pricing_metal, pricing_variant, prix_de_vente)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
@@ -163,7 +155,7 @@ exports.createProduct = async (req, res) => {
             product_type_id || null,
             toNullableString(pricing_metal),
             toNullableString(pricing_variant),
-            nature_produit
+            prixDeVenteParsed
         ]);
 
         // Log mouvement creation
@@ -273,18 +265,20 @@ exports.updateProduct = async (req, res) => {
         product_type_id,
         pricing_metal,
         pricing_variant,
-        nature_produit: natureProduitRaw
+        prix_de_vente: prixDeVenteRaw
     } = req.body;
 
     const newPhoto = req.file ? req.file.filename : null;
 
     try {
         await ensureProductPricingColumns();
-        await ensureNatureProduitColumn();
+        await ensurePrixDeVenteColumn();
 
         // Check if exists
         const [existing] = await db.execute(
-            "SELECT photo, stock, nature_produit FROM products WHERE id = ?",
+            `SELECT photo, stock, pricing_metal, prix_de_vente
+             FROM products
+             WHERE id = ?`,
             [id]
         );
 
@@ -292,10 +286,13 @@ exports.updateProduct = async (req, res) => {
             return res.status(404).json({ message: "Product not found" });
         }
 
-        const nature_produit = normalizeNatureProduit(
-            natureProduitRaw !== undefined ? natureProduitRaw : existing[0].nature_produit
-        );
-        const isGro = nature_produit === "Gros";
+        const effectivePricingMetal =
+            pricing_metal !== undefined &&
+            pricing_metal !== null &&
+            String(pricing_metal).trim() !== ""
+                ? pricing_metal
+                : existing[0].pricing_metal;
+        const isGro = isGroByPricingMetal(effectivePricingMetal);
 
         let finalPhoto = existing[0].photo;
         if (isGro) {
@@ -323,6 +320,14 @@ exports.updateProduct = async (req, res) => {
             : Number(stock || 0) > 0 ? 1 : 0;
         const parsedPrix = toNullableNumber(prix);
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
+        const prixDeVenteParsed =
+            prixDeVenteRaw === undefined || prixDeVenteRaw === null
+                ? existing[0].prix_de_vente != null
+                    ? toNullableNumber(existing[0].prix_de_vente)
+                    : null
+                : String(prixDeVenteRaw).trim() === ""
+                    ? null
+                    : toNullableNumber(prixDeVenteRaw);
 
         const query = `
             UPDATE products SET
@@ -343,7 +348,7 @@ exports.updateProduct = async (req, res) => {
             product_type_id = ?,
             pricing_metal = ?,
             pricing_variant = ?,
-            nature_produit = ?
+            prix_de_vente = ?
             WHERE id = ?
         `;
 
@@ -365,7 +370,7 @@ exports.updateProduct = async (req, res) => {
             product_type_id || null,
             toNullableString(pricing_metal),
             toNullableString(pricing_variant),
-            nature_produit,
+            prixDeVenteParsed,
             id
         ]);
 

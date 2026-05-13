@@ -47,6 +47,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/common/ui/dropdown-menu";
 import { toast } from "sonner";
+import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
 import { EditSvgIcon, ViewSvgIcon } from "@/components/icons/actionSvgIcons";
 import JsBarcode from "jsbarcode";
 import jsPDF from "jspdf";
@@ -74,44 +75,33 @@ interface Product {
     grammage?: number;
     creator_name?: string;
     creator_prenom?: string;
-    product_type_id?: number;
-    product_type_name?: string;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     pricing_metal?: "or" | "silver" | null;
     pricing_variant?: string | null;
     has_devis_link?: number | boolean;
     has_commande_link?: number | boolean;
     has_facture_link?: number | boolean;
-    /** Detail = détail ; Gros = vente au grammage (ENUM MySQL) */
-    nature_produit?: "Detail" | "Gros";
-    /** Si la colonne SQL s'appelle `Nature_Produit`, l'API peut renvoyer cette clé */
-    Nature_Produit?: "Detail" | "Gros";
+    /** Prix de vente conseillé / détail (colonne SQL `prix_de_vente`) */
+    prix_de_vente?: number | string | null;
+    /** Colonne virtuelle SQL : `prix - prix_de_vente` */
+    marge?: number | string | null;
     fournisseur_nom?: string | null;
 }
 
-/** ENUM base : Gros ; « Gro » encore accepté ; gère aussi `Nature_Produit` (casse MySQL). */
+interface ProductType {
+    id: number;
+    name: string;
+}
+
+/** Gros = vente au grammage : produit avec un métal de tarification (or / silver). */
 function isNatureGros(productOrNature: Product | string | undefined | null): boolean {
     if (productOrNature == null) return false;
     if (typeof productOrNature === "string") {
-        const normalized = productOrNature.trim().toLowerCase();
-        return normalized === "gros" || normalized === "gro";
+        const v = productOrNature.trim().toLowerCase();
+        return v === "or" || v === "silver" || v === "gros" || v === "gro";
     }
-    const p = productOrNature as Product & {
-        natureProduit?: string;
-        NatureProduit?: string;
-        type_vente?: string;
-        typeVente?: string;
-    };
-    const n =
-        p.nature_produit ??
-        p.Nature_Produit ??
-        p.natureProduit ??
-        p.NatureProduit ??
-        p.type_vente ??
-        p.typeVente;
-    const normalized = n == null ? "" : String(n).trim().toLowerCase();
-    if (normalized === "gros" || normalized === "gro") return true;
-    const productTypeName = String(p.product_type_name || "").trim().toLowerCase();
-    return productTypeName.includes("gros");
+    return isProductWholesaleGros(productOrNature as Product);
 }
 
 function formatProductPrice(product: Product): string {
@@ -122,10 +112,15 @@ function formatProductPrice(product: Product): string {
         : `${prix.toFixed(2)} DH`;
 }
 
-interface ProductType {
-    id: number;
-    name: string;
+/** Colonne « Type » : libellé `product_types.name` si renseigné, sinon or/silver depuis `pricing_metal`. */
+function getProductTypeDisplayLabel(product: Product): string | null {
+    const name = String(product.product_type_name ?? "").trim();
+    if (name) return name;
+    const m = product.pricing_metal;
+    if (m === "or" || m === "silver") return m === "or" ? "Or" : "Silver";
+    return null;
 }
+
 
 interface Category {
     id: number;
@@ -216,49 +211,6 @@ const getDefaultProductActionsForRole = (roleName: string | null): ProductAction
     return defaultProductActionsByRole[role] || { canEdit: false, canDelete: false };
 };
 
-/** Déduit or / silver pour le tarif à partir du libellé du type produit (API). */
-function inferPricingMetalFromProductTypeName(
-    types: ProductType[],
-    productTypeId: string
-): PricingMetalForm | null {
-    if (!productTypeId) return null;
-    const t = types.find((p) => p.id.toString() === productTypeId);
-    if (!t?.name) return null;
-    const n = t.name.toLowerCase();
-    if (/\b(silver|argent)\b/.test(n)) return "silver";
-    if (/\bor\b/.test(n)) return "or";
-    return null;
-}
-
-function inferPricingMetalFromLabel(label?: string | null): PricingMetalForm | null {
-    const n = String(label || "").toLowerCase();
-    if (!n) return null;
-    if (/\b(silver|argent)\b/.test(n)) return "silver";
-    if (/\bor\b/.test(n)) return "or";
-    return null;
-}
-
-function inferVariantFromTypeLabel(
-    label: string | null | undefined,
-    metal: PricingMetalForm
-): PricingVariantOrForm | PricingVariantSilverForm | null {
-    const n = String(label || "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-    if (!n) return null;
-    if (metal === "silver") {
-        if (RAFINITY_LABEL_REGEX.test(n)) return "rafinity";
-        if (/\b(beldy|beldi)\b/.test(n)) return "beldy";
-        return null;
-    }
-    if (/\bresign\b/.test(n)) return "resign";
-    if (RAFINITY_LABEL_REGEX.test(n)) return "rafinity";
-    if (/\bbeldi\b/.test(n)) return "beldi";
-    if (/\boccasion\b/.test(n)) return "occasion";
-    return null;
-}
-
 function normalizePricingVariant(
     variant?: string | null
 ): PricingVariantOrForm | PricingVariantSilverForm | null {
@@ -276,41 +228,34 @@ function normalizePricingVariant(
     return null;
 }
 
-function getDisplayVariantLabel(product: Product): string | null {
-    const fromPricing = normalizePricingVariant(product.pricing_variant);
-    if (fromPricing) return fromPricing;
-    const metal = (
-        product.pricing_metal === "or" || product.pricing_metal === "silver"
-            ? product.pricing_metal
-            : inferPricingMetalFromLabel(product.product_type_name)
-    );
-    const fromType = metal ? inferVariantFromTypeLabel(product.product_type_name, metal) : null;
-    return fromType || null;
+function normalizeTypeLabel(label?: string | null): string {
+    return String(label || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim();
 }
 
-function findTypeIdByMetalVariant(
-    types: ProductType[],
-    metal: PricingMetalForm,
-    variant: PricingVariantOrForm | PricingVariantSilverForm
-): string | null {
-    const metalKeywords = metal === "silver" ? ["silver", "argent"] : ["or"];
-    const variantKeywords =
-        variant === "beldy"
-            ? ["beldy", "beldi"]
-            : variant === "rafinity"
-                ? ["rafinity", "raffinity", "raffinite"]
-                : [variant];
-    const match = types.find((t) => {
-        const n = String(t.name || "")
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "");
-        if (!n) return false;
-        const metalOk = metalKeywords.some((k) => n.includes(k));
-        const variantOk = variantKeywords.some((k) => n.includes(k));
-        return metalOk && variantOk;
-    });
-    return match ? String(match.id) : null;
+/** Déduit le métal de tarification d'un libellé de type produit. */
+function inferPricingMetalFromTypeName(
+    name?: string | null
+): PricingMetalForm | null {
+    const n = normalizeTypeLabel(name);
+    if (!n) return null;
+    if (/\bsilver\b|\bargent\b/.test(n)) return "silver";
+    if (/\bor\b/.test(n)) return "or";
+    return null;
+}
+
+/** Déduit la variante (resign/rafinity/beldi/...) d'un libellé de type produit. */
+function inferVariantFromTypeName(
+    name?: string | null
+): PricingVariantOrForm | PricingVariantSilverForm | null {
+    return normalizePricingVariant(name);
+}
+
+function getDisplayVariantLabel(product: Product): string | null {
+    return normalizePricingVariant(product.pricing_variant) || null;
 }
 
 function inferPricingFromPrice(
@@ -359,15 +304,16 @@ export default function Products() {
     const [filterPdv, setFilterPdv] = useState("");
     const [filterFournisseur, setFilterFournisseur] = useState("");
     const [filterCategory, setFilterCategory] = useState("");
-    const [filterProductType, setFilterProductType] = useState("");
     const [filterMetalVariant, setFilterMetalVariant] = useState("");
-    const [filterNature, setFilterNature] = useState("");
+    const [filterProductType, setFilterProductType] = useState("");
     const [filterGrammeMin, setFilterGrammeMin] = useState("");
     const [filterGrammeMax, setFilterGrammeMax] = useState("");
+    const [filterMargeMin, setFilterMargeMin] = useState("");
+    const [filterMargeMax, setFilterMargeMax] = useState("");
     const [filterPriceSort, setFilterPriceSort] = useState<"" | "asc" | "desc">("");
     const [filterDisponibilite, setFilterDisponibilite] = useState<"" | "disponible" | "epuise">("");
     const [showFilters, setShowFilters] = useState(false);
-    const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+    const [viewMode, setViewMode] = useState<"grid" | "table">("table");
 
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
@@ -402,11 +348,11 @@ export default function Products() {
         etat: "1",
         disponible: "true",
         grammage: "",
-        product_type_id: "",
+        product_type_id: "" as string,
         pricing_metal: "" as string,
         pricing_variant: "" as string,
         photo: null as File | null,
-        nature_produit: "Detail" as "Detail" | "Gros",
+        prix_de_vente: "",
     });
 
     const [metalPricing, setMetalPricing] = useState<MetalPricingConfig | null>(null);
@@ -427,8 +373,12 @@ export default function Products() {
         activePricingVariant
     );
 
+    const isGroForm =
+        formData.pricing_metal === "or" || formData.pricing_metal === "silver";
+
     useEffect(() => {
         if (!isDialogOpen) return;
+        if (!isGroForm) return;
         const variant = pricingMetal === "or" ? pricingVariantOr : pricingVariantSilver;
         const unit = readTarifUnitDhPerGramFromConfig(metalPricing, pricingMetal, variant);
         if (!Number.isFinite(unit) || unit < 0) return;
@@ -444,20 +394,21 @@ export default function Products() {
         pricingVariantOr,
         pricingVariantSilver,
         formData.grammage,
-        formData.nature_produit,
+        formData.pricing_metal,
+        isGroForm,
     ]);
 
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [productsRes, categoriesRes, pdvRes, fournisseursRes, productTypesRes, gestionnaireRes, metalPricingRes] = await Promise.all([
+            const [productsRes, categoriesRes, pdvRes, fournisseursRes, gestionnaireRes, metalPricingRes, productTypesRes] = await Promise.all([
                 fetch("/api/products", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/categories", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/pdv", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/fournisseurs", { headers: { Authorization: `Bearer ${token}` } }),
-                fetch("/api/product-types", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/gestionnaires", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/settings/metal-pricing", { headers: { Authorization: `Bearer ${token}` } }),
+                fetch("/api/product-types", { headers: { Authorization: `Bearer ${token}` } }),
             ]);
             if (productsRes.ok) setProducts(await productsRes.json());
             if (categoriesRes.ok) setCategories(await categoriesRes.json());
@@ -525,9 +476,12 @@ export default function Products() {
     useEffect(() => {
         if (!isDialogOpen) return;
         if (editingProduct) return;
-        const inferred = inferPricingMetalFromProductTypeName(productTypes, formData.product_type_id);
-        setPricingMetal(inferred ?? defaultMetalFromConfig(metalPricing));
-    }, [isDialogOpen, formData.product_type_id, productTypes, metalPricing, editingProduct]);
+        if (formData.pricing_metal === "or" || formData.pricing_metal === "silver") {
+            setPricingMetal(formData.pricing_metal);
+            return;
+        }
+        setPricingMetal(defaultMetalFromConfig(metalPricing));
+    }, [isDialogOpen, formData.pricing_metal, metalPricing, editingProduct]);
 
     // Barcode listener for hardware scanner or fast input
     useEffect(() => {
@@ -649,7 +603,7 @@ export default function Products() {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm, showOnlyLowStock, filterReference, filterPdv, filterFournisseur, filterCategory, filterProductType, filterMetalVariant, filterNature, filterGrammeMin, filterGrammeMax, filterPriceSort, filterDisponibilite]);
+    }, [searchTerm, showOnlyLowStock, filterReference, filterPdv, filterFournisseur, filterCategory, filterMetalVariant, filterProductType, filterGrammeMin, filterGrammeMax, filterMargeMin, filterMargeMax, filterPriceSort, filterDisponibilite]);
 
     // Auto-generate barcode when code_barre changes
     useEffect(() => {
@@ -732,34 +686,47 @@ export default function Products() {
             setFormData((prev) => ({ ...prev, fournisseur_id: value === "__none__" ? "" : value }));
             return;
         }
-        if (name === "nature_produit") {
-            const next = value === "Gros" ? "Gros" : "Detail";
-            setFormData((prev) => ({
-                ...prev,
-                nature_produit: next,
-                ...(next === "Gros"
-                    ? {
-                          photo: null,
-                          stock: "",
-                          stock_alert: "",
-                          prix: "",
-                      }
-                    : {}),
-            }));
-            return;
-        }
         if (name === "product_type_id") {
-            const inferred = inferPricingMetalFromProductTypeName(productTypes, value);
-            if (inferred) {
-                setPricingMetal(inferred);
+            if (!value || value === "__none__") {
                 setFormData((prev) => ({
                     ...prev,
-                    [name]: value,
-                    pricing_metal: inferred,
-                    pricing_variant: inferred === "or" ? pricingVariantOr : pricingVariantSilver,
+                    product_type_id: "",
+                    pricing_metal: "",
+                    pricing_variant: "",
                 }));
                 return;
             }
+            const type = productTypes.find((t) => t.id.toString() === value);
+            const inferredMetal = inferPricingMetalFromTypeName(type?.name);
+            const inferredVariant = inferVariantFromTypeName(type?.name);
+            if (inferredMetal) {
+                setPricingMetal(inferredMetal);
+                if (inferredMetal === "or" && inferredVariant) {
+                    setPricingVariantOr(inferredVariant as PricingVariantOrForm);
+                } else if (inferredMetal === "silver" && inferredVariant) {
+                    setPricingVariantSilver(inferredVariant as PricingVariantSilverForm);
+                }
+                const fallbackVariant =
+                    inferredMetal === "or" ? pricingVariantOr : pricingVariantSilver;
+                setFormData((prev) => ({
+                    ...prev,
+                    product_type_id: value,
+                    pricing_metal: inferredMetal,
+                    pricing_variant: String(inferredVariant || fallbackVariant || ""),
+                    photo: null,
+                    stock: "",
+                    stock_alert: "",
+                    prix: "",
+                }));
+                return;
+            }
+            setFormData((prev) => ({
+                ...prev,
+                product_type_id: value,
+                pricing_metal: "",
+                pricing_variant: "",
+            }));
+            return;
         }
         setFormData((prev) => ({ ...prev, [name]: value }));
     };
@@ -814,7 +781,7 @@ export default function Products() {
             return;
         }
 
-        const isGro = isNatureGros(formData.nature_produit);
+        const isGro = isGroForm;
         const skipForGro = new Set(["photo", "stock", "stock_alert"]);
         const data = new FormData();
         Object.entries(formData).forEach(([key, value]) => {
@@ -822,7 +789,7 @@ export default function Products() {
             if (isGro && skipForGro.has(key)) return;
             data.append(key, value as string | Blob);
         });
-        data.set("nature_produit", formData.nature_produit);
+        data.set("prix_de_vente", formData.prix_de_vente ?? "");
 
         try {
             const url = editingProduct ? `/api/products/${editingProduct.id}` : "/api/products";
@@ -888,16 +855,12 @@ export default function Products() {
 
     const handleEdit = (product: Product) => {
         setEditingProduct(product);
-        const productTypeLabel = product.product_type_name || productTypes.find((t) => t.id === product.product_type_id)?.name || "";
         const inferredFromPrice = inferPricingFromPrice(product, metalPricing);
-        const initialMetal =
-            (product.pricing_metal === "or" || product.pricing_metal === "silver" ? product.pricing_metal : null) ||
-            inferPricingMetalFromProductTypeName(productTypes, product.product_type_id?.toString() || "") ||
-            inferPricingMetalFromLabel(productTypeLabel) ||
-            inferredFromPrice?.metal ||
-            defaultMetalFromConfig(metalPricing);
-        const inferredVariant = inferVariantFromTypeLabel(productTypeLabel, initialMetal);
-        const chosenVariant = (product.pricing_variant || "").trim() || inferredVariant || inferredFromPrice?.variant || null;
+        const initialMetal: PricingMetalForm | "" =
+            product.pricing_metal === "or" || product.pricing_metal === "silver"
+                ? product.pricing_metal
+                : inferredFromPrice?.metal || "";
+        const chosenVariant = (product.pricing_variant || "").trim() || inferredFromPrice?.variant || null;
         setPricingVariantOr(
             initialMetal === "or" && chosenVariant
                 ? (chosenVariant as PricingVariantOrForm)
@@ -908,22 +871,18 @@ export default function Products() {
                 ? (chosenVariant as PricingVariantSilverForm)
                 : "beldy"
         );
-        const inferredFromType =
-            inferPricingMetalFromProductTypeName(productTypes, product.product_type_id?.toString() || "") ||
-            inferPricingMetalFromLabel(product.product_type_name);
-        setPricingMetal((prev) => inferredFromType ?? prev ?? defaultMetalFromConfig(metalPricing));
-        const nature =
-            isNatureGros(product) ? "Gros" : "Detail";
+        setPricingMetal(initialMetal || defaultMetalFromConfig(metalPricing));
+        const gro = isNatureGros(product);
         setFormData({
             nom: product.nom,
             description: product.description || "",
             prix: product.prix?.toString() || "",
-            stock: nature === "Gros" ? "" : product.stock.toString(),
+            stock: gro ? "" : product.stock.toString(),
             id_categorie: product.id_categorie?.toString() || "",
             id_point_de_vente: product.id_point_de_vente?.toString() || "",
             fournisseur_id: product.fournisseur_id?.toString() || "",
             code_barre: product.code_barre || "",
-            stock_alert: nature === "Gros" ? "" : product.stock_alert?.toString() || "",
+            stock_alert: gro ? "" : product.stock_alert?.toString() || "",
             reference: product.reference || "",
             etat: product.etat?.toString() || "1",
             disponible: product.disponible === 0 || product.disponible === false ? "false" : "true",
@@ -932,7 +891,10 @@ export default function Products() {
             pricing_metal: initialMetal,
             pricing_variant: chosenVariant ? String(chosenVariant) : "",
             photo: null,
-            nature_produit: nature,
+            prix_de_vente:
+                product.prix_de_vente != null && String(product.prix_de_vente).trim() !== ""
+                    ? String(product.prix_de_vente)
+                    : "",
         });
         setIsDialogOpen(true);
     };
@@ -945,8 +907,9 @@ export default function Products() {
             nom: "", description: "", prix: "", stock: "",
             id_categorie: "", id_point_de_vente: "", fournisseur_id: "", code_barre: "",
             stock_alert: "1", reference: "", etat: "1", disponible: "true", grammage: "",
-            product_type_id: "", pricing_metal: "", pricing_variant: "", photo: null,
-            nature_produit: "Detail",
+            product_type_id: "",
+            pricing_metal: "", pricing_variant: "", photo: null,
+            prix_de_vente: "",
         });
     };
 
@@ -956,11 +919,12 @@ export default function Products() {
         filterPdv,
         filterFournisseur,
         filterCategory,
-        filterProductType,
         filterMetalVariant,
-        filterNature,
+        filterProductType,
         filterGrammeMin,
         filterGrammeMax,
+        filterMargeMin,
+        filterMargeMax,
         filterPriceSort,
         filterDisponibilite,
     ].filter(Boolean).length;
@@ -971,41 +935,34 @@ export default function Products() {
         setFilterPdv("");
         setFilterFournisseur("");
         setFilterCategory("");
-        setFilterProductType("");
         setFilterMetalVariant("");
-        setFilterNature("");
+        setFilterProductType("");
         setFilterGrammeMin("");
         setFilterGrammeMax("");
+        setFilterMargeMin("");
+        setFilterMargeMax("");
         setFilterPriceSort("");
         setFilterDisponibilite("");
     };
 
-    const selectedProductTypeName =
-        productTypes.find((t) => t.id.toString() === filterProductType)?.name || "";
-    const selectedMetalForTypeFilter = inferPricingMetalFromLabel(selectedProductTypeName);
-    const selectedVariantFromTypeFilter = selectedMetalForTypeFilter
-        ? inferVariantFromTypeLabel(selectedProductTypeName, selectedMetalForTypeFilter)
-        : null;
-    const isMetalTypeFilter =
-        !!filterProductType && !!selectedMetalForTypeFilter && !selectedVariantFromTypeFilter;
-    const metalVariantOptions =
-        selectedMetalForTypeFilter === "silver"
-            ? ([
-                { value: "beldy", label: "Beldy" },
-                { value: "rafinity", label: "Rafinity" },
-            ] as const)
-            : ([
-                { value: "resign", label: "Resign" },
-                { value: "rafinity", label: "Rafinity" },
-                { value: "beldi", label: "Beldi" },
-                { value: "occasion", label: "Occasion" },
-            ] as const);
+    const metalVariantOptions = [
+        { value: "resign", label: "Resign" },
+        { value: "rafinity", label: "Rafinity" },
+        { value: "beldi", label: "Beldi" },
+        { value: "occasion", label: "Occasion" },
+        { value: "beldy", label: "Beldy" },
+    ] as const;
 
-    useEffect(() => {
-        if (!isMetalTypeFilter) {
-            setFilterMetalVariant("");
+    const getProductMargeValue = (p: Product): number | null => {
+        if (p.marge != null && String(p.marge).trim() !== "") {
+            const n = Number(p.marge);
+            if (Number.isFinite(n)) return n;
         }
-    }, [isMetalTypeFilter]);
+        const prix = Number(p.prix);
+        const pv = Number(p.prix_de_vente);
+        if (!Number.isFinite(prix) || !Number.isFinite(pv)) return null;
+        return prix - pv;
+    };
 
     const isProductAvailableForFilter = (product: Product) => {
         if (isNatureGros(product)) {
@@ -1032,28 +989,12 @@ export default function Products() {
         const matchesCategory = filterCategory
             ? p.id_categorie?.toString() === filterCategory
             : true;
-        const currentTypeName =
-            p.product_type_name ||
-            productTypes.find((t) => t.id === p.product_type_id)?.name ||
-            "";
-        const currentMetal = (
-            p.pricing_metal === "or" || p.pricing_metal === "silver" ? p.pricing_metal : null
-        ) ||
-            inferPricingMetalFromLabel(currentTypeName) ||
-            inferPricingMetalFromProductTypeName(productTypes, p.product_type_id?.toString() || "");
-        const currentVariant = normalizePricingVariant(p.pricing_variant) ||
-            (currentMetal ? inferVariantFromTypeLabel(currentTypeName, currentMetal) : null);
-        const matchesProductType = filterProductType
-            ? (isMetalTypeFilter
-                ? currentMetal === selectedMetalForTypeFilter
-                : p.product_type_id?.toString() === filterProductType)
+        const currentVariant = normalizePricingVariant(p.pricing_variant);
+        const matchesMetalVariant = filterMetalVariant
+            ? currentVariant === filterMetalVariant
             : true;
-        const matchesMetalVariant =
-            !isMetalTypeFilter || !filterMetalVariant
-                ? true
-                : currentVariant === filterMetalVariant;
-        const matchesNature = filterNature
-            ? (filterNature === "gros" ? isNatureGros(p) : !isNatureGros(p))
+        const matchesProductType = filterProductType
+            ? p.product_type_id?.toString() === filterProductType
             : true;
         const matchesGrammeMin = filterGrammeMin
             ? (p.grammage ?? 0) >= Number(filterGrammeMin)
@@ -1061,13 +1002,20 @@ export default function Products() {
         const matchesGrammeMax = filterGrammeMax
             ? (p.grammage ?? 0) <= Number(filterGrammeMax)
             : true;
+        const margeValue = getProductMargeValue(p);
+        const matchesMargeMin = filterMargeMin
+            ? margeValue != null && margeValue >= Number(filterMargeMin)
+            : true;
+        const matchesMargeMax = filterMargeMax
+            ? margeValue != null && margeValue <= Number(filterMargeMax)
+            : true;
         const matchesDisponibilite = filterDisponibilite
             ? (filterDisponibilite === "disponible"
                 ? isProductAvailableForFilter(p)
                 : !isProductAvailableForFilter(p))
             : true;
         const matchesLowStock = showOnlyLowStock ? (p.stock_alert && p.stock <= p.stock_alert) : true;
-        return matchesSearch && matchesReference && matchesPdv && matchesFournisseur && matchesCategory && matchesProductType && matchesMetalVariant && matchesNature && matchesGrammeMin && matchesGrammeMax && matchesDisponibilite && matchesLowStock;
+        return matchesSearch && matchesReference && matchesPdv && matchesFournisseur && matchesCategory && matchesMetalVariant && matchesProductType && matchesGrammeMin && matchesGrammeMax && matchesMargeMin && matchesMargeMax && matchesDisponibilite && matchesLowStock;
     })
     .sort((a, b) => {
         if (!filterPriceSort) return 0;
@@ -1075,62 +1023,6 @@ export default function Products() {
         const prixB = Number(b.prix) || 0;
         return filterPriceSort === "asc" ? prixA - prixB : prixB - prixA;
     });
-
-    useEffect(() => {
-        if (!isMetalTypeFilter) return;
-
-        const inspected = products.slice(0, 80).map((p) => {
-            const typeName =
-                p.product_type_name ||
-                productTypes.find((t) => t.id === p.product_type_id)?.name ||
-                "";
-            const metal = (
-                p.pricing_metal === "or" || p.pricing_metal === "silver" ? p.pricing_metal : null
-            ) ||
-                inferPricingMetalFromLabel(typeName) ||
-                inferPricingMetalFromProductTypeName(productTypes, p.product_type_id?.toString() || "");
-            const variant =
-                normalizePricingVariant(p.pricing_variant) ||
-                (metal ? inferVariantFromTypeLabel(typeName, metal) : null);
-            return {
-                id: p.id,
-                nom: p.nom,
-                product_type_id: p.product_type_id,
-                pricing_metal: p.pricing_metal ?? null,
-                pricing_variant: p.pricing_variant ?? null,
-                typeName,
-                detectedMetal: metal,
-                detectedVariant: variant,
-            };
-        });
-
-        const metalMatches = inspected.filter((x) => x.detectedMetal === selectedMetalForTypeFilter);
-        const variantMatches = filterMetalVariant
-            ? metalMatches.filter((x) => x.detectedVariant === filterMetalVariant)
-            : metalMatches;
-
-        console.log("[Products][filter-debug]", {
-            filterProductType,
-            selectedProductTypeName,
-            selectedMetalForTypeFilter,
-            filterMetalVariant,
-            productsCount: products.length,
-            filteredProductsCount: filteredProducts.length,
-            metalMatchesCount: metalMatches.length,
-            variantMatchesCount: variantMatches.length,
-            sampleMetalMatches: metalMatches.slice(0, 20),
-            sampleVariantMatches: variantMatches.slice(0, 20),
-        });
-    }, [
-        isMetalTypeFilter,
-        filterProductType,
-        selectedProductTypeName,
-        selectedMetalForTypeFilter,
-        filterMetalVariant,
-        filteredProducts.length,
-        products,
-        productTypes,
-    ]);
 
     const lowStockCount = products.filter(
         (p) => p.stock_alert && p.stock <= p.stock_alert
@@ -1198,8 +1090,12 @@ export default function Products() {
         "Nom": p.nom,
         "Référence": p.reference || "—",
         "Catégorie": p.category_name || "—",
-        "Type": p.product_type_name || "—",
+        "Type": getProductTypeDisplayLabel(p) || "—",
         "Prix (DH)": formatProductPrice(p),
+        "Prix de vente (DH)":
+            p.prix_de_vente != null && String(p.prix_de_vente).trim() !== ""
+                ? Number(p.prix_de_vente).toLocaleString("fr-FR", { maximumFractionDigits: 2 })
+                : "—",
         "Grammage (g)": p.grammage ? Number(p.grammage).toFixed(2) : "—",
         "Stock": p.stock,
         "Point de vente": p.point_de_vente_name || "—",
@@ -1680,124 +1576,108 @@ export default function Products() {
                                 <form onSubmit={handleSubmit} className="grid gap-4 py-3">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
-                                            <Label htmlFor="nom" className="text-sm font-medium">Nom *</Label>
+                                            <Label htmlFor="nom" className="text-sm font-medium">
+                                                Nom <span className="text-red-500">*</span>
+                                            </Label>
                                             <Input id="nom" name="nom" value={formData.nom} onChange={handleInputChange} required className="h-10" />
                                         </div>
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Type de produit</Label>
-                                            <Select onValueChange={(v) => handleSelectChange("product_type_id", v)} value={formData.product_type_id}>
-                                                <SelectTrigger className="h-10 w-[300px]">
+                                            <Select
+                                                onValueChange={(v) => handleSelectChange("product_type_id", v)}
+                                                value={formData.product_type_id || "__none__"}
+                                            >
+                                                <SelectTrigger className="h-10 w-full">
                                                     <SelectValue placeholder="Choisir..." />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    {productTypes.map((type) => (
-                                                        <SelectItem key={type.id} value={type.id.toString()}>{type.name}</SelectItem>
+                                                    <SelectItem value="__none__">Aucun type</SelectItem>
+                                                    {productTypes.map((t) => (
+                                                        <SelectItem key={t.id} value={t.id.toString()}>{t.name}</SelectItem>
                                                     ))}
                                                 </SelectContent>
                                             </Select>
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        <div className="grid gap-1.5">
-                                            <Label className="text-sm font-medium text-foreground">Nature du produit</Label>
-                                            <Select
-                                                onValueChange={(v) => handleSelectChange("nature_produit", v)}
-                                                value={formData.nature_produit}
-                                            >
-                                                <SelectTrigger className="h-10 w-[300px]">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="Detail">Détail</SelectItem>
-                                                    <SelectItem value="Gros">Gros</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="grid gap-1.5">
-                                            <Label htmlFor="reference" className="text-sm font-medium">Référence</Label>
-                                            <Input id="reference" name="reference" value={formData.reference} onChange={handleInputChange} className="h-10" />
-                                        </div>
+                                    <div className="grid gap-1.5">
+                                        <Label htmlFor="reference" className="text-sm font-medium">Référence</Label>
+                                        <Input id="reference" name="reference" value={formData.reference} onChange={handleInputChange} className="h-10" />
                                     </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    {pricingMetal === "or" ? (
-                                        <div className="grid gap-1.5">
-                                            <Label className="text-sm font-medium">Type (or)</Label>
-                                            <Select
-                                                value={pricingVariantOr}
-                                                onValueChange={(v) => {
-                                                    const next = v as PricingVariantOrForm;
-                                                    setPricingVariantOr(next);
-                                                    setFormData((prev) => ({
-                                                        ...prev,
-                                                        pricing_metal: "or",
-                                                        pricing_variant: next,
-                                                    }));
-                                                    const mappedTypeId = findTypeIdByMetalVariant(productTypes, "or", next);
-                                                    if (mappedTypeId) {
-                                                        setFormData((prev) => ({ ...prev, product_type_id: mappedTypeId }));
-                                                    }
-                                                }}
-                                            >
-                                                <SelectTrigger className="h-10 w-[300px]">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="resign">Resign</SelectItem>
-                                                    <SelectItem value="rafinity">Rafinity</SelectItem>
-                                                    <SelectItem value="beldi">Beldi</SelectItem>
-                                                    <SelectItem value="occasion">Occasion</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    ) : (
-                                        <div className="grid gap-1.5">
-                                            <Label className="text-sm font-medium">Type (silver)</Label>
-                                            <Select
-                                                value={pricingVariantSilver}
-                                                onValueChange={(v) => {
-                                                    const next = v as PricingVariantSilverForm;
-                                                    setPricingVariantSilver(next);
-                                                    setFormData((prev) => ({
-                                                        ...prev,
-                                                        pricing_metal: "silver",
-                                                        pricing_variant: next,
-                                                    }));
-                                                    const mappedTypeId = findTypeIdByMetalVariant(productTypes, "silver", next);
-                                                    if (mappedTypeId) {
-                                                        setFormData((prev) => ({ ...prev, product_type_id: mappedTypeId }));
-                                                    }
-                                                }}
-                                            >
-                                                <SelectTrigger className="h-10 w-[300px]">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="beldy">Beldy</SelectItem>
-                                                    <SelectItem value="rafinity">Rafinity</SelectItem>
-                                                </SelectContent>
-                                            </Select>
+                                    {isGroForm && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            {pricingMetal === "or" && (
+                                                <div className="grid gap-1.5">
+                                                    <Label className="text-sm font-medium">Variante (or)</Label>
+                                                    <Select
+                                                        value={pricingVariantOr}
+                                                        onValueChange={(v) => {
+                                                            const next = v as PricingVariantOrForm;
+                                                            setPricingVariantOr(next);
+                                                            setFormData((prev) => ({
+                                                                ...prev,
+                                                                pricing_metal: "or",
+                                                                pricing_variant: next,
+                                                            }));
+                                                        }}
+                                                    >
+                                                        <SelectTrigger className="h-10 w-full">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="resign">Resign</SelectItem>
+                                                            <SelectItem value="rafinity">Rafinity</SelectItem>
+                                                            <SelectItem value="beldi">Beldi</SelectItem>
+                                                            <SelectItem value="occasion">Occasion</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            )}
+                                            {pricingMetal === "silver" && (
+                                                <div className="grid gap-1.5">
+                                                    <Label className="text-sm font-medium">Variante (silver)</Label>
+                                                    <Select
+                                                        value={pricingVariantSilver}
+                                                        onValueChange={(v) => {
+                                                            const next = v as PricingVariantSilverForm;
+                                                            setPricingVariantSilver(next);
+                                                            setFormData((prev) => ({
+                                                                ...prev,
+                                                                pricing_metal: "silver",
+                                                                pricing_variant: next,
+                                                            }));
+                                                        }}
+                                                    >
+                                                        <SelectTrigger className="h-10 w-full">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="beldy">Beldy</SelectItem>
+                                                            <SelectItem value="rafinity">Rafinity</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
-                                    <div className="grid gap-1.5">
-                                        <Label className="text-sm font-medium text-foreground">Point de vente</Label>
-                                        <Select onValueChange={(v) => handleSelectChange("id_point_de_vente", v)} value={formData.id_point_de_vente}>
-                                            <SelectTrigger className="h-10 w-[300px]"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                                            <SelectContent>
-                                                {pointsDeVente.map((pdv) => (
-                                                    <SelectItem key={pdv.id} value={pdv.id.toString()}>{pdv.nom}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    </div>
 
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-sm font-medium text-foreground">Point de vente</Label>
+                                            <Select onValueChange={(v) => handleSelectChange("id_point_de_vente", v)} value={formData.id_point_de_vente}>
+                                                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                <SelectContent>
+                                                    {pointsDeVente.map((pdv) => (
+                                                        <SelectItem key={pdv.id} value={pdv.id.toString()}>{pdv.nom}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Fournisseur</Label>
                                             <Select onValueChange={(v) => handleSelectChange("fournisseur_id", v)} value={formData.fournisseur_id || "__none__"}>
-                                                <SelectTrigger className="h-10 w-[300px]">
+                                                <SelectTrigger className="h-10 w-full">
                                                     <SelectValue placeholder="Choisir..." />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -1812,34 +1692,67 @@ export default function Products() {
 
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
-                                            <Label htmlFor="grammage" className="text-sm font-medium">Grammage (g)</Label>
+                                            <Label htmlFor="grammage" className="text-sm font-medium">Poids</Label>
                                             <Input id="grammage" name="grammage" type="number" step="0.01" min={0} value={formData.grammage} onChange={handleInputChange} className="h-10" />
-                                            <p className="text-[11px] text-muted-foreground leading-snug">
-                                                {isNatureGros(formData.nature_produit)
-                                                    ? "Produit gros : prix auto = grammage × tarif unitaire (Paramètres)."
-                                                    : "Le prix est calculé : grammage × tarif défini dans Paramètres (admin)."}
-                                            </p>
                                         </div>
                                         <div className="grid gap-1.5">
                                             <Label htmlFor="prix" className="text-sm font-medium">
-                                                Prix (DH) *
+                                                Prix d'achat (DH) <span className="text-red-500">*</span>
                                             </Label>
                                             <Input id="prix" name="prix" type="number" step="0.01" value={formData.prix} onChange={handleInputChange} required className="h-10" />
-                                            {Number.isFinite(tarifUnitaireDhParG) ? (
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="prix_de_vente" className="text-sm font-medium">
+                                                Prix de vente (DH)
+                                            </Label>
+                                            <Input
+                                                id="prix_de_vente"
+                                                name="prix_de_vente"
+                                                type="number"
+                                                step="0.01"
+                                                min={0}
+                                                value={formData.prix_de_vente}
+                                                onChange={handleInputChange}
+                                                className="h-10"
+                                              
+                                            />
+                                            {isGroForm && Number.isFinite(tarifUnitaireDhParG) ? (
                                                 <p className="text-[11px] text-muted-foreground">
                                                     Tarif unitaire :{" "}
                                                     <span className="font-semibold text-foreground">
                                                         {tarifUnitaireDhParG.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} DH/g
                                                     </span>
                                                 </p>
-                                            ) : (
-                                                <p className="text-[11px] text-amber-600 dark:text-amber-500">
-                                                    Tarif non renseigné pour ce type — renseignez-le dans Paramètres → Paramétrage des prix.
-                                                </p>
-                                            )}
+                                            ) : null}
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label htmlFor="marge" className="text-sm font-medium">
+                                                Marge (DH)
+                                            </Label>
+                                            <Input
+                                                id="marge"
+                                                name="marge"
+                                                type="text"
+                                                value={(() => {
+                                                    const prix = parseFloat(String(formData.prix).replace(",", "."));
+                                                    const pv = parseFloat(String(formData.prix_de_vente).replace(",", "."));
+                                                    if (!Number.isFinite(prix) || !Number.isFinite(pv)) return "";
+                                                    return (prix - pv).toFixed(2);
+                                                })()}
+                                                readOnly
+                                                disabled
+                                                className="h-10 bg-muted/40 cursor-not-allowed"
+                                                placeholder="Calculée automatiquement"
+                                            />
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Calculée automatiquement (prix d'achat − prix de vente)
+                                            </p>
                                         </div>
                                     </div>
-                                    {!isNatureGros(formData.nature_produit) && (
+                                    {!isGroForm && (
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
                                             <Label htmlFor="stock" className="text-sm font-medium">Stock</Label>
@@ -1874,12 +1787,12 @@ export default function Products() {
                                             </div>
                                         </div>
                                     )}
-                                    {!isNatureGros(formData.nature_produit) && (
+                                    {!isGroForm && (
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                             <div className="grid gap-1.5">
                                                 <Label className="text-sm font-medium text-foreground">Catégorie</Label>
                                                 <Select onValueChange={(v) => handleSelectChange("id_categorie", v)} value={formData.id_categorie}>
-                                                    <SelectTrigger className="h-10 w-[300px]"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
                                                     <SelectContent>
                                                         {categories.map((cat) => (
                                                             <SelectItem key={cat.id} value={cat.id.toString()}>{cat.nom}</SelectItem>
@@ -1890,7 +1803,7 @@ export default function Products() {
                                             <div className="grid gap-1.5">
                                                 <Label className="text-sm font-medium text-foreground">Disponibilité</Label>
                                                 <Select onValueChange={(v) => handleSelectChange("disponible", v)} value={formData.disponible}>
-                                                    <SelectTrigger className="h-10 w-[300px]"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
                                                     <SelectContent>
                                                         <SelectItem value="true">Disponible</SelectItem>
                                                         <SelectItem value="false">Non Disponible</SelectItem>
@@ -1903,7 +1816,7 @@ export default function Products() {
                                         <Label htmlFor="description" className="text-sm font-medium">Description</Label>
                                         <Textarea id="description" name="description" value={formData.description} onChange={handleInputChange} rows={3} />
                                     </div>
-                                    {!isNatureGros(formData.nature_produit) && (
+                                    {!isGroForm && (
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="photo" className="text-sm font-medium">Photo</Label>
                                         <Input id="photo" name="photo" type="file" onChange={handleFileChange} className="h-10" />
@@ -2129,52 +2042,24 @@ export default function Products() {
                                 </Select>
                             </div>
 
-                            {/* Type de Produit */}
+                            {/* Type de produit */}
                             <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Type de produit</Label>
-                                <Select onValueChange={(v) => {
-                                    const next = v === "__all__" ? "" : v;
-                                    setFilterProductType(next);
-                                    setFilterMetalVariant("");
-                                }} value={filterProductType || "__all__"}>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Type</Label>
+                                <Select
+                                    onValueChange={(v) => setFilterProductType(v === "__all__" ? "" : v)}
+                                    value={filterProductType || "__all__"}
+                                >
                                     <SelectTrigger className="h-9 bg-background border-border text-sm">
-                                        <div className="flex items-center gap-2">
-                                            <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-                                            <SelectValue placeholder="Tous les types" />
-                                        </div>
+                                        <SelectValue placeholder="Tous les types" />
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="__all__">Tous les types</SelectItem>
-                                        {productTypes.map((type) => (
-                                            <SelectItem key={type.id} value={type.id.toString()}>{type.name}</SelectItem>
+                                        {productTypes.map((t) => (
+                                            <SelectItem key={t.id} value={t.id.toString()}>{t.name}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
                             </div>
-
-                            {isMetalTypeFilter && (
-                                <div className="space-y-1.5">
-                                    <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                        Variante {selectedMetalForTypeFilter === "silver" ? "Silver" : "Or"}
-                                    </Label>
-                                    <Select
-                                        onValueChange={(v) => setFilterMetalVariant(v === "__all__" ? "" : v)}
-                                        value={filterMetalVariant || "__all__"}
-                                    >
-                                        <SelectTrigger className="h-9 bg-background border-border text-sm">
-                                            <SelectValue placeholder="Toutes les variantes" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="__all__">Toutes les variantes</SelectItem>
-                                            {metalVariantOptions.map((option) => (
-                                                <SelectItem key={option.value} value={option.value}>
-                                                    {option.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            )}
 
                             {/* Tri prix */}
                             <div className="space-y-1.5">
@@ -2215,19 +2100,28 @@ export default function Products() {
                                 </div>
                             </div>
 
-                            {/* Nature */}
+                            {/* Marge */}
                             <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Nature</Label>
-                                <Select onValueChange={(v) => setFilterNature(v === "__all__" ? "" : v)} value={filterNature || "__all__"}>
-                                    <SelectTrigger className="h-9 bg-background border-border text-sm">
-                                        <SelectValue placeholder="Toutes les natures" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="__all__">Toutes les natures</SelectItem>
-                                        <SelectItem value="gros">Gros</SelectItem>
-                                        <SelectItem value="detail">Détail</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Marge (DH)</Label>
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Min"
+                                        className="h-9 bg-background border-border text-sm"
+                                        value={filterMargeMin}
+                                        onChange={(e) => setFilterMargeMin(e.target.value)}
+                                    />
+                                    <span className="text-muted-foreground text-xs font-medium shrink-0">à</span>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Max"
+                                        className="h-9 bg-background border-border text-sm"
+                                        value={filterMargeMax}
+                                        onChange={(e) => setFilterMargeMax(e.target.value)}
+                                    />
+                                </div>
                             </div>
 
                             {/* Disponibilité */}
@@ -2280,22 +2174,22 @@ export default function Products() {
                                         <button onClick={() => setFilterFournisseur("")} className="ml-0.5 hover:text-teal-900 dark:hover:text-teal-200"><X className="h-3 w-3" /></button>
                                     </span>
                                 )}
-                                {filterProductType && (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-100 dark:border-blue-800">
-                                        Type: {productTypes.find(t => t.id.toString() === filterProductType)?.name || filterProductType}
-                                        <button onClick={() => setFilterProductType("")} className="ml-0.5 hover:text-blue-900 dark:hover:text-blue-200"><X className="h-3 w-3" /></button>
-                                    </span>
-                                )}
                                 {filterMetalVariant && (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400 border border-sky-100 dark:border-sky-800">
                                         Variante: {metalVariantOptions.find((v) => v.value === filterMetalVariant)?.label || filterMetalVariant}
                                         <button onClick={() => setFilterMetalVariant("")} className="ml-0.5 hover:text-sky-900 dark:hover:text-sky-200"><X className="h-3 w-3" /></button>
                                     </span>
                                 )}
-                                {filterNature && (
+                                {filterProductType && (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-fuchsia-50 dark:bg-fuchsia-900/20 text-fuchsia-700 dark:text-fuchsia-400 border border-fuchsia-100 dark:border-fuchsia-800">
-                                        Nature: {filterNature === "gros" ? "Gros" : "Détail"}
-                                        <button onClick={() => setFilterNature("")} className="ml-0.5 hover:text-fuchsia-900 dark:hover:text-fuchsia-200"><X className="h-3 w-3" /></button>
+                                        Type: {productTypes.find((t) => t.id.toString() === filterProductType)?.name || filterProductType}
+                                        <button onClick={() => setFilterProductType("")} className="ml-0.5 hover:text-fuchsia-900 dark:hover:text-fuchsia-200"><X className="h-3 w-3" /></button>
+                                    </span>
+                                )}
+                                {(filterMargeMin || filterMargeMax) && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800">
+                                        Marge: {filterMargeMin || "−∞"} — {filterMargeMax || "+∞"} DH
+                                        <button onClick={() => { setFilterMargeMin(""); setFilterMargeMax(""); }} className="ml-0.5 hover:text-emerald-900 dark:hover:text-emerald-200"><X className="h-3 w-3" /></button>
                                     </span>
                                 )}
                                 {(filterGrammeMin || filterGrammeMax) && (
@@ -2407,19 +2301,16 @@ export default function Products() {
                                             {product.category_name}
                                         </span>
                                     )}
-                                    {product.product_type_name && (
+                                    {getProductTypeDisplayLabel(product) ? (
                                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                                            {product.product_type_name}
+                                            {getProductTypeDisplayLabel(product)}
                                         </span>
-                                    )}
+                                    ) : null}
                                     {getDisplayVariantLabel(product) && (
                                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300">
                                              {getDisplayVariantLabel(product)}
                                         </span>
                                     )}
-                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-700 dark:text-fuchsia-300">
-                                        {isNatureGros(product) ? "Gros" : "Détail"}
-                                    </span>
                                     {product.point_de_vente_name && (
                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
                                             <Store className="h-3.5 w-3.5" /> {product.point_de_vente_name}
@@ -2469,13 +2360,7 @@ export default function Products() {
                                                             console.log("[Products][Vendre][card]", {
                                                                 productId: product.id,
                                                                 nom: product.nom,
-                                                                nature_produit: (product as any).nature_produit,
-                                                                Nature_Produit: (product as any).Nature_Produit,
-                                                                natureProduit: (product as any).natureProduit,
-                                                                NatureProduit: (product as any).NatureProduit,
-                                                                type_vente: (product as any).type_vente,
-                                                                typeVente: (product as any).typeVente,
-                                                                product_type_name: product.product_type_name,
+                                                                pricing_metal: product.pricing_metal,
                                                                 isGrosForSale,
                                                                 targetRoute: isGrosForSale ? "/dashboard/devis-gros" : "/dashboard/devis",
                                                             });
@@ -2518,9 +2403,9 @@ export default function Products() {
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Produit</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Catégorie</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Type</TableHead>
-                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Variante</TableHead>
-                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Nature</TableHead>
-                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix d'achat</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix vente</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Marge</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Grammage</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Stock</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Point de vente</TableHead>
@@ -2533,7 +2418,7 @@ export default function Products() {
                         {isLoading ? (
                             Array.from({ length: 5 }).map((_, i) => (
                                 <TableRow key={i} className="border-b border-border">
-                                    {Array.from({ length: 11 }).map((_, j) => (
+                                    {Array.from({ length: 12 }).map((_, j) => (
                                         <TableCell key={j}>
                                             <div className="h-4 bg-muted rounded animate-pulse w-24" />
                                         </TableCell>
@@ -2542,7 +2427,7 @@ export default function Products() {
                             ))
                         ) : filteredProducts.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={11} className="text-center py-16">
+                                <TableCell colSpan={12} className="text-center py-16">
                                     <Package className="h-10 w-10 text-muted mx-auto mb-3" />
                                     <p className="text-muted-foreground font-medium">Aucun produit trouvé</p>
                                     <p className="text-muted text-sm mt-1">Essayez un autre terme de recherche</p>
@@ -2597,32 +2482,61 @@ export default function Products() {
                                         ) : <span className="text-muted-foreground text-sm">—</span>}
                                     </TableCell>
                                     <TableCell>
-                                        {product.product_type_name ? (
+                                        {getProductTypeDisplayLabel(product) ? (
                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                                                {product.product_type_name}
-                                            </span>
-                                        ) : <span className="text-muted-foreground text-sm">—</span>}
-                                    </TableCell>
-                                    <TableCell>
-                                        {getDisplayVariantLabel(product) ? (
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300">
-                                                {getDisplayVariantLabel(product)}
-                                            </span>
-                                        ) : <span className="text-muted-foreground text-sm">—</span>}
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-700 dark:text-fuchsia-300">
-                                            {isNatureGros(product) ? "Gros" : "Détail"}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell>
-                                        {!isNatureGros(product) ? (
-                                            <span className="font-semibold text-foreground text-sm">
-                                                {formatProductPrice(product)}
+                                                {getProductTypeDisplayLabel(product)}
                                             </span>
                                         ) : (
                                             <span className="text-muted-foreground text-sm">—</span>
                                         )}
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="font-semibold text-foreground text-sm">
+                                            {formatProductPrice(product)}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell>
+                                        {product.prix_de_vente != null &&
+                                        String(product.prix_de_vente).trim() !== "" &&
+                                        !Number.isNaN(Number(product.prix_de_vente)) ? (
+                                            <span className="font-semibold text-foreground text-sm">
+                                                {Number(product.prix_de_vente).toFixed(2)} DH
+                                            </span>
+                                        ) : (
+                                            <span className="text-muted-foreground text-sm">—</span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>
+                                        {(() => {
+                                            const rawMarge = product.marge;
+                                            const hasMarge =
+                                                rawMarge != null &&
+                                                String(rawMarge).trim() !== "" &&
+                                                !Number.isNaN(Number(rawMarge));
+                                            const fallback = (() => {
+                                                const prix = Number(product.prix);
+                                                const pv = Number(product.prix_de_vente);
+                                                if (!Number.isFinite(prix) || !Number.isFinite(pv)) return null;
+                                                return prix - pv;
+                                            })();
+                                            const value = hasMarge ? Number(rawMarge) : fallback;
+                                            if (value == null || !Number.isFinite(value)) {
+                                                return <span className="text-muted-foreground text-sm">—</span>;
+                                            }
+                                            const positive = value >= 0;
+                                            return (
+                                                <span
+                                                    className={cn(
+                                                        "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold",
+                                                        positive
+                                                            ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
+                                                            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300"
+                                                    )}
+                                                >
+                                                    {value.toFixed(2)} DH
+                                                </span>
+                                            );
+                                        })()}
                                     </TableCell>
                                     <TableCell>
                                         <span className="text-sm text-muted-foreground font-medium">
@@ -2673,13 +2587,7 @@ export default function Products() {
                                                             console.log("[Products][Vendre][table]", {
                                                                 productId: product.id,
                                                                 nom: product.nom,
-                                                                nature_produit: (product as any).nature_produit,
-                                                                Nature_Produit: (product as any).Nature_Produit,
-                                                                natureProduit: (product as any).natureProduit,
-                                                                NatureProduit: (product as any).NatureProduit,
-                                                                type_vente: (product as any).type_vente,
-                                                                typeVente: (product as any).typeVente,
-                                                                product_type_name: product.product_type_name,
+                                                                pricing_metal: product.pricing_metal,
                                                                 isGrosForSale,
                                                                 targetRoute: isGrosForSale ? "/dashboard/devis-gros" : "/dashboard/devis",
                                                             });
@@ -2947,6 +2855,16 @@ export default function Products() {
                                                 label: "Prix",
                                                 value: formatProductPrice(viewingProduct),
                                             },
+                                            ...(viewingProduct.prix_de_vente != null &&
+                                            String(viewingProduct.prix_de_vente).trim() !== "" &&
+                                            !Number.isNaN(Number(viewingProduct.prix_de_vente))
+                                                ? [
+                                                      {
+                                                          label: "Prix de vente",
+                                                          value: `${Number(viewingProduct.prix_de_vente).toFixed(2)} DH`,
+                                                      },
+                                                  ]
+                                                : []),
                                             { label: "Grammage", value: viewingProduct.grammage ? `${Number(viewingProduct.grammage).toFixed(2)} g` : "—" },
                                             ...(vpGro
                                                 ? []
@@ -2960,7 +2878,10 @@ export default function Products() {
                                             ...(vpGro
                                                 ? []
                                                 : [{ label: "Catégorie", value: viewingProduct.category_name || "—" }]),
-                                            { label: "Type", value: viewingProduct.product_type_name || "—" },
+                                            {
+                                                label: "Type",
+                                                value: getProductTypeDisplayLabel(viewingProduct) || "—",
+                                            },
                                             ...(vpGro
                                                 ? []
                                                 : [{ label: "Point de vente", value: viewingProduct.point_de_vente_name || "—" }]),

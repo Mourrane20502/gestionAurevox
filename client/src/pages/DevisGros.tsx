@@ -65,6 +65,7 @@ import {
 } from "@/components/common/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { matchesSousSocieteListFilter } from "@/utils/sousSocieteListFilter";
+import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
 
 interface Client {
     id: number;
@@ -77,8 +78,7 @@ interface Product {
     reference?: string | null;
     prix?: number;
     grammage?: number;
-    nature_produit?: string;
-    Nature_Produit?: string;
+    pricing_metal?: string | null;
 }
 
 interface DevisGrosItemForm {
@@ -123,12 +123,6 @@ function devisGrosRowMontantTtc(row: DevisGrosRow): number {
         return Number(ttc);
     }
     return (Number(row.montant_ht) || 0) + (Number(row.montant_tva) || 0);
-}
-
-function isProductNatureGros(p: Product): boolean {
-    const n = p.nature_produit ?? p.Nature_Produit;
-    const s = n == null ? "" : String(n).trim().toLowerCase();
-    return s === "gros" || s === "gro";
 }
 
 const GROS_FILTER_MONTHS = [
@@ -195,7 +189,7 @@ export default function DevisGros() {
     ]);
     const [activeProductSearchIndex, setActiveProductSearchIndex] = useState<number | null>(null);
 
-    const productsGros = products.filter(isProductNatureGros);
+    const productsGros = products.filter(isProductWholesaleGros);
 
     const filterYears = useMemo(
         () => Array.from({ length: 8 }, (_, i) => (new Date().getFullYear() - i).toString()),
@@ -315,7 +309,7 @@ export default function DevisGros() {
             openNewDevisGros?: boolean;
         } | null;
         const p = state?.selectedProduct;
-        if (!p || !isProductNatureGros(p)) return;
+        if (!p || !isProductWholesaleGros(p)) return;
 
         const g = Number(p.grammage);
         const pTotal = Number(p.prix);

@@ -55,6 +55,7 @@ import {
 } from "@/components/common/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { matchesSousSocieteListFilter } from "@/utils/sousSocieteListFilter";
+import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
 
 interface Client {
     id: number;
@@ -80,8 +81,7 @@ interface Product {
     grammage?: number;
     id_point_de_vente?: number | null;
     point_de_vente_id?: number | null;
-    nature_produit?: string;
-    Nature_Produit?: string;
+    pricing_metal?: string | null;
 }
 
 interface CommandeGrosOpt {
@@ -140,12 +140,6 @@ const getSousSocieteLabel = (doc: { sous_societe_nom?: string | null }) => {
     const fromName = String(doc.sous_societe_nom || "").trim();
     return fromName || "—";
 };
-
-function isProductNatureGros(p: Product): boolean {
-    const n = p.nature_produit ?? p.Nature_Produit;
-    const s = n == null ? "" : String(n).trim().toLowerCase();
-    return s === "gros" || s === "gro";
-}
 
 const GROS_FILTER_MONTHS = [
     { val: "1", label: "Janvier" },
@@ -238,7 +232,7 @@ export default function FactureGros() {
     const [importedBanqueNom, setImportedBanqueNom] = useState("");
     const [paymentModes, setPaymentModes] = useState<{ value: string; label: string }[]>([]);
 
-    const productsGros = products.filter(isProductNatureGros);
+    const productsGros = products.filter(isProductWholesaleGros);
     const paymentModeOptions = paymentModes.length > 0 ? paymentModes : FALLBACK_PAYMENT_MODES;
 
     const filterYears = useMemo(

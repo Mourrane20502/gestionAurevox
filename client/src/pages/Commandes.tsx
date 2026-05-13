@@ -1,5 +1,6 @@
 import { useEffect, useMemo,  useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
+import { normalizeLineTvaPercent } from "@/lib/normalizeLineTva";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
 import { Input } from "@/components/common/ui/input";
@@ -291,7 +292,7 @@ function Commandes() {
     });
 
     const [items, setItems] = useState<CommandeItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     const token = localStorage.getItem("token");
@@ -485,7 +486,7 @@ function Commandes() {
                         const normalizedItems = (fullCmd.items || []).map((it: any) => ({
                             ...it,
                             designation: it.designation || "",
-                            tva: Number(it.tva) || 0,
+                            tva: normalizeLineTvaPercent(it.tva),
                             reduction: Number(it.reduction) || 0,
                             quantite: Number(it.quantite) || 0,
                             prix_unitaire: Number(it.prix_unitaire) || 0,
@@ -597,7 +598,7 @@ function Commandes() {
     const handleDevisSelect = async (devisId: string) => {
         if (devisId === "none") {
             setFormData(prev => ({ ...prev, devis_id: null }));
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
             setSelectedClient(null);
             setClientSearch("");
             return;
@@ -641,7 +642,7 @@ function Commandes() {
                         designation: it.designation || "",
                         quantite: Number(it.quantite) || 1,
                         prix_unitaire: Number(it.prix_unitaire) || 0,
-                        tva: it.tva !== undefined ? Number(it.tva) : 20,
+                        tva: normalizeLineTvaPercent(it.tva),
                         reduction: Number(it.reduction) || 0,
                         montant_ht: Number(it.montant_ht) || 0
                     }));
@@ -657,7 +658,7 @@ function Commandes() {
     };
 
     const addItem = () => {
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
@@ -779,7 +780,7 @@ function Commandes() {
             mode_paiement: "virement",
             paiement_espece_type: "total"
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setDevisSearch("");

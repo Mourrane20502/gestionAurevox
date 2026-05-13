@@ -3,6 +3,8 @@ const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
 const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
 
+const { isGrosProductRow } = require("../utils/grosProduct");
+
 const round4 = (n) => Math.round((Number(n) || 0) * 10000) / 10000;
 
 function aggregateByProduct(items) {
@@ -20,7 +22,7 @@ function aggregateByProduct(items) {
 async function addGrammageToProducts(connection, itemsByProductMap) {
     for (const [pid, totalG] of itemsByProductMap) {
         await connection.execute(
-            "UPDATE products SET grammage = grammage + ? WHERE id = ? AND nature_produit = 'Gros'",
+            "UPDATE products SET grammage = grammage + ? WHERE id = ? AND pricing_metal IN ('or','silver')",
             [totalG, pid]
         );
     }
@@ -29,11 +31,11 @@ async function addGrammageToProducts(connection, itemsByProductMap) {
 async function subtractGrammageFromProducts(connection, itemsByProductMap) {
     for (const [pid, totalG] of itemsByProductMap) {
         const [rows] = await connection.execute(
-            "SELECT grammage, nature_produit FROM products WHERE id = ? FOR UPDATE",
+            "SELECT grammage, pricing_metal FROM products WHERE id = ? FOR UPDATE",
             [pid]
         );
         if (rows.length === 0) continue;
-        if (String(rows[0].nature_produit || "") !== "Gros" && String(rows[0].nature_produit || "") !== "Gro") continue;
+        if (!isGrosProductRow(rows[0])) continue;
         const current = Number(rows[0].grammage) || 0;
         if (current + 1e-8 < totalG) {
             const err = new Error(`Grammage insuffisant pour le produit (id ${pid})`);
@@ -41,7 +43,7 @@ async function subtractGrammageFromProducts(connection, itemsByProductMap) {
             throw err;
         }
         await connection.execute(
-            "UPDATE products SET grammage = grammage - ? WHERE id = ? AND nature_produit = 'Gros'",
+            "UPDATE products SET grammage = grammage - ? WHERE id = ? AND pricing_metal IN ('or','silver')",
             [totalG, pid]
         );
     }

@@ -27,6 +27,8 @@ import {
     Receipt,
     Mail,
     Package,
+    Percent,
+    TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/common/ui/button";
@@ -125,6 +127,8 @@ const sidebarItems: SidebarItem[] = [
             { name: "Règlements Clients", href: "/dashboard/reglements", icon: FileText, permission: 'reglements_view', section: "Finance classique" },
             { name: "Règlements Fournisseurs", href: "/dashboard/fournisseurs/reglements", icon: Truck, permission: 'fournisseurs_view', section: "Finance classique" },
             { name: "Bilan", href: "/dashboard/bilan", icon: FileText, permission: 'bilan_view' },
+            { name: "TVA (ventes)", href: "/dashboard/tva", icon: Percent, permission: ['bilan_view', 'factures_view'], section: "Finance classique" },
+            { name: "Marge produits", href: "/dashboard/marge", icon: TrendingUp, permission: ['bilan_view', 'products_view'], section: "Finance classique" },
             { name: "Chiffre d'affaire", href: "/dashboard/ca", icon: CircleDollarSign, permission: 'admin_only' },
         ]
     },
@@ -284,7 +288,7 @@ export default function Sidebar({ onNavigate, onToggle }: {
         }
     }, [roleLower]);
 
-    // Fetch pending approvals count (devis + commandes + factures + avoirs en attente)
+    // Fetch pending approvals count (devis, commandes, bons de livraison, factures, avoirs, etc.)
     useEffect(() => {
         const token = localStorage.getItem("token");
         if (!token) return;
@@ -305,15 +309,17 @@ export default function Sidebar({ onNavigate, onToggle }: {
 
                 // If no rights, no permission, and not a management role, total is 0
                 const hasApprovalsView = userPermissions.includes('approvals_view');
+                const hasBonsLivraisonView = userPermissions.includes('bons_livraison_view');
                 if (roleLower !== "admin" && roleLower !== "responsable" && roleLower !== "directeur" && roleLower !== "superadmin" && !hasApprovalsView && rights.length === 0) {
                     setPendingApprovals(0);
                     return;
                 }
 
-                const [devisRes, devisGrosRes, cmdRes, cmdGrosRes, facRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
+                const [devisRes, devisGrosRes, cmdRes, blRes, cmdGrosRes, facRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
                     fetch("/api/devis", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/devis-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/commandes", { headers: { Authorization: `Bearer ${token}` } }),
+                    fetch("/api/bons-livraison", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/commandes-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/factures", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/factures-gros", { headers: { Authorization: `Bearer ${token}` } }),
@@ -329,6 +335,10 @@ export default function Sidebar({ onNavigate, onToggle }: {
                 let total = 0;
 
                 const canApproveEverything = roleLower === "superadmin" || roleLower === "admin";
+
+                const canFetchCommandeRelated =
+                    canApproveEverything || rights.includes("commande") || hasApprovalsView;
+                const canCountBonsLivraison = canFetchCommandeRelated || hasBonsLivraisonView;
 
                 const canSeeInventory = canApproveEverything || rights.includes('inventaire');
                 const canSeeAchats = canApproveEverything || rights.includes('achats_fournisseurs');
@@ -346,6 +356,17 @@ export default function Sidebar({ onNavigate, onToggle }: {
                 if (cmdRes.ok && (canApproveEverything || rights.includes('commande'))) {
                     const data = await cmdRes.json();
                     total += Array.isArray(data) ? data.filter((c: any) => c.statut === "en_attente").length : 0;
+                }
+                if (blRes.ok && canCountBonsLivraison) {
+                    const data = await blRes.json();
+                    const list = Array.isArray(data) ? data : [];
+                    total += list.filter((b: any) => {
+                        const s = String(b.statut ?? "")
+                            .trim()
+                            .toLowerCase()
+                            .replace(/\s+/g, "_");
+                        return s === "en_attente";
+                    }).length;
                 }
                 if (cmdGrosRes.ok && (canApproveEverything || rights.includes('commande'))) {
                     const data = await cmdGrosRes.json();

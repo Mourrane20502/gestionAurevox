@@ -208,7 +208,8 @@ exports.getCommandeById = async (req, res) => {
         const resteAPayer = Math.max(montantRef - totalRegle, 0);
 
         const [items] = await db.execute(`
-            SELECT ci.*, p.photo, p.grammage, p.reference, COALESCE(p.nom, ci.designation) as designation,
+            SELECT ci.*, p.photo, p.grammage, p.reference, p.pricing_metal, p.pricing_variant,
+                   COALESCE(p.nom, ci.designation) as designation,
                    pt.name AS product_type_name
             FROM commande_items ci
             LEFT JOIN products p ON ci.produit_id = p.id
@@ -1063,7 +1064,8 @@ exports.sendCommandeEmail = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT ci.*, p.photo, p.grammage, COALESCE(p.nom, ci.designation) as designation,
+            SELECT ci.*, p.photo, p.grammage, p.pricing_metal, p.pricing_variant,
+                   COALESCE(p.nom, ci.designation) as designation,
                    pt.name AS product_type_name
             FROM commande_items ci
             LEFT JOIN products p ON ci.produit_id = p.id
@@ -1113,7 +1115,8 @@ exports.downloadCommandePdf = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT ci.*, p.photo, p.grammage, COALESCE(p.nom, ci.designation) as designation,
+            SELECT ci.*, p.photo, p.grammage, p.pricing_metal, p.pricing_variant,
+                   COALESCE(p.nom, ci.designation) as designation,
                    pt.name AS product_type_name
             FROM commande_items ci
             LEFT JOIN products p ON ci.produit_id = p.id

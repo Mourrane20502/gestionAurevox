@@ -3,6 +3,7 @@ const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
 const { canApprove } = require("../utils/approvalSettings");
 const { logProductMovement } = require("../utils/productMovementLogger");
+const { isGrosProductRow } = require("../utils/grosProduct");
 
 async function resolveSousSocieteFromItems(connection, items) {
     if (!Array.isArray(items) || items.length === 0) return { id: null, nom: null };
@@ -139,7 +140,7 @@ function aggregateGrosGrammageByProductId(items) {
 
 /**
  * Agrège le grammage par produit en résolvant aussi les lignes sans produit_id
- * via une correspondance stricte sur la désignation (nature_produit = 'Gros').
+ * via une correspondance stricte sur la désignation (type produit « gros »).
  * La résolution n'est appliquée que si une seule correspondance est trouvée.
  */
 async function aggregateGrosGrammageResolvedByProduct(connection, items) {
@@ -170,7 +171,7 @@ async function aggregateGrosGrammageResolvedByProduct(connection, items) {
         const [rows] = await connection.execute(
             `SELECT id
              FROM products
-             WHERE nature_produit = 'Gros'
+             WHERE pricing_metal IN ('or','silver')
                AND LOWER(TRIM(nom)) = LOWER(TRIM(?))
              LIMIT 2`,
             [designation]
@@ -194,11 +195,6 @@ async function aggregateGrosGrammageResolvedByProduct(connection, items) {
     return map;
 }
 
-function isGrosNature(val) {
-    const s = String(val || "").trim().toLowerCase();
-    return s === "gros" || s === "gro";
-}
-
 function isFactureGrosStockDeductedStatus(status) {
     const s = String(status || "")
         .trim()
@@ -210,10 +206,10 @@ function isFactureGrosStockDeductedStatus(status) {
 async function addGrammageToGrosProducts(connection, itemsByProductMap, movementMeta = {}) {
     for (const [pid, totalG] of itemsByProductMap) {
         const [rows] = await connection.execute(
-            `SELECT grammage, nature_produit FROM products WHERE id = ? FOR UPDATE`,
+            `SELECT grammage, pricing_metal FROM products WHERE id = ? FOR UPDATE`,
             [pid]
         );
-        if (rows.length === 0 || !isGrosNature(rows[0].nature_produit)) continue;
+        if (rows.length === 0 || !isGrosProductRow(rows[0])) continue;
         const current = Number(rows[0].grammage) || 0;
         const after = current + Number(totalG || 0);
         await connection.execute(
@@ -247,7 +243,7 @@ async function subtractGrammageFromGrosProducts(connection, itemsByProductMap, m
     }
     for (const [pid, totalG] of itemsByProductMap) {
         const [rows] = await connection.execute(
-            `SELECT grammage, nature_produit FROM products WHERE id = ? FOR UPDATE`,
+            `SELECT grammage, pricing_metal FROM products WHERE id = ? FOR UPDATE`,
             [pid]
         );
         if (rows.length === 0) {
@@ -255,10 +251,10 @@ async function subtractGrammageFromGrosProducts(connection, itemsByProductMap, m
             err.statusCode = 400;
             throw err;
         }
-        if (!isGrosNature(rows[0].nature_produit)) {
-            console.log("[factureGros][subtract] skip: nature produit non gros", {
+        if (!isGrosProductRow(rows[0])) {
+            console.log("[factureGros][subtract] skip: produit non gros (type)", {
                 pid,
-                nature: rows[0].nature_produit,
+                pricing_metal: rows[0].pricing_metal,
                 ref: movementMeta.referenceNumero || movementMeta.referenceId || null,
             });
             continue;
@@ -266,7 +262,7 @@ async function subtractGrammageFromGrosProducts(connection, itemsByProductMap, m
         const current = Number(rows[0].grammage) || 0;
         console.log("[factureGros][subtract] before", {
             pid,
-            nature: rows[0].nature_produit,
+            product_type_name: rows[0].product_type_name,
             current,
             toSubtract: Number(totalG || 0),
             ref: movementMeta.referenceNumero || movementMeta.referenceId || null,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
+import { normalizeLineTvaPercent } from "@/lib/normalizeLineTva";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
 import { Input } from "@/components/common/ui/input";
@@ -338,7 +339,7 @@ function Factures() {
     });
 
     const [items, setItems] = useState<FactureItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
     ]);
 
     const token = localStorage.getItem("token");
@@ -572,7 +573,7 @@ function Factures() {
                         const normalizedItems = (fullFacture.items || []).map((it: any) => ({
                             ...it,
                             designation: it.designation || "",
-                            tva: Number(it.tva) || 0,
+                            tva: normalizeLineTvaPercent(it.tva),
                             reduction: Number(it.reduction) || 0,
                             quantite: Number(it.quantite) || 0,
                             prix_unitaire: Number(it.prix_unitaire) || 0,
@@ -644,7 +645,7 @@ function Factures() {
     const handleCommandeSelect = async (commandeIdStr: string) => {
         if (commandeIdStr === "none") {
             setFormData(prev => ({ ...prev, commande_id: "none", devis_id: "none" }));
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
             setSelectedClient(null);
             setClientSearch("");
             return;
@@ -739,7 +740,7 @@ function Factures() {
                         designation: it.designation,
                         quantite: Number(it.quantite),
                         prix_unitaire: Number(it.prix_unitaire),
-                        tva: it.tva !== undefined ? Number(it.tva) : 20,
+                        tva: normalizeLineTvaPercent(it.tva),
                         reduction: Number(it.reduction) || 0,
                         montant_ht: Number(it.montant_ht) || 0
                     }));
@@ -793,7 +794,7 @@ function Factures() {
 
     const addItem = () => {
         if (isArticleSectionLocked) return;
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
@@ -1013,7 +1014,7 @@ function Factures() {
             paiement_espece_type: "total",
             montant_paye: ""
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setCommandeSearch("");

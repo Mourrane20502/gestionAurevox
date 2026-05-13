@@ -15,6 +15,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/common/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { generateAvoirGrosPdfFromApiRow } from "@/components/pdf/GrosDocumentPdf";
+import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
 
 interface Client { id: number; nom_complet: string; }
 interface FactureGros { id: number; numero_facture: string; client_id: number; client_nom?: string; }
@@ -24,8 +25,7 @@ interface Product {
     nom: string;
     reference?: string | null;
     prix?: number | null;
-    nature_produit?: string;
-    Nature_Produit?: string;
+    pricing_metal?: string | null;
 }
 interface AvoirGrosItem {
     id?: number;
@@ -152,10 +152,7 @@ export default function AvoirsGros() {
             .then((rows) => {
                 const all = Array.isArray(rows) ? rows : [];
                 setProducts(
-                    all.filter((p: Product) => {
-                        const nature = String(p.nature_produit || p.Nature_Produit || "").toLowerCase();
-                        return nature === "gros" || nature === "gro";
-                    })
+                    all.filter((p: Product) => isProductWholesaleGros(p))
                 );
             });
     }, []);
