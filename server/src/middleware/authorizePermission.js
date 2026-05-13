@@ -42,4 +42,49 @@ const authorizePermission = (permission) => {
     };
 };
 
+/**
+ * Passe si le rôle possède au moins une des permissions listées (hors admin/superadmin déjà gérés).
+ */
+const authorizeAnyPermission = (permissions) => {
+    return (req, res, next) => {
+        if (!req.user || !req.user.role) {
+            return res.status(401).json({ message: "Non authentifié" });
+        }
+
+        const roleName = req.user.role === "commercial" ? "user" : req.user.role;
+
+        if (roleName === "superadmin" || roleName === "admin") {
+            return next();
+        }
+
+        if (!Array.isArray(permissions) || permissions.length === 0) {
+            return res.status(500).json({ message: "Configuration middleware invalide" });
+        }
+
+        const placeholders = permissions.map(() => "?").join(", ");
+        const sql = `
+            SELECT p.name 
+            FROM permissions p 
+            JOIN role_permissions rp ON p.id = rp.permission_id 
+            JOIN roles r ON r.id = rp.role_id 
+            WHERE r.name = ? AND p.name IN (${placeholders})
+            LIMIT 1
+        `;
+
+        db.query(sql, [roleName, ...permissions], (err, result) => {
+            if (err) {
+                console.error("Authorization error:", err);
+                return res.status(500).json({ message: "Internal server error" });
+            }
+
+            if (result.length === 0) {
+                return res.status(403).json({ message: "Accès refusé : Permission manquante" });
+            }
+            next();
+        });
+    };
+};
+
+authorizePermission.authorizeAnyPermission = authorizeAnyPermission;
+
 module.exports = authorizePermission;

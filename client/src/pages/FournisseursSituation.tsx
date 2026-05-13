@@ -48,10 +48,6 @@ interface AchatFournisseur {
     prix_unitaire: number | null;
     statut: string | null;
     tva: number | null;
-    montant_ttc?: number | null;
-    taux_ras?: number | null;
-    montant_ras?: number | null;
-    net_fournisseur?: number | null;
     gestionnaire_nom: string;
     fournisseur_nom: string;
     produit_nom: string;
@@ -767,18 +763,6 @@ export default function FournisseursSituation() {
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">
                                             Total
                                         </TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">
-                                            Total TTC
-                                        </TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-center">
-                                            Taux RAS
-                                        </TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">
-                                            Montant RAS
-                                        </TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">
-                                            Net fournisseur
-                                        </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-center">
                                             TVA
                                         </TableHead>
@@ -800,7 +784,7 @@ export default function FournisseursSituation() {
                                                 key={i}
                                                 className="animate-pulse border-b border-border"
                                             >
-                                                <TableCell colSpan={14}>
+                                                <TableCell colSpan={10}>
                                                     <div className="h-4 bg-muted rounded w-full" />
                                                 </TableCell>
                                             </TableRow>
@@ -808,7 +792,7 @@ export default function FournisseursSituation() {
                                     ) : fournisseurAchats.length === 0 ? (
                                         <TableRow>
                                             <TableCell
-                                                colSpan={14}
+                                                colSpan={10}
                                                 className="text-center py-16"
                                             >
                                                 <div className="flex flex-col items-center text-muted">
@@ -827,12 +811,6 @@ export default function FournisseursSituation() {
                                             const totalLigne =
                                                 toNum(achat.quantite) *
                                                 (achat.prix_unitaire != null ? toNum(achat.prix_unitaire) : 0);
-                                            const tvaPct = toNum(achat.tva);
-                                            const montantTva = totalLigne * (tvaPct / 100);
-                                            const totalTtc = toNum(achat.montant_ttc) || (totalLigne + montantTva);
-                                            const tauxRas = toNum(achat.taux_ras) || 100;
-                                            const montantRas = toNum(achat.montant_ras) || (montantTva * (tauxRas / 100));
-                                            const netFournisseur = toNum(achat.net_fournisseur) || (totalTtc - montantRas);
 
                                             const isEditing = editingAchatId === achat.id;
                                             const draft = isEditing && editingDraft ? editingDraft : achat;
@@ -906,26 +884,6 @@ export default function FournisseursSituation() {
                                                     <TableCell className="text-right">
                                                         <span className="font-semibold text-emerald-600 dark:text-emerald-400 text-sm">
                                                             {totalLigne.toFixed(2)} DH
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <span className="font-semibold text-foreground text-sm">
-                                                            {totalTtc.toFixed(2)} DH
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="text-center">
-                                                        <span className="text-sm text-muted-foreground">
-                                                            {tauxRas.toFixed(2)} %
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <span className="font-semibold text-rose-600 dark:text-rose-400 text-sm">
-                                                            {montantRas.toFixed(2)} DH
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <span className="font-semibold text-blue-600 dark:text-blue-400 text-sm">
-                                                            {netFournisseur.toFixed(2)} DH
                                                         </span>
                                                     </TableCell>
                                                     <TableCell className="text-center">
@@ -1041,7 +999,7 @@ export default function FournisseursSituation() {
                                     )}
                                     {!isLoadingAchats && fournisseurAchats.length > 0 && (
                                         <TableRow className="bg-indigo-50/30 dark:bg-indigo-900/10 border-t-2 border-indigo-100 dark:border-indigo-900/30 font-bold">
-                                            <TableCell colSpan={6} className="px-4 py-4 text-indigo-700 dark:text-indigo-300 uppercase tracking-wider text-xs">
+                                            <TableCell colSpan={5} className="px-4 py-4 text-indigo-700 dark:text-indigo-300 uppercase tracking-wider text-xs">
                                                 Total complet pour ce fournisseur
                                             </TableCell>
                                             <TableCell className="text-right px-4 py-4 text-emerald-600 dark:text-emerald-400">
@@ -1056,7 +1014,7 @@ export default function FournisseursSituation() {
                                                     .toFixed(2)}{" "}
                                                 DH
                                             </TableCell>
-                                            <TableCell colSpan={7} />
+                                            <TableCell colSpan={4} />
                                         </TableRow>
                                     )}
                                 </TableBody>

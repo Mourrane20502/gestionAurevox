@@ -65,6 +65,9 @@ export default function ReglementsClientsGros() {
     const [clients, setClients] = useState<Client[]>([]);
     const [factures, setFactures] = useState<FactureGros[]>([]);
     const [commandes, setCommandes] = useState<CommandeGros[]>([]);
+    const [availableFactures, setAvailableFactures] = useState<FactureGros[]>([]);
+    const [availableCommandes, setAvailableCommandes] = useState<CommandeGros[]>([]);
+    const [isEligibleDocsLoading, setIsEligibleDocsLoading] = useState(false);
     const [paymentModes, setPaymentModes] = useState<{ label: string; value: string }[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -88,12 +91,6 @@ export default function ReglementsClientsGros() {
     ]);
     const [submitting, setSubmitting] = useState(false);
 
-    const normStatut = (v?: string | null) =>
-        String(v || "")
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-            .trim();
 
     const fillMontantFromDocument = async (type: "facture" | "commande", id: number) => {
         if (!token) return;
@@ -207,31 +204,76 @@ export default function ReglementsClientsGros() {
         });
     }, [rows, searchTerm, filterClient, filterStatut, filterType]);
 
-    const availableFactures = useMemo(
-        () => factures.filter((f) => {
-            const s = normStatut(f.statut);
-            return s !== "payee" && s !== "paye" && s !== "reglee" && s !== "regle";
-        }),
-        [factures]
-    );
+    useEffect(() => {
+        let cancelled = false;
+        const resolveEligibleDocuments = async () => {
+            if (!token) return;
+            if (factures.length === 0 && commandes.length === 0) {
+                setAvailableFactures([]);
+                setAvailableCommandes([]);
+                return;
+            }
+            setIsEligibleDocsLoading(true);
+            try {
+                const [factureSituations, commandeSituations] = await Promise.all([
+                    Promise.all(
+                        factures.map(async (f) => {
+                            try {
+                                const res = await fetch(
+                                    `/api/reglements-clients-gros/situation?factureId=${f.id}`,
+                                    { headers: { Authorization: `Bearer ${token}` } }
+                                );
+                                if (!res.ok) return { id: f.id, reste: 0 };
+                                const data = await res.json();
+                                return { id: f.id, reste: Number(data?.reste_a_payer || 0) };
+                            } catch {
+                                return { id: f.id, reste: 0 };
+                            }
+                        })
+                    ),
+                    Promise.all(
+                        commandes.map(async (c) => {
+                            try {
+                                const res = await fetch(
+                                    `/api/reglements-clients-gros/situation?commandeId=${c.id}`,
+                                    { headers: { Authorization: `Bearer ${token}` } }
+                                );
+                                if (!res.ok) return { id: c.id, reste: 0 };
+                                const data = await res.json();
+                                return { id: c.id, reste: Number(data?.reste_a_payer || 0) };
+                            } catch {
+                                return { id: c.id, reste: 0 };
+                            }
+                        })
+                    ),
+                ]);
 
-    const availableCommandes = useMemo(() => {
-        const paidCommandeIds = new Set<number>(
-            factures
-                .filter((f) => {
-                    const s = normStatut(f.statut);
-                    return s === "payee" || s === "paye" || s === "reglee" || s === "regle";
-                })
-                .map((f) => Number(f.commande_gros_id))
-                .filter((id) => Number.isFinite(id) && id > 0)
-        );
-        return commandes.filter((c) => {
-            const s = normStatut(c.statut);
-            if (s === "payee" || s === "paye" || s === "reglee" || s === "regle") return false;
-            if (paidCommandeIds.has(Number(c.id))) return false;
-            return true;
-        });
-    }, [commandes, factures]);
+                if (cancelled) return;
+                const factureIds = new Set(
+                    factureSituations
+                        .filter((x) => Number(x.reste) > 0.01)
+                        .map((x) => Number(x.id))
+                );
+                const commandeIds = new Set(
+                    commandeSituations
+                        .filter((x) => Number(x.reste) > 0.01)
+                        .map((x) => Number(x.id))
+                );
+                setAvailableFactures(
+                    factures.filter((f) => factureIds.has(Number(f.id)))
+                );
+                setAvailableCommandes(
+                    commandes.filter((c) => commandeIds.has(Number(c.id)))
+                );
+            } finally {
+                if (!cancelled) setIsEligibleDocsLoading(false);
+            }
+        };
+        resolveEligibleDocuments();
+        return () => {
+            cancelled = true;
+        };
+    }, [token, factures, commandes]);
 
     const resetFilters = () => {
         setSearchTerm("");
@@ -281,6 +323,23 @@ export default function ReglementsClientsGros() {
         if (totalSaisi <= 0) return toast.error("Veuillez saisir au moins un montant strictement positif.");
         setSubmitting(true);
         try {
+            const situationQuery =
+                selectedType === "facture"
+                    ? `factureId=${Number(selectedDocId)}`
+                    : `commandeId=${Number(selectedDocId)}`;
+            const situationRes = await fetch(`/api/reglements-clients-gros/situation?${situationQuery}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (situationRes.ok) {
+                const situationData = await situationRes.json().catch(() => ({}));
+                const resteAPayer = Number(situationData?.reste_a_payer || 0);
+                if (totalSaisi > resteAPayer + 0.01) {
+                    toast.error("Le total saisi dépasse le reste à payer.");
+                    setSubmitting(false);
+                    return;
+                }
+            }
+
             const lignes = reglementLines
                 .map((l) => ({
                     montant: parseFloat(l.montant || "0") || 0,
@@ -539,6 +598,9 @@ export default function ReglementsClientsGros() {
                                         ))}
                                     </SelectContent>
                                 </Select>
+                                {isEligibleDocsLoading && (
+                                    <p className="text-[11px] text-muted-foreground">Chargement des documents non réglés...</p>
+                                )}
                             </div>
                         </div>
 

@@ -103,11 +103,14 @@ interface Devis {
     montant_ttc?: number;
     point_de_vente_nom?: string;
     sous_societe_nom?: string | null;
+    bon_livraison_id?: number | null;
+    has_bon_livraison?: number | boolean;
 }
 
 interface LinkedCommandeSummary {
     id: number;
     devis_id: number;
+    numero_commande?: string;
     reduction?: number;
     montant_ht?: number;
     montant_tva?: number;
@@ -146,7 +149,6 @@ function Devis() {
     const navigate = useNavigate();
     const location = useLocation();
     const role = localStorage.getItem("role");
-    const isCommercial = role === "user" || role === "commercial";
     const isAdmin = role === "admin" || role === "responsable" || role === "superadmin";
 
     const [devis, setDevis] = useState<Devis[]>([]);
@@ -225,6 +227,7 @@ function Devis() {
                     .map((c: any) => ({
                         id: c.id,
                         devis_id: c.devis_id,
+                        numero_commande: c.numero_commande,
                         reduction: c.reduction,
                         montant_ht: c.montant_ht,
                         montant_tva: c.montant_tva,
@@ -317,7 +320,7 @@ function Devis() {
                 designation: product.nom,
                 prix_unitaire: product.prix,
                 quantite: 1,
-                tva: 20,
+                tva: 0,
                 reduction: 0,
                 montant_ht: product.prix
             };
@@ -395,7 +398,7 @@ function Devis() {
         reduction: "0"
     });
     const [items, setItems] = useState<DevisItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
     ]);
 
     const calculateTotals = (currentItems: DevisItem[], forcedGlobalRed?: number) => {
@@ -494,7 +497,7 @@ function Devis() {
     };
 
     const addItem = () => {
-        const newItems = [...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }];
+        const newItems = [...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }];
         setItems(newItems);
     };
 
@@ -600,7 +603,7 @@ function Devis() {
 
     const resetForm = () => {
         setFormData({ numero_devis: "", date_devis: new Date().toISOString().split('T')[0], montant_ht: "", taux_tva: "20", statuts_devis: "en attente", reduction: "0" });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null); setClientSearch(""); setCalculatedValues({ montantTVA: 0, montantTTC: 0, totalReductionAmount: 0 }); setShowClientDropdown(false);
     };
 
@@ -987,7 +990,7 @@ function Devis() {
                 designation: product.nom,
                 prix_unitaire: product.prix,
                 quantite: 1,
-                tva: 20,
+                tva: 0,
                 reduction: 0,
                 montant_ht: product.prix
             };
@@ -1331,6 +1334,14 @@ function Devis() {
                                                                 </span>
                                                             );
                                                         })()}
+                                                        {Number(d.bon_livraison_id) > 0 && (
+                                                            <span
+                                                                className="text-[9px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-bold uppercase tracking-tighter bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 cursor-pointer hover:opacity-90 transition-opacity"
+                                                                onClick={() => navigate(`/dashboard/bons-livraison/${d.bon_livraison_id}`)}
+                                                            >
+                                                                <CheckCircle2 className="h-2.5 w-2.5" /> BL
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </TableCell>
@@ -1751,7 +1762,6 @@ function Devis() {
                                                                 step="0.01"
                                                                 value={item.prix_unitaire}
                                                                 onChange={(e) => handleItemChange(index, 'prix_unitaire', parseFloat(e.target.value) || 0)}
-                                                                disabled={isCommercial && Boolean(item.produit_id)}
                                                                 className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-9 text-sm text-center disabled:opacity-70 disabled:cursor-not-allowed"
                                                             />
                                                         </TableCell>

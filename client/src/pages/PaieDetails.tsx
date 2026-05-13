@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import SousLogo from "@/assets/sous_logo.jpg";
+import AurevoxLogo from "@/assets/aurevox_logo.png";
 
 interface Employee {
     id: number;
@@ -313,7 +313,7 @@ export default function PaieDetails() {
             const pageWidth = doc.internal.pageSize.getWidth();
             let y = 20;
 
-            const logoImgData = await loadImgToBase64(SousLogo);
+            const logoImgData = await loadImgToBase64(AurevoxLogo);
             if (logoImgData) {
                 doc.addImage(logoImgData, "PNG", 20, 8, 26, 26);
             }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/common/ui/table";
@@ -53,11 +53,17 @@ interface CommandeItem {
 
 function formatDesignationWithReference(
     designation?: string | null,
-    reference?: string | null
+    reference?: string | null,
+    grammage?: number | string | null
 ): string {
     const label = String(designation || "").trim() || "—";
     const ref = String(reference || "").trim();
-    return ref ? `${label} (${ref})` : label;
+    const g = Number(grammage);
+    const gTxt = Number.isFinite(g) && g > 0 ? `${g.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} g` : "";
+    if (ref && gTxt) return `${label} (${ref} - ${gTxt})`;
+    if (ref) return `${label} (${ref})`;
+    if (gTxt) return `${label} (${gTxt})`;
+    return label;
 }
 
 interface CommandeDetails {
@@ -75,16 +81,8 @@ interface CommandeDetails {
     devis_id?: number | null;
     total_regle?: number;
     reste_a_payer?: number;
-}
-
-interface ComparableDocument {
-    id: number;
-    numero?: string | null;
-    montant_ht?: number;
-    montant_tva?: number;
-    montant_ttc?: number;
-    reduction?: number;
-    items?: CommandeItem[];
+    bon_livraison_id?: number | null;
+    numero_bon_livraison_linked?: string | null;
 }
 
 const formatRemboursementCode = (remb: { id: number; created_at: string }) => {
@@ -103,6 +101,7 @@ export default function CommandeDetailsPage() {
     const [isProcessingPdf, setIsProcessingPdf] = useState(false);
     const [linkedDevisNumero, setLinkedDevisNumero] = useState<string | null>(null);
     const [linkedFacture, setLinkedFacture] = useState<{ id: number; numero_facture?: string } | null>(null);
+    const [linkedFactures, setLinkedFactures] = useState<{ id: number; numero_facture?: string }[]>([]);
 
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
     const [emailData, setEmailData] = useState({ to: '', subject: '', message: '' });
@@ -116,11 +115,15 @@ export default function CommandeDetailsPage() {
     const [linkedRemboursement, setLinkedRemboursement] = useState<{ id: number; montant: number; created_at: string } | null>(null);
     const [hasAvoir, setHasAvoir] = useState(false);
     const [linkedAvoir, setLinkedAvoir] = useState<{ id: number; numero_avoir?: string } | null>(null);
-    const [linkedDevis, setLinkedDevis] = useState<ComparableDocument | null>(null);
-    const [linkedFactureDoc, setLinkedFactureDoc] = useState<ComparableDocument | null>(null);
-    const linkedReglement = ((reglements as any[]) || []).find((r: any) => String(r?.statut || "").toLowerCase() === "valide") || ((reglements as any[]) || [])[0] || null;
 
     const token = localStorage.getItem("token");
+    const getProductPhotoUrl = (photo?: string | null) => {
+        const p = String(photo || "").trim();
+        if (!p) return null;
+        if (/^https?:\/\//i.test(p)) return p;
+        const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+        return `${base}/uploads/${encodeURIComponent(p)}`;
+    };
     const mergeReglements = (rowsA: any[], rowsB: any[]) => {
         const merged = [...(Array.isArray(rowsA) ? rowsA : []), ...(Array.isArray(rowsB) ? rowsB : [])];
         const seen = new Set<number>();
@@ -158,23 +161,9 @@ export default function CommandeDetailsPage() {
                             .then(r => r.ok ? r.json() : null)
                             .then(d => {
                                 if (d && d.numero_devis) setLinkedDevisNumero(d.numero_devis);
-                                if (d) {
-                                    setLinkedDevis({
-                                        id: Number(d.id) || Number(data.devis_id),
-                                        numero: d.numero_devis || null,
-                                        montant_ht: Number(d.montant_ht) || 0,
-                                        montant_tva: Number(d.montant_tva) || 0,
-                                        montant_ttc: Number(d.montant_ttc) || 0,
-                                        reduction: Number(d.reduction) || 0,
-                                        items: Array.isArray(d.items) ? d.items : [],
-                                    });
-                                } else {
-                                    setLinkedDevis(null);
-                                }
+                                // no-op
                             })
                             .catch(() => { /* ignore */ });
-                    } else {
-                        setLinkedDevis(null);
                     }
                     
                     fetch("/api/factures", {
@@ -182,7 +171,11 @@ export default function CommandeDetailsPage() {
                     })
                         .then(r => r.ok ? r.json() : [])
                         .then((facts: any[]) => {
-                            const linked = facts.find((f: any) => f.commande_id === data.id);
+                            const linkedList = (Array.isArray(facts) ? facts : [])
+                                .filter((f: any) => Number(f?.commande_id) === Number(data.id))
+                                .map((f: any) => ({ id: Number(f.id), numero_facture: f.numero_facture }));
+                            setLinkedFactures(linkedList);
+                            const linked = linkedList[0] || null;
                             if (linked) {
                                 setLinkedFacture({ id: linked.id, numero_facture: linked.numero_facture });
                                 fetch(`/api/factures/${linked.id}`, {
@@ -190,37 +183,28 @@ export default function CommandeDetailsPage() {
                                 })
                                     .then((rf) => (rf.ok ? rf.json() : null))
                                     .then((full) => {
-                                        if (!full) {
-                                            setLinkedFactureDoc(null);
-                                            return;
-                                        }
-                                        setLinkedFactureDoc({
-                                            id: Number(full.id) || Number(linked.id),
-                                            numero: full.numero_facture || linked.numero_facture || null,
-                                            montant_ht: Number(full.montant_ht) || 0,
-                                            montant_tva: Number(full.montant_tva) || 0,
-                                            montant_ttc: Number(full.montant_ttc) || 0,
-                                            reduction: Number(full.reduction) || 0,
-                                            items: Array.isArray(full.items) ? full.items : [],
-                                        });
+                                        if (!full) return;
                                     })
-                                    .catch(() => setLinkedFactureDoc(null));
+                                    .catch(() => undefined);
                             } else {
-                                setLinkedFactureDoc(null);
+                                setLinkedFacture(null);
+                                setLinkedFactures([]);
                             }
 
                             Promise.all([
                                 fetch(`/api/reglements-clients?commandeId=${data.id}`, {
                                     headers: { Authorization: `Bearer ${token}` },
                                 }).then((rc) => (rc.ok ? rc.json() : [])),
-                                linked
-                                    ? fetch(`/api/reglements-clients?factureId=${linked.id}`, {
-                                          headers: { Authorization: `Bearer ${token}` },
-                                      }).then((rf) => (rf.ok ? rf.json() : []))
-                                    : Promise.resolve([]),
+                                ...linkedList.map((f) =>
+                                    fetch(`/api/reglements-clients?factureId=${f.id}`, {
+                                        headers: { Authorization: `Bearer ${token}` },
+                                    }).then((rf) => (rf.ok ? rf.json() : []))
+                                ),
                             ])
-                                .then(([regCommande, regFacture]) => {
-                                    setReglements(mergeReglements(regCommande, regFacture));
+                                .then((allRegs) => {
+                                    const [regCommande, ...regFactures] = allRegs;
+                                    const mergedFactureRegs = (regFactures || []).flat();
+                                    setReglements(mergeReglements(regCommande as any[], mergedFactureRegs as any[]));
                                 })
                                 .catch(() => { /* ignore */ });
 
@@ -323,90 +307,6 @@ export default function CommandeDetailsPage() {
             .catch(() => toast.error("Échec de la copie du lien"));
     };
 
-    const anomalyMessages = useMemo(() => {
-        if (!commande) return [] as string[];
-
-        const epsilon = 0.01;
-        const formatDh = (v: number) =>
-            `${Number(v || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
-        const formatPct = (v: number) =>
-            `${Number(v || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
-        const normalize = (s: string) => (s || "").trim().toLowerCase();
-        const keyOf = (it: CommandeItem) =>
-            [
-                normalize(it.designation || ""),
-                Number(it.prix_unitaire || 0).toFixed(2),
-                Number(it.tva || 0).toFixed(2),
-                Number(it.reduction || 0).toFixed(2),
-            ].join("|");
-        const quantityByKey = (list: CommandeItem[]) => {
-            const map = new Map<string, number>();
-            for (const it of list || []) {
-                const k = keyOf(it);
-                map.set(k, (map.get(k) || 0) + Number(it.quantite || 0));
-            }
-            return map;
-        };
-
-        const messages: string[] = [];
-        const cmdItems = Array.isArray(commande.items) ? commande.items : [];
-        const refs: Array<{ label: string; doc: ComparableDocument | null }> = [
-            { label: "Devis", doc: linkedDevis },
-            { label: "Facture", doc: linkedFactureDoc },
-        ];
-
-        for (const { label, doc } of refs) {
-            if (!doc) continue;
-
-            const refReduction = Number(doc.reduction || 0);
-            const cmdReduction = Number(commande.reduction || 0);
-            if (Math.abs(refReduction - cmdReduction) > epsilon) {
-                messages.push(
-                    `${label}: écart de réduction (${formatPct(refReduction)} vs commande ${formatPct(cmdReduction)}).`
-                );
-            }
-
-            const refHt = Number(doc.montant_ht || 0);
-            const refTva = Number(doc.montant_tva || 0);
-            const refTtc = Number(doc.montant_ttc || 0);
-            const cmdHt = Number(commande.montant_ht || 0);
-            const cmdTva = Number(commande.montant_tva || 0);
-            const cmdTtc = Number(commande.montant_ttc || 0);
-
-            if (Math.abs(refHt - cmdHt) > epsilon) {
-                messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs commande ${formatDh(cmdHt)}).`);
-            }
-            if (Math.abs(refTva - cmdTva) > epsilon) {
-                messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs commande ${formatDh(cmdTva)}).`);
-            }
-            if (Math.abs(refTtc - cmdTtc) > epsilon) {
-                messages.push(`${label}: écart montant TTC (${formatDh(refTtc)} vs commande ${formatDh(cmdTtc)}).`);
-            }
-
-            const refItems = Array.isArray(doc.items) ? doc.items : [];
-            if (refItems.length !== cmdItems.length) {
-                messages.push(
-                    `${label}: nombre de lignes différent (${refItems.length} vs commande ${cmdItems.length}).`
-                );
-            }
-
-            const refMap = quantityByKey(refItems);
-            const cmdMap = quantityByKey(cmdItems);
-            const allKeys = new Set<string>([...refMap.keys(), ...cmdMap.keys()]);
-            for (const k of allKeys) {
-                const rq = Number(refMap.get(k) || 0);
-                const cq = Number(cmdMap.get(k) || 0);
-                if (Math.abs(rq - cq) > epsilon) {
-                    const [designation, pu, tva, red] = k.split("|");
-                    messages.push(
-                        `${label}: ligne "${designation || "article"}" (PU ${pu}, TVA ${tva}%, Red ${red}%) quantité ${rq} vs commande ${cq}.`
-                    );
-                }
-            }
-        }
-
-        return messages;
-    }, [commande, linkedDevis, linkedFactureDoc]);
 
     if (isLoading) {
         return (
@@ -678,35 +578,6 @@ export default function CommandeDetailsPage() {
                 </Card>
             )}
 
-            {/* Audit anomalies between devis / commande / facture */}
-            {anomalyMessages.length > 0 && (
-                <Card className="border-l-4 border-l-red-500 border-red-200 bg-red-50/40 dark:bg-red-900/10 overflow-hidden shadow-none rounded-xl">
-                    <CardContent className="py-4 px-6 space-y-3">
-                        <div className="flex items-start gap-3">
-                            <div className="h-10 w-10 shrink-0 rounded-full bg-red-100 flex items-center justify-center text-red-600 shadow-sm">
-                                <AlertTriangle className="h-5 w-5" />
-                            </div>
-                            <div className="flex-1">
-                                <p className="text-sm font-black uppercase tracking-wider text-red-700">
-                                    Anomalies détectées entre devis / commande / facture
-                                </p>
-                                <p className="text-xs text-red-700/80 font-medium">
-                                    Vérifiez ces écarts avant validation finale ({anomalyMessages.length} écart{anomalyMessages.length > 1 ? "s" : ""}).
-                                </p>
-                            </div>
-                        </div>
-                        <ul className="space-y-1 pl-2">
-                            {anomalyMessages.map((msg, idx) => (
-                                <li key={`${idx}-${msg}`} className="text-xs text-red-800 dark:text-red-300 flex items-start gap-2">
-                                    <span className="mt-1 h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
-                                    <span>{msg}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </CardContent>
-                </Card>
-            )}
-
             {/* Information Grid */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <Card className="border border-border shadow-sm bg-card hover:shadow-md transition-shadow duration-300">
@@ -782,36 +653,55 @@ export default function CommandeDetailsPage() {
                                 <ArrowUpRight className="h-3 w-3" />
                             </button>
                         ) : null}
-                        {linkedFacture ? (
+                        {commande && Number(commande.bon_livraison_id) > 0 ? (
                             <button
                                 type="button"
-                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100 transition-colors"
-                                onClick={() => navigate(`/dashboard/factures/${linkedFacture.id}`)}
+                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-100 transition-colors"
+                                onClick={() => navigate(`/dashboard/bons-livraison/${commande.bon_livraison_id}`)}
                             >
                                 <div className="flex items-center gap-1.5">
-                                    <Receipt className="h-3 w-3" />
-                                    <span>Facture {linkedFacture.numero_facture || linkedFacture.id}</span>
-                                </div>
-                                <ArrowUpRight className="h-3 w-3" />
-                            </button>
-                        ) : (
-                            <p className="text-[10px] text-muted-foreground italic mt-2">Aucune facture liée</p>
-                        )}
-                        {linkedReglement ? (
-                            <button
-                                type="button"
-                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
-                                onClick={() => navigate(`/dashboard/reglements/details/client/${linkedReglement.id}`)}
-                            >
-                                <div className="flex items-center gap-1.5">
-                                    <FileText className="h-3 w-3" />
+                                    <Truck className="h-3 w-3" />
                                     <span>
-                                        Règlement {buildReglementCode("client", Number(linkedReglement.id), String(linkedReglement.date_reglement || linkedReglement.created_at || ""), Number(linkedReglement.numero_recu || 0) || null, linkedReglement.sous_societe_nom, linkedReglement.numero_facture || linkedReglement.numero_commande)}
+                                        Bon de livraison {commande.numero_bon_livraison_linked || `#${commande.bon_livraison_id}`}
                                     </span>
                                 </div>
                                 <ArrowUpRight className="h-3 w-3" />
                             </button>
                         ) : null}
+                        {linkedFactures.length > 0 ? (
+                            linkedFactures.map((f) => (
+                                <button
+                                    key={f.id}
+                                    type="button"
+                                    className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100 transition-colors"
+                                    onClick={() => navigate(`/dashboard/factures/${f.id}`)}
+                                >
+                                    <div className="flex items-center gap-1.5">
+                                        <Receipt className="h-3 w-3" />
+                                        <span>Facture {f.numero_facture || f.id}</span>
+                                    </div>
+                                    <ArrowUpRight className="h-3 w-3" />
+                                </button>
+                            ))
+                        ) : (
+                            <p className="text-[10px] text-muted-foreground italic mt-2">Aucune facture liée</p>
+                        )}
+                        {(reglements || []).map((r: any) => (
+                            <button
+                                key={`linked-reg-${r.id}`}
+                                type="button"
+                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
+                                onClick={() => navigate(`/dashboard/reglements/details/client/${r.id}`)}
+                            >
+                                <div className="flex items-center gap-1.5">
+                                    <FileText className="h-3 w-3" />
+                                    <span>
+                                        Règlement {buildReglementCode("client", Number(r.id), String(r.date_reglement || r.created_at || ""), Number(r.numero_recu || 0) || null, r.sous_societe_nom, r.numero_facture || r.numero_commande)}
+                                    </span>
+                                </div>
+                                <ArrowUpRight className="h-3 w-3" />
+                            </button>
+                        ))}
                         {linkedAvoir ? (
                             <button
                                 type="button"
@@ -872,14 +762,29 @@ export default function CommandeDetailsPage() {
                                 {items.map((item, idx) => (
                                     <TableRow key={idx} className="border-b border-border/50 hover:bg-muted/5 transition-all">
                                         <TableCell className="pl-8 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-400 group-hover:bg-white group-hover:text-indigo-600 transition-colors">
-                                                    <Tag className="h-4 w-4" />
+                                            <div className="flex items-center gap-3 group/img">
+                                                <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-400 overflow-hidden">
+                                                    {getProductPhotoUrl((item as any).photo) ? (
+                                                        <>
+                                                            <img src={getProductPhotoUrl((item as any).photo) || ""} alt={item.designation || "Produit"} className="h-full w-full object-cover cursor-zoom-in transition-opacity hover:opacity-80" />
+                                                            <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden group-hover/img:flex z-[9999] pointer-events-none items-center justify-center">
+                                                                <div className="w-80 h-80 bg-white dark:bg-slate-900 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.4)] border-8 border-white dark:border-slate-800 p-1 animate-in fade-in zoom-in duration-300">
+                                                                    <img src={getProductPhotoUrl((item as any).photo) || ""} alt={item.designation || "Produit"} className="w-full h-full object-cover rounded-xl" />
+                                                                    <div className="absolute -bottom-10 left-0 right-0 py-2 text-white text-sm font-bold uppercase tracking-widest text-center bg-indigo-600/90 backdrop-blur-sm rounded-lg shadow-xl">
+                                                                        {item.designation || "Produit"}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <Tag className="h-4 w-4" />
+                                                    )}
                                                 </div>
                                                 <span className="font-bold text-slate-800 dark:text-slate-200">
                                                     {formatDesignationWithReference(
                                                         item.designation,
-                                                        item.reference || item.produit_reference || item.product_reference || null
+                                                        item.reference || item.produit_reference || item.product_reference || null,
+                                                        (item as any).grammage
                                                     )}
                                                 </span>
                                             </div>
@@ -904,11 +809,7 @@ export default function CommandeDetailsPage() {
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200">
-                                            {(
-                                                (Number(item.montant_ht) || 0) *
-                                                (1 + (Number(item.tva) || 0) / 100)
-                                            ).toLocaleString("fr-FR")}{" "}
-                                            DH
+                                            {Number(item.montant_ht).toLocaleString("fr-FR")} DH
                                         </TableCell>
                                     </TableRow>
                                 ))}

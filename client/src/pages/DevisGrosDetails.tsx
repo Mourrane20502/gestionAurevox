@@ -83,6 +83,23 @@ function fmtDh(n: number) {
     return `${n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
 }
 
+function fmtDhExact(value: unknown) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "0 DH";
+    return `${raw} DH`;
+}
+
+function resolvePrixParGrammeExact(it: DevisGrosItem) {
+    const grammage = Number(it.grammage) || 0;
+    const net =
+        (Number((it as any).montant_ttc) || 0) ||
+        ((Number(it.montant_ht) || 0) + (Number((it as any).montant_tva) || 0));
+    if (grammage > 0 && net > 0) {
+        return `${net / grammage} DH`;
+    }
+    return fmtDhExact(it.prix_unitaire);
+}
+
 export default function DevisGrosDetailsPage() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
@@ -92,7 +109,18 @@ export default function DevisGrosDetailsPage() {
     const [pdfLoading, setPdfLoading] = useState(false);
     const [linkedCmd, setLinkedCmd] = useState<{ id: number; numero_commande: string } | null>(null);
     const [linkedFac, setLinkedFac] = useState<{ id: number; numero_facture: string } | null>(null);
-    const [linkedReglement, setLinkedReglement] = useState<any | null>(null);
+    const [reglements, setReglements] = useState<any[]>([]);
+    const linkedReglements = useMemo(
+        () =>
+            (Array.isArray(reglements) ? reglements : [])
+                .slice()
+                .sort((a: any, b: any) => {
+                    const aMs = new Date(a?.date_reglement || a?.created_at || 0).getTime();
+                    const bMs = new Date(b?.date_reglement || b?.created_at || 0).getTime();
+                    return (Number.isNaN(bMs) ? 0 : bMs) - (Number.isNaN(aMs) ? 0 : aMs);
+                }),
+        [reglements]
+    );
     const [linkedCommandeDoc, setLinkedCommandeDoc] = useState<ComparableDocument | null>(null);
     const [linkedFactureDoc, setLinkedFactureDoc] = useState<ComparableDocument | null>(null);
 
@@ -201,7 +229,7 @@ export default function DevisGrosDetailsPage() {
     useEffect(() => {
         if (!token) return;
         if (!linkedCmd?.id && !linkedFac?.id) {
-            setLinkedReglement(null);
+            setReglements([]);
             return;
         }
         let cancelled = false;
@@ -221,13 +249,10 @@ export default function DevisGrosDetailsPage() {
                 ]);
                 if (cancelled) return;
                 const rows = [...(Array.isArray(fromCommande) ? fromCommande : []), ...(Array.isArray(fromFacture) ? fromFacture : [])];
-                const preferred =
-                    rows.find((r: any) => String(r?.statut || "").toLowerCase() === "valide") ||
-                    rows[0] ||
-                    null;
-                setLinkedReglement(preferred);
+                const deduped = Array.from(new Map(rows.map((r: any) => [Number(r?.id) || 0, r])).values());
+                setReglements(deduped);
             } catch {
-                if (!cancelled) setLinkedReglement(null);
+                if (!cancelled) setReglements([]);
             }
         })();
         return () => {
@@ -283,7 +308,7 @@ export default function DevisGrosDetailsPage() {
             const devisTtc = Number(doc.montant_ttc || 0);
             if (Math.abs(refHt - devisHt) > epsilon) messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs devis ${formatDh(devisHt)}).`);
             if (Math.abs(refTva - devisTva) > epsilon) messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs devis ${formatDh(devisTva)}).`);
-            if (Math.abs(refTtc - devisTtc) > epsilon) messages.push(`${label}: écart montant TTC (${formatDh(refTtc)} vs devis ${formatDh(devisTtc)}).`);
+            if (Math.abs(refTtc - devisTtc) > epsilon) messages.push(`${label}: écart montant (${formatDh(refTtc)} vs devis ${formatDh(devisTtc)}).`);
 
             const refItems = Array.isArray(refDoc.items) ? refDoc.items : [];
             if (refItems.length !== devisItems.length) {
@@ -546,20 +571,25 @@ export default function DevisGrosDetailsPage() {
                                 <ArrowUpRight className="h-3 w-3" />
                             </button>
                         ) : null}
-                        {linkedReglement ? (
-                            <button
-                                type="button"
-                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
-                                onClick={() => navigate(`/dashboard/reglements/details/client_gros/${linkedReglement.id}`)}
-                            >
-                                <div className="flex items-center gap-1.5">
-                                    <Receipt className="h-3 w-3" />
-                                    <span>
-                                        Règlement {buildReglementCode("client_gros", Number(linkedReglement.id), String(linkedReglement.date_reglement || linkedReglement.created_at || ""), Number(linkedReglement.numero_recu || 0) || null, linkedReglement.sous_societe_nom, linkedReglement.numero_facture || linkedReglement.numero_commande)}
-                                    </span>
-                                </div>
-                                <ArrowUpRight className="h-3 w-3" />
-                            </button>
+                        {linkedReglements.length > 0 ? (
+                            <div className="space-y-1.5">
+                                {linkedReglements.map((r: any) => (
+                                    <button
+                                        key={r.id}
+                                        type="button"
+                                        className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
+                                        onClick={() => navigate(`/dashboard/reglements/details/client_gros/${r.id}`)}
+                                    >
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                            <Receipt className="h-3 w-3 shrink-0" />
+                                            <span className="truncate">
+                                                Règlement {buildReglementCode("client_gros", Number(r.id), String(r.date_reglement || r.created_at || ""), Number(r.numero_recu || 0) || null, r.sous_societe_nom, r.numero_facture || r.numero_commande)}
+                                            </span>
+                                        </div>
+                                        <ArrowUpRight className="h-3 w-3 shrink-0" />
+                                    </button>
+                                ))}
+                            </div>
                         ) : null}
                     </CardContent>
                 </Card>
@@ -615,7 +645,7 @@ export default function DevisGrosDetailsPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-center font-medium text-slate-600 dark:text-slate-400">
-                                            {fmtDh(Number(it.prix_unitaire) || 0)}
+                                            {resolvePrixParGrammeExact(it)}
                                         </TableCell>
                                         <TableCell className="text-center font-black text-slate-700 dark:text-slate-300">
                                             {Number(it.grammage || 0).toLocaleString("fr-FR")} g

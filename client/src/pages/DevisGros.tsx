@@ -1169,7 +1169,7 @@ export default function DevisGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.0001"
+                                                                step="any"
                                                                 min={0}
                                                                 value={line.prix_unitaire}
                                                                 onChange={(e) =>
@@ -1182,7 +1182,7 @@ export default function DevisGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.0001"
+                                                                step="any"
                                                                 min={0}
                                                                 value={line.grammage}
                                                                 onChange={(e) =>
@@ -1196,13 +1196,14 @@ export default function DevisGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.01"
+                                                                step="any"
                                                                 min={0}
                                                                 value={(() => {
                                                                     const g = parseFloat(line.grammage || "0") || 0;
                                                                     const pu = parseFloat(line.prix_unitaire || "0") || 0;
                                                                     const net = g * pu;
-                                                                    return Number.isFinite(net) ? String(Number(net.toFixed(4))) : "0";
+                                                                    const rounded = Math.round((net + Number.EPSILON) * 100) / 100;
+                                                                    return Number.isFinite(rounded) ? String(rounded) : "0";
                                                                 })()}
                                                                 onChange={(e) => handlePrixNetChange(index, e.target.value)}
                                                                 placeholder="0"

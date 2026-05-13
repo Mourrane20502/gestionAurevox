@@ -1,0 +1,13 @@
+[
+  { "Field": "id", "Type": "int(11)", "Null": "NO", "Key": "PRI", "Default": null, "Extra": "auto_increment" },
+  { "Field": "numero_bon_livraison", "Type": "varchar(100)", "Null": "NO", "Key": "UNI", "Default": null, "Extra": "" },
+  { "Field": "date_bon_livraison", "Type": "date", "Null": "NO", "Key": "", "Default": null, "Extra": "" },
+  { "Field": "commande_id", "Type": "int(11)", "Null": "NO", "Key": "UNI", "Default": null, "Extra": "" },
+  { "Field": "client_id", "Type": "int(11)", "Null": "NO", "Key": "MUL", "Default": null, "Extra": "" },
+  { "Field": "user_id", "Type": "int(11)", "Null": "YES", "Key": "MUL", "Default": null, "Extra": "" },
+  { "Field": "statut", "Type": "varchar(50)", "Null": "YES", "Key": "", "Default": "en_attente", "Extra": "" },
+  { "Field": "montant_ht", "Type": "decimal(12,2)", "Null": "YES", "Key": "", "Default": "0.00", "Extra": "" },
+  { "Field": "montant_tva", "Type": "decimal(12,2)", "Null": "YES", "Key": "", "Default": "0.00", "Extra": "" },
+  { "Field": "montant_ttc", "Type": "decimal(12,2)", "Null": "YES", "Key": "", "Default": "0.00", "Extra": "" },
+  { "Field": "created_at", "Type": "timestamp", "Null": "YES", "Key": "", "Default": "CURRENT_TIMESTAMP", "Extra": "" }
+]

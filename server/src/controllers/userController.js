@@ -182,26 +182,45 @@ exports.updateUser = async (req, res) => {
         if (isNaN(parsedId)) {
             return res.status(400).json({ message: "Invalid user ID" });
         }
-        let passwordToStore = null;
-        const hasNewPassword = String(password || "").trim().length > 0;
-        if (hasNewPassword) {
-            passwordToStore = await bcrypt.hash(String(password), 10);
-        } else {
-            const [rows] = await db.promise().query("SELECT password FROM users WHERE id = ?", [parsedId]);
-            if (!rows || rows.length === 0) {
-                return res.status(404).json({ message: "User not found" });
-            }
-            passwordToStore = rows[0].password;
+
+        const fields = [];
+        const values = [];
+
+        if (nom !== undefined) {
+            fields.push("nom = ?");
+            values.push(nom);
+        }
+        if (prenom !== undefined) {
+            fields.push("prenom = ?");
+            values.push(prenom);
+        }
+        if (email !== undefined) {
+            fields.push("email = ?");
+            values.push(email);
+        }
+        if (role !== undefined) {
+            fields.push("role = ?");
+            values.push(role);
+        }
+        if (typeof password === "string" && password.trim() !== "") {
+            const hashed = await bcrypt.hash(password, 10);
+            fields.push("password = ?");
+            values.push(hashed);
         }
 
-        const query = "UPDATE users SET nom = ?, prenom = ?, email = ?, password = ?, role = ? WHERE id = ?";
-        db.query(query, [nom, prenom, email, passwordToStore, role, parsedId], (err, result) => {
+        if (fields.length === 0) {
+            return res.status(400).json({ message: "No fields to update" });
+        }
+
+        const query = `UPDATE users SET ${fields.join(", ")} WHERE id = ?`;
+        values.push(parsedId);
+        db.query(query, values, (err) => {
             if (err) {
                 console.log(err);
                 return res.status(500).json({ message: "Internal server error" });
             }
             return res.status(200).json({ message: "User updated successfully" });
-        })
+        });
 
     } catch (err) {
         console.log(err);

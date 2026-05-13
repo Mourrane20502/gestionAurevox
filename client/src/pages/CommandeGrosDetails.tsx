@@ -92,6 +92,21 @@ function fmtDh(n: number) {
     return `${n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
 }
 
+function fmtDhExact(value: unknown) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "0 DH";
+    return `${raw} DH`;
+}
+
+function resolvePrixParGrammeExact(it: CommandeGrosItem) {
+    const grammage = Number(it.grammage) || 0;
+    const net =
+        (Number((it as any).montant_ttc) || 0) ||
+        ((Number(it.montant_ht) || 0) + (Number((it as any).montant_tva) || 0));
+    if (grammage > 0 && net > 0) return `${net / grammage} DH`;
+    return fmtDhExact(it.prix_unitaire);
+}
+
 export default function CommandeGrosDetailsPage() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
@@ -103,10 +118,17 @@ export default function CommandeGrosDetailsPage() {
     const [linkedDevisDoc, setLinkedDevisDoc] = useState<ComparableDocument | null>(null);
     const [linkedFactureDoc, setLinkedFactureDoc] = useState<ComparableDocument | null>(null);
     const [reglements, setReglements] = useState<any[]>([]);
-    const linkedReglement =
-        (reglements || []).find((r: any) => String(r?.statut || "").toLowerCase() === "valide") ||
-        (reglements || [])[0] ||
-        null;
+    const linkedReglements = useMemo(
+        () =>
+            (Array.isArray(reglements) ? reglements : [])
+                .slice()
+                .sort((a: any, b: any) => {
+                    const aMs = new Date(a?.date_reglement || a?.created_at || 0).getTime();
+                    const bMs = new Date(b?.date_reglement || b?.created_at || 0).getTime();
+                    return (Number.isNaN(bMs) ? 0 : bMs) - (Number.isNaN(aMs) ? 0 : aMs);
+                }),
+        [reglements]
+    );
     const [isReglementsModalOpen, setIsReglementsModalOpen] = useState(false);
 
     useEffect(() => {
@@ -264,7 +286,7 @@ export default function CommandeGrosDetailsPage() {
             const cmdTtc = Number(doc.montant_ttc || 0);
             if (Math.abs(refHt - cmdHt) > epsilon) messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs commande ${formatDh(cmdHt)}).`);
             if (Math.abs(refTva - cmdTva) > epsilon) messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs commande ${formatDh(cmdTva)}).`);
-            if (Math.abs(refTtc - cmdTtc) > epsilon) messages.push(`${label}: écart montant TTC (${formatDh(refTtc)} vs commande ${formatDh(cmdTtc)}).`);
+            if (Math.abs(refTtc - cmdTtc) > epsilon) messages.push(`${label}: écart montant (${formatDh(refTtc)} vs commande ${formatDh(cmdTtc)}).`);
 
             const refItems = Array.isArray(refDoc.items) ? refDoc.items : [];
             if (refItems.length !== cmdItems.length) {
@@ -616,20 +638,25 @@ export default function CommandeGrosDetailsPage() {
                         ) : (
                             <p className="text-[10px] text-muted-foreground italic mt-2">Aucune facture liée</p>
                         )}
-                        {linkedReglement ? (
-                            <button
-                                type="button"
-                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
-                                onClick={() => navigate(`/dashboard/reglements/details/client_gros/${linkedReglement.id}`)}
-                            >
-                                <div className="flex items-center gap-1.5">
-                                    <Receipt className="h-3 w-3" />
-                                    <span>
-                                        Règlement {buildReglementCode("client_gros", Number(linkedReglement.id), String(linkedReglement.date_reglement || linkedReglement.created_at || ""), Number(linkedReglement.numero_recu || 0) || null, linkedReglement.sous_societe_nom, linkedReglement.numero_facture || linkedReglement.numero_commande)}
-                                    </span>
-                                </div>
-                                <ArrowUpRight className="h-3 w-3" />
-                            </button>
+                        {linkedReglements.length > 0 ? (
+                            <div className="space-y-1.5">
+                                {linkedReglements.map((r: any) => (
+                                    <button
+                                        key={r.id}
+                                        type="button"
+                                        className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
+                                        onClick={() => navigate(`/dashboard/reglements/details/client_gros/${r.id}`)}
+                                    >
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                            <Receipt className="h-3 w-3 shrink-0" />
+                                            <span className="truncate">
+                                                Règlement {buildReglementCode("client_gros", Number(r.id), String(r.date_reglement || r.created_at || ""), Number(r.numero_recu || 0) || null, r.sous_societe_nom, r.numero_facture || r.numero_commande)}
+                                            </span>
+                                        </div>
+                                        <ArrowUpRight className="h-3 w-3 shrink-0" />
+                                    </button>
+                                ))}
+                            </div>
                         ) : null}
                     </CardContent>
                 </Card>
@@ -685,7 +712,7 @@ export default function CommandeGrosDetailsPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-center font-medium text-slate-600 dark:text-slate-400">
-                                            {fmtDh(Number(it.prix_unitaire) || 0)}
+                                            {resolvePrixParGrammeExact(it)}
                                         </TableCell>
                                         <TableCell className="text-center font-black text-slate-700 dark:text-slate-300">
                                             {Number(it.grammage || 0).toLocaleString("fr-FR")} g

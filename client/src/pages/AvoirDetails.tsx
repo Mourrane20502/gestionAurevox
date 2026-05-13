@@ -39,6 +39,8 @@ interface AvoirItem {
   reference?: string | null;
   produit_reference?: string | null;
   product_reference?: string | null;
+  photo?: string | null;
+  grammage?: number | string | null;
   quantite: number;
   prix_unitaire: number;
   tva: number;
@@ -47,11 +49,17 @@ interface AvoirItem {
 
 function formatDesignationWithReference(
   designation?: string | null,
-  reference?: string | null
+  reference?: string | null,
+  grammage?: number | string | null
 ): string {
   const label = String(designation || "").trim() || "—";
   const ref = String(reference || "").trim();
-  return ref ? `${label} (${ref})` : label;
+  const g = Number(grammage);
+  const gTxt = Number.isFinite(g) && g > 0 ? `${g.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} g` : "";
+  if (ref && gTxt) return `${label} (${ref} - ${gTxt})`;
+  if (ref) return `${label} (${ref})`;
+  if (gTxt) return `${label} (${gTxt})`;
+  return label;
 }
 
 interface AvoirDetails {
@@ -82,6 +90,13 @@ export default function AvoirDetailsPage() {
   const [isLinkCopied, setIsLinkCopied] = useState(false);
 
   const token = localStorage.getItem("token");
+  const getProductPhotoUrl = (photo?: string | null) => {
+    const p = String(photo || "").trim();
+    if (!p) return null;
+    if (/^https?:\/\//i.test(p)) return p;
+    const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+    return `${base}/uploads/${encodeURIComponent(p)}`;
+  };
 
   useEffect(() => {
     const fetchDetails = async () => {
@@ -396,14 +411,29 @@ export default function AvoirDetailsPage() {
                 {items.map((item, idx) => (
                   <TableRow key={idx} className="border-b border-border/50 hover:bg-muted/5 transition-all">
                     <TableCell className="pl-8 py-4">
-                        <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-400">
-                                <Tag className="h-4 w-4" />
+                        <div className="flex items-center gap-3 group/img">
+                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-400 overflow-hidden">
+                                {getProductPhotoUrl(item.photo) ? (
+                                  <>
+                                    <img src={getProductPhotoUrl(item.photo) || ""} alt={item.designation || "Produit"} className="h-full w-full object-cover cursor-zoom-in transition-opacity hover:opacity-80" />
+                                    <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden group-hover/img:flex z-[9999] pointer-events-none items-center justify-center">
+                                      <div className="w-80 h-80 bg-white dark:bg-slate-900 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.4)] border-8 border-white dark:border-slate-800 p-1 animate-in fade-in zoom-in duration-300">
+                                        <img src={getProductPhotoUrl(item.photo) || ""} alt={item.designation || "Produit"} className="w-full h-full object-cover rounded-xl" />
+                                        <div className="absolute -bottom-10 left-0 right-0 py-2 text-white text-sm font-bold uppercase tracking-widest text-center bg-indigo-600/90 backdrop-blur-sm rounded-lg shadow-xl">
+                                          {item.designation || "Produit"}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <Tag className="h-4 w-4" />
+                                )}
                             </div>
                             <span className="font-bold text-slate-800 dark:text-slate-200">
                               {formatDesignationWithReference(
                                 item.designation,
-                                item.reference || item.produit_reference || item.product_reference || null
+                                item.reference || item.produit_reference || item.product_reference || null,
+                                item.grammage
                               )}
                             </span>
                         </div>
@@ -420,11 +450,7 @@ export default function AvoirDetailsPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200">
-                      {(
-                        (Number(item.montant_ht) || 0) *
-                        (1 + (Number(item.tva) || 0) / 100)
-                      ).toLocaleString("fr-FR")}{" "}
-                      DH
+                      {Number(item.montant_ht).toLocaleString("fr-FR")} DH
                     </TableCell>
                   </TableRow>
                 ))}

@@ -21,16 +21,17 @@ import {
     Megaphone,
     Send,
     CircleDollarSign,
+    Clock,
     CreditCard,
     Award,
     Receipt,
     Mail,
     Scale,
-    TrendingUp,
+    Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/common/ui/button";
-import SousLogo from "@/assets/sous_logo.jpg";
+import SousLogoAurevox from "@/assets/aurevox_logo.png";
 import { useState, useEffect, useRef, useCallback } from "react";
 
 interface SidebarItem {
@@ -38,15 +39,28 @@ interface SidebarItem {
     href?: string;
     icon: any;
     hasDropDown?: boolean;
-    permission?: string;
+    permission?: string | string[];
     subItems?: Array<{
         name: string;
         href: string;
         icon: any;
-        permission?: string;
+        permission?: string | string[];
         /** Regroupe visuellement les entrées (ex. Vente classique vs vente gros) */
         section?: string;
     }>;
+}
+
+function canAccessMenuItem(
+    permission: string | string[] | undefined,
+    roleLower: string,
+    userPermissions: string[]
+): boolean {
+    if (permission == null || permission === "") return true;
+    if (permission === "admin_only") return roleLower === "admin";
+    if (Array.isArray(permission)) {
+        return permission.some((p) => userPermissions.includes(p));
+    }
+    return userPermissions.includes(permission);
 }
 
 const sidebarItems: SidebarItem[] = [
@@ -76,7 +90,7 @@ const sidebarItems: SidebarItem[] = [
             { name: "Point fidélité", href: "/dashboard/clients/fidelite", icon: Award, permission: 'clients_view' },
         ]
     },
-    { name: "Contrat", href: "/dashboard/clients/contrat", icon: FileText, permission: 'contrat_view' },
+    { name: "Contrats", href: "/dashboard/clients/contrats", icon: FileText, permission: 'clients_view' },
     {
         name: "Fournisseurs",
         icon: Truck,
@@ -97,7 +111,7 @@ const sidebarItems: SidebarItem[] = [
         subItems: [
             { name: "Devis", href: "/dashboard/devis", icon: FileText, permission: "devis_view", section: "Vente classique" },
             { name: "Commandes", href: "/dashboard/commandes", icon: FileText, permission: "commandes_view", section: "Vente classique" },
-            { name: "Bons de livraison", href: "/dashboard/bons-livraison", icon: FileText, permission: "commandes_view", section: "Vente classique" },
+            { name: "Bons de livraison", href: "/dashboard/bons-livraison", icon: Package, permission: ["bons_livraison_view", "commandes_view"], section: "Vente classique" },
             { name: "Factures", href: "/dashboard/factures", icon: FileText, permission: "factures_view", section: "Vente classique" },
             { name: "Reçus", href: "/dashboard/recus", icon: FileText, permission: "reglements_view", section: "Vente classique" },
             { name: "Avoirs", href: "/dashboard/avoirs", icon: RotateCcw, permission: "avoirs_view", section: "Vente classique" },
@@ -116,10 +130,9 @@ const sidebarItems: SidebarItem[] = [
         subItems: [
             { name: "Règlements Clients", href: "/dashboard/reglements", icon: FileText, permission: 'reglements_view', section: "Finance classique" },
             { name: "Règlements Fournisseurs", href: "/dashboard/fournisseurs/reglements", icon: Truck, permission: 'fournisseurs_view', section: "Finance classique" },
-            { name: "TVA", href: "/dashboard/tva", icon: Scale, permission: 'factures_view', section: "Finance classique" },
-            { name: "Marge", href: "/dashboard/marge", icon: TrendingUp, permission: 'factures_view', section: "Finance classique" },
             { name: "Règlements Clients Gros", href: "/dashboard/reglements-gros", icon: Receipt, permission: 'reglements_view', section: "Finance gros" },
             { name: "Bilan", href: "/dashboard/bilan", icon: FileText, permission: 'bilan_view' },
+            { name: "Chiffre d'affaire", href: "/dashboard/ca", icon: CircleDollarSign, permission: 'admin_only' },
         ]
     },
     {
@@ -148,9 +161,9 @@ const sidebarItems: SidebarItem[] = [
         subItems: [
             { name: "Employés", href: "/dashboard/employes", icon: FileText, permission: 'employees_view' },
             { name: "Congés", href: "/dashboard/conges", icon: FileText, permission: 'conges_view' },
+            { name: "Pointage", href: "/dashboard/pointage", icon: Clock, permission: 'pointage_view' },
             { name: "Salaires", href: "/dashboard/salaires", icon: FileText, permission: 'salaries_view' },
             { name: "Paie", href: "/dashboard/paiement", icon: FileText, permission: 'paie_view' },
-            { name: "Pointage", href: "/dashboard/pointage", icon: FileText, permission: 'paie_view' },
         ]
     },
     { name: "Tickets", href: "/dashboard/tickets", icon: Ticket, permission: 'tickets_view' },
@@ -304,11 +317,10 @@ export default function Sidebar({ onNavigate, onToggle }: {
                     return;
                 }
 
-                const [devisRes, devisGrosRes, cmdRes, blRes, cmdGrosRes, facRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
+                const [devisRes, devisGrosRes, cmdRes, cmdGrosRes, facRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
                     fetch("/api/devis", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/devis-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/commandes", { headers: { Authorization: `Bearer ${token}` } }),
-                    fetch("/api/bons-livraison", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/commandes-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/factures", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/factures-gros", { headers: { Authorization: `Bearer ${token}` } }),
@@ -322,10 +334,6 @@ export default function Sidebar({ onNavigate, onToggle }: {
                     fetch("/api/remboursements", { headers: { Authorization: `Bearer ${token}` } }),
                 ]);
                 let total = 0;
-                const isPendingBlStatus = (status: unknown) => {
-                    const s = String(status || "").trim().toLowerCase();
-                    return s === "en_attente" || s === "en attente" || s === "brouillon";
-                };
 
                 const canApproveEverything = roleLower === "superadmin" || roleLower === "admin";
 
@@ -345,10 +353,6 @@ export default function Sidebar({ onNavigate, onToggle }: {
                 if (cmdRes.ok && (canApproveEverything || rights.includes('commande'))) {
                     const data = await cmdRes.json();
                     total += Array.isArray(data) ? data.filter((c: any) => c.statut === "en_attente").length : 0;
-                }
-                if (blRes.ok && (canApproveEverything || rights.includes('commande'))) {
-                    const data = await blRes.json();
-                    total += Array.isArray(data) ? data.filter((b: any) => isPendingBlStatus(b.statut)).length : 0;
                 }
                 if (cmdGrosRes.ok && (canApproveEverything || rights.includes('commande'))) {
                     const data = await cmdGrosRes.json();
@@ -468,7 +472,7 @@ export default function Sidebar({ onNavigate, onToggle }: {
                         )}
                     >
                         <img
-                            src={gestionnaireLogo ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogo}` : SousLogo}
+                            src={gestionnaireLogo ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogo}` : SousLogoAurevox}
                             alt={gestionnaireName || "Logo"}
                             className="h-full w-full object-cover"
                         />
@@ -477,7 +481,7 @@ export default function Sidebar({ onNavigate, onToggle }: {
                     {!isCollapsed && (
                         <div className="flex flex-col min-w-0 animate-in fade-in duration-300">
                             <span className="text-[15px] font-semibold text-sidebar-foreground truncate leading-tight">
-                                {gestionnaireName || "Gestion ERP"}
+                                {gestionnaireName || "Aurevox"}
                             </span>
                             <span className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.14em] text-sidebar-foreground/65">
                                 <span className="h-1 w-1 rounded-full bg-emerald-500" />
@@ -527,8 +531,8 @@ export default function Sidebar({ onNavigate, onToggle }: {
                             }
                             if (item.hasDropDown) {
                                 // Check if any sub-item is allowed
-                                return item.subItems?.some(sub =>
-                                    !sub.permission || userPermissions.includes(sub.permission)
+                                return item.subItems?.some((sub) =>
+                                    canAccessMenuItem(sub.permission, roleLower, userPermissions)
                                 );
                             }
                             if (item.name === "Centre d'approbation") {
@@ -544,21 +548,16 @@ export default function Sidebar({ onNavigate, onToggle }: {
                             if (item.name === "Journal de connexion" && roleLower === "admin") {
                                 return true;
                             }
-                            return !item.permission || userPermissions.includes(item.permission);
+                            return canAccessMenuItem(item.permission, roleLower, userPermissions);
                         })
                         .map((item) => {
                             const hasSubItems = item.hasDropDown && item.subItems;
                             const isMenuOpen = openMenus[item.name];
 
-                            const filteredSubItems = item.subItems?.filter(sub => {
+                            const filteredSubItems = item.subItems?.filter((sub) => {
                                 // Super administrateur : voit tous les sous-menus pour "Clients"
                                 if (isSuperAdmin && item.name === "Clients") return true;
-                                // Masquer le module "gros" du sidebar (routes conservées)
-                                const isGrosModule =
-                                    sub.href.includes("-gros") ||
-                                    String(sub.section || "").toLowerCase().includes("gros");
-                                if (isGrosModule) return false;
-                                return !sub.permission || userPermissions.includes(sub.permission);
+                                return canAccessMenuItem(sub.permission, roleLower, userPermissions);
                             });
 
                             if (hasSubItems) {

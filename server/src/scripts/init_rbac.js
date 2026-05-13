@@ -111,12 +111,12 @@ const createTables = async () => {
             ['products_inventory_view', 'Accès à l\'inventaire produits'],
             ['products_movements_view', 'Accès aux mouvements produits'],
             ['clients_view', 'Accès aux Clients'],
-            ['contrat_view', 'Accès aux Contrats'],
             ['pdv_view', 'Accès au Point de Vente'],
             ['categories_view', 'Accès aux Catégories'],
             ['devis_view', 'Accès aux Devis'],
             ['devis_gros_view', 'Accès aux Devis gros'],
             ['commandes_view', 'Accès aux Commandes'],
+            ['bons_livraison_view', 'Accès aux bons de livraison'],
             ['commandes_gros_view', 'Accès aux Commandes gros'],
             ['factures_view', 'Accès aux Factures'],
             ['factures_gros_view', 'Accès aux Factures gros'],
@@ -126,6 +126,7 @@ const createTables = async () => {
             ['gestionnaires_view', 'Accès aux Gestionnaires'],
             ['employees_view', 'Accès aux Employés'],
             ['conges_view', 'Accès aux Congés'],
+            ['pointage_view', 'Accès au pointage (présences)'],
             ['salaries_view', 'Accès aux Salaires'],
             ['users_view', 'Accès aux Utilisateurs'],
             ['tickets_view', 'Accès aux Tickets'],
@@ -155,7 +156,7 @@ const createTables = async () => {
         }
 
         // Assign some permissions to basic user (role_id = 2) by default
-        const userPerms = ['products_view', 'pdv_view', 'clients_view', 'contrat_view', 'devis_view', 'commandes_view', 'factures_view', 'tickets_view'];
+        const userPerms = ['products_view', 'pdv_view', 'clients_view', 'devis_view', 'commandes_view', 'bons_livraison_view', 'factures_view', 'tickets_view'];
         for (const permName of userPerms) {
             const [perm] = await db.promise().query('SELECT id FROM permissions WHERE name = ?', [permName]);
             if (perm.length > 0) {
@@ -166,7 +167,7 @@ const createTables = async () => {
         }
 
         // Assign broad permissions to responsable (role_id = 3)
-        const responsablePerms = ['dashboard_view', 'products_view', 'products_inventory_view', 'products_movements_view', 'pdv_view', 'clients_view', 'contrat_view', 'devis_view', 'commandes_view', 'factures_view', 'avoirs_view', 'fournisseurs_view', 'gestionnaires_view', 'tickets_view', 'banque_view', 'caisse_view', 'reglements_view'];
+        const responsablePerms = ['dashboard_view', 'products_view', 'products_inventory_view', 'products_movements_view', 'pdv_view', 'clients_view', 'devis_view', 'commandes_view', 'bons_livraison_view', 'factures_view', 'avoirs_view', 'fournisseurs_view', 'gestionnaires_view', 'employees_view', 'conges_view', 'pointage_view', 'tickets_view', 'banque_view', 'caisse_view', 'reglements_view'];
         for (const permName of responsablePerms) {
             const [perm] = await db.promise().query('SELECT id FROM permissions WHERE name = ?', [permName]);
             if (perm.length > 0) {
@@ -177,7 +178,7 @@ const createTables = async () => {
         }
 
         // Assign high-level oversight permissions to directeur (role_id = 4)
-        const directeurPerms = ['dashboard_view', 'products_view', 'products_inventory_view', 'products_movements_view', 'clients_view', 'contrat_view', 'devis_view', 'commandes_view', 'factures_view', 'avoirs_view', 'fournisseurs_view', 'gestionnaires_view', 'bilan_view', 'banque_view', 'caisse_view', 'tickets_view', 'reglements_view', 'reglements_approve'];
+        const directeurPerms = ['dashboard_view', 'products_view', 'products_inventory_view', 'products_movements_view', 'clients_view', 'devis_view', 'commandes_view', 'bons_livraison_view', 'factures_view', 'avoirs_view', 'fournisseurs_view', 'gestionnaires_view', 'employees_view', 'conges_view', 'pointage_view', 'bilan_view', 'banque_view', 'caisse_view', 'tickets_view', 'reglements_view', 'reglements_approve'];
         for (const permName of directeurPerms) {
             const [perm] = await db.promise().query('SELECT id FROM permissions WHERE name = ?', [permName]);
             if (perm.length > 0) {
@@ -188,7 +189,7 @@ const createTables = async () => {
         }
 
         // Assign finance-oriented permissions to comptable (role_id = 5)
-        const comptablePerms = ['dashboard_view', 'clients_view', 'contrat_view', 'commandes_view', 'factures_view', 'avoirs_view', 'fournisseurs_view', 'reglements_view', 'bilan_view', 'banque_view', 'caisse_view'];
+        const comptablePerms = ['dashboard_view', 'clients_view', 'commandes_view', 'bons_livraison_view', 'factures_view', 'avoirs_view', 'fournisseurs_view', 'reglements_view', 'bilan_view', 'banque_view', 'caisse_view'];
         for (const permName of comptablePerms) {
             const [perm] = await db.promise().query('SELECT id FROM permissions WHERE name = ?', [permName]);
             if (perm.length > 0) {

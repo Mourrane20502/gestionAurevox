@@ -7,14 +7,18 @@ const {
     getReglementClientById,
     approveReglementClient,
     rejectReglementClient,
+    updateReglementClient,
+    deleteReglementClient,
     getSituationReglement,
     markReglementImpaye,
     sendReglementEmail,
     downloadReglementClientPdf,
+    uploadReglementClientPdf,
 } = require("../controllers/reglementClientController");
 
 const authenticate = require("../middleware/authMiddleware");
 const authorizePermission = require("../middleware/authorizePermission");
+const upload = require("../middleware/upload");
 
 router.post(
     "/",
@@ -59,6 +63,20 @@ router.put(
 );
 
 router.put(
+    "/:id",
+    authenticate,
+    authorizePermission("reglements_approve"),
+    updateReglementClient
+);
+
+router.delete(
+    "/:id",
+    authenticate,
+    authorizePermission("reglements_approve"),
+    deleteReglementClient
+);
+
+router.put(
     "/:id/impaye",
     authenticate,
     authorizePermission("reglements_approve"),
@@ -75,6 +93,14 @@ router.post(
 router.get(
     "/:id/pdf/download",
     downloadReglementClientPdf
+);
+
+router.post(
+    "/:id/pdf/upload",
+    authenticate,
+    authorizePermission("reglements_view"),
+    upload.single("pdf"),
+    uploadReglementClientPdf
 );
 
 module.exports = router;

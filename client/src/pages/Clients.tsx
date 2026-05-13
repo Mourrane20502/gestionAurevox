@@ -66,11 +66,12 @@ import {
     DropdownMenuTrigger,
 } from "@/components/common/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useNavigate } from "react-router-dom";
 
 interface Client {
     id: number;
     nom_complet: string;
-    type: 'particulier' | 'revendeur' | 'societe';
+    type: string;
     ice?: string | null;
     numero_tva?: string | null;
     rc?: string | null;
@@ -83,6 +84,7 @@ interface Client {
 }
 
 export default function Clients() {
+    const navigate = useNavigate();
     const role = localStorage.getItem("role");
     const roleLower = (role || "").toLowerCase();
     const permissions = JSON.parse(localStorage.getItem("permissions") || "[]");
@@ -91,6 +93,11 @@ export default function Clients() {
     const isAdmin = role === "admin" || isSuperAdmin;
 
     const [clients, setClients] = useState<Client[]>([]);
+    const [clientTypeOptions, setClientTypeOptions] = useState<Array<{ label: string; value: string }>>([
+        { label: "Particulier", value: "particulier" },
+        { label: "Revendeur", value: "revendeur" },
+        { label: "Société", value: "societe" },
+    ]);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -98,6 +105,7 @@ export default function Clients() {
     const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
+    const [filterClientType, setFilterClientType] = useState("all");
     const [isFormVisible, setIsFormVisible] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [isImportWarningOpen, setIsImportWarningOpen] = useState(false);
@@ -174,6 +182,27 @@ export default function Clients() {
     });
     const token = localStorage.getItem("token");
 
+    const fetchClientTypes = async () => {
+        try {
+            const response = await fetch("/api/settings/client-types", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!response.ok) return;
+            const data = await response.json();
+            const options = (Array.isArray(data) ? data : [])
+                .map((t: any) => ({
+                    label: String(t?.label || t?.value || "").trim(),
+                    value: String(t?.value || "").trim().toLowerCase(),
+                }))
+                .filter((t: any) => t.label && t.value);
+            if (options.length > 0) {
+                setClientTypeOptions(options);
+            }
+        } catch (error) {
+            console.error("Error fetching client types:", error);
+        }
+    };
+
     const fetchClients = async () => {
         setIsLoading(true);
         try {
@@ -188,7 +217,10 @@ export default function Clients() {
         }
     };
 
-    useEffect(() => { fetchClients(); }, []);
+    useEffect(() => {
+        fetchClients();
+        fetchClientTypes();
+    }, []);
 
     useEffect(() => {
         if (editingClient) {
@@ -211,7 +243,7 @@ export default function Clients() {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm]);
+    }, [searchTerm, filterClientType]);
 
     const fetchClientImportColumns = async () => {
         if (clientImportColumns.length > 0) return clientImportColumns;
@@ -440,9 +472,12 @@ export default function Clients() {
         }
     };
 
-    const filteredClients = clients.filter(c =>
-        c.nom_complet.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredClients = clients.filter((c) => {
+        const matchesSearch = c.nom_complet.toLowerCase().includes(searchTerm.toLowerCase());
+        const normalizedType = String(c.type || "").trim().toLowerCase();
+        const matchesType = filterClientType === "all" || normalizedType === filterClientType;
+        return matchesSearch && matchesType;
+    });
 
     const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
     const paginatedClients = filteredClients.slice(
@@ -563,15 +598,17 @@ export default function Clients() {
                             <Label htmlFor="type" className="text-sm font-medium">Type Client</Label>
                             <Select
                                 value={formData.type}
-                                onValueChange={(value) => setFormData(prev => ({ ...prev, type: value as any }))}
+                                onValueChange={(value) => setFormData(prev => ({ ...prev, type: value }))}
                             >
                                 <SelectTrigger className="h-10">
                                     <SelectValue placeholder="Choisir un type" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="particulier">Particulier</SelectItem>
-                                    <SelectItem value="revendeur">Revendeur</SelectItem>
-                                    <SelectItem value="societe">Société</SelectItem>
+                                    {clientTypeOptions.map((typeOpt) => (
+                                        <SelectItem key={typeOpt.value} value={typeOpt.value}>
+                                            {typeOpt.label}
+                                        </SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -629,7 +666,7 @@ export default function Clients() {
             </Dialog>
 
             <div className="space-y-4">
-                    <div className="bg-card p-3 rounded-xl border border-border shadow-sm flex justify-between items-center backdrop-blur-sm">
+                    <div className="bg-card p-3 rounded-xl border border-border shadow-sm flex justify-between items-center gap-3 backdrop-blur-sm">
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
@@ -638,6 +675,21 @@ export default function Clients() {
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 className="pl-9 h-10 border-transparent bg-muted focus:bg-card focus:border-indigo-500 transition-all border"
                             />
+                        </div>
+                        <div className="w-full max-w-[220px]">
+                            <Select value={filterClientType} onValueChange={setFilterClientType}>
+                                <SelectTrigger className="h-10">
+                                    <SelectValue placeholder="Tous les types" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Tous les types</SelectItem>
+                                    {clientTypeOptions.map((typeOpt) => (
+                                        <SelectItem key={`filter-${typeOpt.value}`} value={typeOpt.value}>
+                                            {typeOpt.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         {isAdmin && (
                             <>
@@ -667,6 +719,8 @@ export default function Clients() {
                                 <TableRow className="bg-muted/50 border-b border-border">
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 pl-6">Nom du Client</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Type</TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">ICE</TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Adresse</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Téléphone</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Email</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">Outils</TableHead>
@@ -679,6 +733,8 @@ export default function Clients() {
                                         <TableRow key={i} className="animate-pulse border-b border-border">
                                             <TableCell className="pl-6"><div className="h-4 bg-muted rounded w-48" /></TableCell>
                                             <TableCell><div className="h-4 bg-muted rounded w-16 mx-auto" /></TableCell>
+                                            <TableCell><div className="h-4 bg-muted rounded w-24" /></TableCell>
+                                            <TableCell><div className="h-4 bg-muted rounded w-40" /></TableCell>
                                             <TableCell><div className="h-4 bg-muted rounded w-32" /></TableCell>
                                             <TableCell><div className="h-4 bg-muted rounded w-40" /></TableCell>
                                             <TableCell><div className="h-8 bg-muted rounded w-24 ml-auto" /></TableCell>
@@ -687,7 +743,7 @@ export default function Clients() {
                                     ))
                                 ) : filteredClients.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="text-center py-20">
+                                        <TableCell colSpan={8} className="text-center py-20">
                                             <div className="flex flex-col items-center text-muted">
                                                 <Users className="h-12 w-12 mb-3 stroke-1" />
                                                 <p className="font-medium">Aucun client trouvé</p>
@@ -717,6 +773,22 @@ export default function Clients() {
                                                 )}>
                                                     {client.type || 'Particulier'}
                                                 </Badge>
+                                            </TableCell>
+                                            <TableCell className="py-4">
+                                                {client.ice ? (
+                                                    <span className="text-foreground font-medium">{client.ice}</span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="py-4 max-w-[220px]">
+                                                {client.adresse ? (
+                                                    <span className="text-foreground font-medium truncate block" title={client.adresse}>
+                                                        {client.adresse}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
                                             </TableCell>
                                             <TableCell className="py-4">
                                                 {client.telephone ? (
@@ -822,6 +894,15 @@ export default function Clients() {
                                                         </Button>
                                                     </DropdownMenuTrigger>
                                                     <DropdownMenuContent align="end" className="w-48">
+                                                        <DropdownMenuItem
+                                                            onClick={() =>
+                                                                navigate(`/dashboard/clients/situation?clientId=${client.id}`)
+                                                            }
+                                                            className="cursor-pointer"
+                                                        >
+                                                            <UserCheck className="h-4 w-4" />
+                                                            Situation client
+                                                        </DropdownMenuItem>
                                                         <DropdownMenuItem onClick={() => setEditingClient(client)} className="cursor-pointer">
                                                             <EditSvgIcon className="h-4 w-4" />
                                                             Modifier

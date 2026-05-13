@@ -88,9 +88,12 @@ export default function Settings() {
     });
     const [newModeLabel, setNewModeLabel] = useState("");
     const [newModeValue, setNewModeValue] = useState("");
+    const [clientTypes, setClientTypes] = useState<Array<{ id: number; label: string; value: string }>>([]);
+    const [showClientTypes, setShowClientTypes] = useState(false);
+    const [newClientTypeLabel, setNewClientTypeLabel] = useState("");
+    const [newClientTypeValue, setNewClientTypeValue] = useState("");
 
     const [productTypes, setProductTypes] = useState<{ id: number; name: string; description: string | null }[]>([]);
-    const [marques, setMarques] = useState<{ id: number; nom: string; etat: number }[]>([]);
     const [isProductTypeDialogOpen, setIsProductTypeDialogOpen] = useState(false);
     const [editingProductType, setEditingProductType] = useState<{ id: number; name: string; description: string | null } | null>(null);
     const [newProductTypeName, setNewProductTypeName] = useState("");
@@ -103,7 +106,46 @@ export default function Settings() {
     const [showAutoApproval, setShowAutoApproval] = useState(false);
     const [showSousSocietes, setShowSousSocietes] = useState(false);
     const [showProductTypes, setShowProductTypes] = useState(false);
-    const [showMarques, setShowMarques] = useState(false);
+    const [showPriceSettings, setShowPriceSettings] = useState(false);
+    const [metalPricingLoading, setMetalPricingLoading] = useState(false);
+    const [pricingMetal, setPricingMetal] = useState<"or" | "silver">("or");
+    const [priceOrResign, setPriceOrResign] = useState("");
+    const [priceOrRafinity, setPriceOrRafinity] = useState("");
+    const [priceOrBeldi, setPriceOrBeldi] = useState("");
+    const [priceOrOccasion, setPriceOrOccasion] = useState("");
+    const [priceSilverBeldy, setPriceSilverBeldy] = useState("");
+    const [priceSilverRafinity, setPriceSilverRafinity] = useState("");
+
+    const saveMetalPricingPatch = async (patch: Record<string, string>) => {
+        if (!token) return false;
+        try {
+            const res = await fetch("/api/settings/metal-pricing", {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify(patch),
+            });
+            if (!res.ok) {
+                toast.error("Impossible d'enregistrer les tarifs.");
+                return false;
+            }
+            const data = await res.json();
+            if (data.defaultMetal === "silver" || data.defaultMetal === "or") setPricingMetal(data.defaultMetal);
+            if (typeof data.priceOrResign === "string") setPriceOrResign(data.priceOrResign);
+            if (typeof data.priceOrRafinity === "string") setPriceOrRafinity(data.priceOrRafinity);
+            if (typeof data.priceOrBeldi === "string") setPriceOrBeldi(data.priceOrBeldi);
+            if (typeof data.priceOrOccasion === "string") setPriceOrOccasion(data.priceOrOccasion);
+            if (typeof data.priceSilverBeldy === "string") setPriceSilverBeldy(data.priceSilverBeldy);
+            if (typeof data.priceSilverRafinity === "string") setPriceSilverRafinity(data.priceSilverRafinity);
+            return true;
+        } catch {
+            toast.error("Erreur réseau lors de l'enregistrement.");
+            return false;
+        }
+    };
+
     const [showDevisAdvanced, setShowDevisAdvanced] = useState(false);
     const [showPaymentModes, setShowPaymentModes] = useState(false);
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);
@@ -111,11 +153,12 @@ export default function Settings() {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [modeToDelete, setModeToDelete] = useState<any>(null);
     const [isDeleting, setIsDeleting] = useState(false);
-    const [newMarqueNom, setNewMarqueNom] = useState("");
-    const [newMarqueEtat, setNewMarqueEtat] = useState<"1" | "0">("1");
-    const [editingMarqueId, setEditingMarqueId] = useState<number | null>(null);
-    const [editingMarqueNom, setEditingMarqueNom] = useState("");
-    const [editingMarqueEtat, setEditingMarqueEtat] = useState<"1" | "0">("1");
+
+    const normalizeClientTypeValue = (value: string) =>
+        String(value || "")
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, "_");
 
     const selectedSousSocieteName =
         sousSocietes.find((s) => String(s.id) === selectedSousSocieteId)?.nom_sous_societe || "";
@@ -139,112 +182,16 @@ export default function Settings() {
     const fetchPaymentModes = async () => {
         if (!token) return;
         try {
-            const [pRes, ptRes, mRes] = await Promise.all([
+            const [pRes, ptRes, ctRes] = await Promise.all([
                 fetch("/api/settings/payment-modes", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/product-types", { headers: { Authorization: `Bearer ${token}` } }),
-                fetch("/api/settings/marques", { headers: { Authorization: `Bearer ${token}` } }),
+                fetch("/api/settings/client-types", { headers: { Authorization: `Bearer ${token}` } }),
             ]);
             if (pRes.ok) setPaymentModes(await pRes.json());
             if (ptRes.ok) setProductTypes(await ptRes.json());
-            if (mRes.ok) setMarques(await mRes.json());
+            if (ctRes.ok) setClientTypes(await ctRes.json());
         } catch {
             console.error("Failed to load settings data");
-        }
-    };
-
-    const handleCreateMarque = async () => {
-        const nom = newMarqueNom.trim();
-        if (!nom) {
-            toast.error("Le nom de la marque est requis.");
-            return;
-        }
-        try {
-            const res = await fetch("/api/settings/marques", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    nom,
-                    etat: Number(newMarqueEtat),
-                }),
-            });
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                toast.error(data.message || "Erreur lors de l'ajout de la marque.");
-                return;
-            }
-            toast.success("Marque ajoutée.");
-            setNewMarqueNom("");
-            setNewMarqueEtat("1");
-            fetchPaymentModes();
-        } catch {
-            toast.error("Erreur de connexion.");
-        }
-    };
-
-    const startEditMarque = (m: { id: number; nom: string; etat: number }) => {
-        setEditingMarqueId(m.id);
-        setEditingMarqueNom(m.nom || "");
-        setEditingMarqueEtat(Number(m.etat) ? "1" : "0");
-    };
-
-    const cancelEditMarque = () => {
-        setEditingMarqueId(null);
-        setEditingMarqueNom("");
-        setEditingMarqueEtat("1");
-    };
-
-    const saveEditMarque = async () => {
-        if (!editingMarqueId) return;
-        const nom = editingMarqueNom.trim();
-        if (!nom) {
-            toast.error("Le nom de la marque est requis.");
-            return;
-        }
-        try {
-            const res = await fetch(`/api/settings/marques/${editingMarqueId}`, {
-                method: "PUT",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    nom,
-                    etat: Number(editingMarqueEtat),
-                }),
-            });
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                toast.error(data.message || "Erreur lors de la mise à jour de la marque.");
-                return;
-            }
-            toast.success("Marque mise à jour.");
-            cancelEditMarque();
-            fetchPaymentModes();
-        } catch {
-            toast.error("Erreur de connexion.");
-        }
-    };
-
-    const handleDeleteMarque = async (m: { id: number; nom: string }) => {
-        if (!confirm(`Supprimer la marque "${m.nom}" ?`)) return;
-        try {
-            const res = await fetch(`/api/settings/marques/${m.id}`, {
-                method: "DELETE",
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                toast.error(data.message || "Erreur lors de la suppression de la marque.");
-                return;
-            }
-            toast.success("Marque supprimée.");
-            if (editingMarqueId === m.id) cancelEditMarque();
-            fetchPaymentModes();
-        } catch {
-            toast.error("Erreur de connexion.");
         }
     };
 
@@ -572,6 +519,27 @@ export default function Settings() {
                 // silencieux
             }
 
+            setMetalPricingLoading(true);
+            try {
+                const res = await fetch("/api/settings/metal-pricing", {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (res.ok) {
+                    const d = await res.json();
+                    if (d.defaultMetal === "silver" || d.defaultMetal === "or") setPricingMetal(d.defaultMetal);
+                    setPriceOrResign(typeof d.priceOrResign === "string" ? d.priceOrResign : "");
+                    setPriceOrRafinity(typeof d.priceOrRafinity === "string" ? d.priceOrRafinity : "");
+                    setPriceOrBeldi(typeof d.priceOrBeldi === "string" ? d.priceOrBeldi : "");
+                    setPriceOrOccasion(typeof d.priceOrOccasion === "string" ? d.priceOrOccasion : "");
+                    setPriceSilverBeldy(typeof d.priceSilverBeldy === "string" ? d.priceSilverBeldy : "");
+                    setPriceSilverRafinity(typeof d.priceSilverRafinity === "string" ? d.priceSilverRafinity : "");
+                }
+            } catch {
+                /* ignore */
+            } finally {
+                setMetalPricingLoading(false);
+            }
+
         })();
     }, [isAdmin, token]);
 
@@ -820,6 +788,149 @@ export default function Settings() {
                     {isAdmin && (
                         <div className="flex flex-col gap-4 pt-2">
                             <div className="flex flex-col gap-4 border border-border/40 rounded-lg p-3 bg-muted/30">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex flex-col min-w-0">
+                                        <span className="text-sm font-medium text-muted-foreground">
+                                            Paramétrage des prix
+                                        </span>
+                                        <span className="text-xs text-muted-foreground">
+                                            Tarifs DH/g sur le serveur (calcul produit).
+                                        </span>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 px-3 text-xs shrink-0"
+                                        onClick={() => setShowPriceSettings(!showPriceSettings)}
+                                    >
+                                        {showPriceSettings ? "Masquer" : "Afficher"}
+                                    </Button>
+                                </div>
+
+                                {showPriceSettings && metalPricingLoading && (
+                                    <p className="text-xs text-muted-foreground py-2">Chargement des tarifs…</p>
+                                )}
+                                {showPriceSettings && !metalPricingLoading && (
+                                    <>
+                                        <div className="rounded-lg border border-border/50 bg-background/60 p-3 space-y-2">
+                                            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                Aperçu des tarifs (DH/g)
+                                            </p>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                                                <div className="font-medium text-foreground/80 col-span-full">Or</div>
+                                                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Resign</span><span className="font-mono tabular-nums">{priceOrResign || "—"}</span></div>
+                                                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Rafinity</span><span className="font-mono tabular-nums">{priceOrRafinity || "—"}</span></div>
+                                                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Beldi</span><span className="font-mono tabular-nums">{priceOrBeldi || "—"}</span></div>
+                                                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Occasion</span><span className="font-mono tabular-nums">{priceOrOccasion || "—"}</span></div>
+                                                <div className="font-medium text-foreground/80 col-span-full pt-1">Silver</div>
+                                                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Beldy</span><span className="font-mono tabular-nums">{priceSilverBeldy || "—"}</span></div>
+                                                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Rafinity</span><span className="font-mono tabular-nums">{priceSilverRafinity || "—"}</span></div>
+                                            </div>
+                                            <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/40">
+                                                Métal par défaut (formulaire produit) : <span className="font-semibold text-foreground">{pricingMetal === "silver" ? "Silver" : "Or"}</span>
+                                            </p>
+                                        </div>
+
+                                        <div className="space-y-5 pt-2 border-t border-border/40">
+                                        <div className="flex flex-col gap-2 max-w-xs">
+                                            <span className="text-sm font-medium text-muted-foreground">Métal par défaut</span>
+                                            <Select
+                                                value={pricingMetal}
+                                                onValueChange={async (v) => {
+                                                    const m = v === "silver" ? "silver" : "or";
+                                                    setPricingMetal(m);
+                                                    const ok = await saveMetalPricingPatch({ defaultMetal: m });
+                                                    if (ok) toast.success("Métal par défaut enregistré");
+                                                }}
+                                            >
+                                                <SelectTrigger className="h-9 text-sm">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="or">Or</SelectItem>
+                                                    <SelectItem value="silver">Silver</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {pricingMetal === "or" ? (
+                                            <div className="grid gap-4 sm:grid-cols-2">
+                                                {(
+                                                    [
+                                                        ["Resign", priceOrResign, setPriceOrResign, "priceOrResign"] as const,
+                                                        ["Rafinity", priceOrRafinity, setPriceOrRafinity, "priceOrRafinity"] as const,
+                                                        ["Beldi", priceOrBeldi, setPriceOrBeldi, "priceOrBeldi"] as const,
+                                                        ["Occasion", priceOrOccasion, setPriceOrOccasion, "priceOrOccasion"] as const,
+                                                    ] as const
+                                                ).map(([label, value, setVal, apiKey]) => (
+                                                    <div key={apiKey} className="flex flex-col gap-2">
+                                                        <span className="text-sm font-medium text-muted-foreground">{label}</span>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <input
+                                                                type="text"
+                                                                inputMode="decimal"
+                                                                value={value}
+                                                                onChange={(e) => setVal(e.target.value)}
+                                                                className="h-9 min-w-[140px] flex-1 border rounded-md px-2 text-sm bg-background"
+                                                                placeholder="DH/g"
+                                                            />
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                className="h-9 px-3 text-xs shrink-0"
+                                                                onClick={async () => {
+                                                                    const ok = await saveMetalPricingPatch({ [apiKey]: value.trim() });
+                                                                    if (ok) toast.success(`${label} enregistré`);
+                                                                }}
+                                                            >
+                                                                Enregistrer
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="grid gap-4 sm:grid-cols-2">
+                                                {(
+                                                    [
+                                                        ["Beldy", priceSilverBeldy, setPriceSilverBeldy, "priceSilverBeldy"] as const,
+                                                        ["Rafinity", priceSilverRafinity, setPriceSilverRafinity, "priceSilverRafinity"] as const,
+                                                    ] as const
+                                                ).map(([label, value, setVal, apiKey]) => (
+                                                    <div key={apiKey} className="flex flex-col gap-2">
+                                                        <span className="text-sm font-medium text-muted-foreground">{label}</span>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <input
+                                                                type="text"
+                                                                inputMode="decimal"
+                                                                value={value}
+                                                                onChange={(e) => setVal(e.target.value)}
+                                                                className="h-9 min-w-[140px] flex-1 border rounded-md px-2 text-sm bg-background"
+                                                                placeholder="DH/g"
+                                                            />
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                className="h-9 px-3 text-xs shrink-0"
+                                                                onClick={async () => {
+                                                                    const ok = await saveMetalPricingPatch({ [apiKey]: value.trim() });
+                                                                    if (ok) toast.success(`${label} enregistré`);
+                                                                }}
+                                                            >
+                                                                Enregistrer
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="flex flex-col gap-4 border border-border/40 rounded-lg p-3 bg-muted/30">
                                 <div className="flex items-center justify-between">
                                     <div className="flex flex-col">
                                         <span className="text-sm font-medium text-muted-foreground">
@@ -1030,6 +1141,166 @@ export default function Settings() {
                                                                 >
                                                                     <Trash2 className="h-4 w-4" />
                                                                 </Button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex flex-col gap-4 border border-border/40 rounded-lg p-3 bg-muted/30">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-medium text-muted-foreground">
+                                            Types clients
+                                        </span>
+                                        <span className="text-xs text-muted-foreground">
+                                            Gestion des types de clients.
+                                        </span>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 px-3 text-xs"
+                                        onClick={() => setShowClientTypes(!showClientTypes)}
+                                    >
+                                        {showClientTypes ? "Masquer" : "Gérer"}
+                                    </Button>
+                                </div>
+
+                                {showClientTypes && (
+                                    <div className="mt-4 space-y-4">
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                placeholder="Label (ex: Grossiste)"
+                                                value={newClientTypeLabel}
+                                                onChange={(e) => setNewClientTypeLabel(e.target.value)}
+                                                className="h-9 flex-1 border rounded-md px-2 text-sm"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Valeur (ex: grossiste)"
+                                                value={newClientTypeValue}
+                                                onChange={(e) => setNewClientTypeValue(e.target.value)}
+                                                className="h-9 flex-1 border rounded-md px-2 text-sm"
+                                            />
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                onClick={async () => {
+                                                    const label = newClientTypeLabel.trim();
+                                                    const value = normalizeClientTypeValue(newClientTypeValue || label);
+                                                    if (!label || !value) {
+                                                        toast.error("Veuillez remplir les champs.");
+                                                        return;
+                                                    }
+                                                    try {
+                                                        const res = await fetch("/api/settings/client-types", {
+                                                            method: "POST",
+                                                            headers: {
+                                                                "Content-Type": "application/json",
+                                                                Authorization: `Bearer ${token}`,
+                                                            },
+                                                            body: JSON.stringify({ label, value }),
+                                                        });
+                                                        const data = await res.json().catch(() => ({}));
+                                                        if (res.ok) {
+                                                            toast.success("Type client ajouté.");
+                                                            setNewClientTypeLabel("");
+                                                            setNewClientTypeValue("");
+                                                            fetchPaymentModes();
+                                                        } else {
+                                                            toast.error(data.message || "Erreur lors de l'ajout.");
+                                                        }
+                                                    } catch {
+                                                        toast.error("Erreur de connexion.");
+                                                    }
+                                                }}
+                                            >
+                                                Ajouter
+                                            </Button>
+                                        </div>
+
+                                        <div className="max-h-48 overflow-y-auto border rounded-md text-foreground">
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-muted text-muted-foreground sticky top-0">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left">Label</th>
+                                                        <th className="px-3 py-2 text-left">Valeur</th>
+                                                        <th className="px-3 py-2 text-right">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-border/40">
+                                                    {clientTypes.map((ct) => (
+                                                        <tr key={ct.value} className="hover:bg-muted/40">
+                                                            <td className="px-3 py-2">{ct.label}</td>
+                                                            <td className="px-3 py-2">
+                                                                <code className="text-[11px] bg-muted px-1 rounded">{ct.value}</code>
+                                                            </td>
+                                                            <td className="px-3 py-2 text-right">
+                                                                <div className="inline-flex items-center gap-1">
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-8 w-8 text-indigo-500 hover:bg-indigo-50 hover:text-indigo-600"
+                                                                        onClick={async () => {
+                                                                            const next = prompt("Nouveau type :", ct.value);
+                                                                            const value = normalizeClientTypeValue(next || "");
+                                                                            if (!value || value === ct.value) return;
+                                                                            try {
+                                                                                const res = await fetch(`/api/settings/client-types/${encodeURIComponent(ct.value)}`, {
+                                                                                    method: "PUT",
+                                                                                    headers: {
+                                                                                        "Content-Type": "application/json",
+                                                                                        Authorization: `Bearer ${token}`,
+                                                                                    },
+                                                                                    body: JSON.stringify({ value, label: value }),
+                                                                                });
+                                                                                const data = await res.json().catch(() => ({}));
+                                                                                if (res.ok) {
+                                                                                    toast.success("Type client modifié.");
+                                                                                    fetchPaymentModes();
+                                                                                } else {
+                                                                                    toast.error(data.message || "Erreur de modification.");
+                                                                                }
+                                                                            } catch {
+                                                                                toast.error("Erreur de connexion.");
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        <Edit className="h-4 w-4" />
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-8 w-8 text-red-500 hover:bg-red-50 hover:text-red-600"
+                                                                        onClick={async () => {
+                                                                            if (!confirm(`Supprimer le type "${ct.label}" ?`)) return;
+                                                                            try {
+                                                                                const res = await fetch(`/api/settings/client-types/${encodeURIComponent(ct.value)}`, {
+                                                                                    method: "DELETE",
+                                                                                    headers: { Authorization: `Bearer ${token}` },
+                                                                                });
+                                                                                const data = await res.json().catch(() => ({}));
+                                                                                if (res.ok) {
+                                                                                    toast.success("Type client supprimé.");
+                                                                                    fetchPaymentModes();
+                                                                                } else {
+                                                                                    toast.error(data.message || "Erreur de suppression.");
+                                                                                }
+                                                                            } catch {
+                                                                                toast.error("Erreur de connexion.");
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     ))}
@@ -1412,144 +1683,6 @@ export default function Settings() {
                                                 </div>
                                             ))
                                         )}
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="flex flex-col gap-4 border border-border/40 rounded-lg p-3 bg-muted/30">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-medium text-muted-foreground">Marques</span>
-                                        <span className="text-xs text-muted-foreground">
-                                            Gérez les marques produits (ajout, modification, suppression).
-                                        </span>
-                                    </div>
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-8 px-3 text-xs"
-                                        onClick={() => setShowMarques((v) => !v)}
-                                    >
-                                        {showMarques ? "Masquer" : "Gérer"}
-                                    </Button>
-                                </div>
-
-                                {showMarques && (
-                                    <div className="mt-3 space-y-3">
-                                        <div className="flex flex-col gap-2 md:flex-row">
-                                            <input
-                                                type="text"
-                                                placeholder="Nom de la marque"
-                                                value={newMarqueNom}
-                                                onChange={(e) => setNewMarqueNom(e.target.value)}
-                                                className="h-9 flex-1 border rounded-md px-2 text-sm bg-background"
-                                            />
-                                            <Select value={newMarqueEtat} onValueChange={(v) => setNewMarqueEtat(v as "1" | "0")}>
-                                                <SelectTrigger className="h-9 w-full md:w-40">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="1">Active</SelectItem>
-                                                    <SelectItem value="0">Inactive</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                            <Button type="button" size="sm" className="h-9 px-4" onClick={handleCreateMarque}>
-                                                <Plus className="h-3.5 w-3.5 mr-1" />
-                                                Ajouter
-                                            </Button>
-                                        </div>
-
-                                        <div className="max-h-60 overflow-y-auto border rounded-md text-foreground">
-                                            <table className="w-full text-sm">
-                                                <thead className="bg-muted text-muted-foreground sticky top-0">
-                                                    <tr>
-                                                        <th className="px-3 py-2 text-left">Nom</th>
-                                                        <th className="px-3 py-2 text-left">Etat</th>
-                                                        <th className="px-3 py-2 text-right">Actions</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-border/40">
-                                                    {marques.length === 0 ? (
-                                                        <tr>
-                                                            <td colSpan={3} className="px-3 py-4 text-center text-xs text-muted-foreground">
-                                                                Aucune marque configurée.
-                                                            </td>
-                                                        </tr>
-                                                    ) : (
-                                                        marques.map((m) => {
-                                                            const isEditing = editingMarqueId === m.id;
-                                                            return (
-                                                                <tr key={m.id} className="hover:bg-muted/30">
-                                                                    <td className="px-3 py-2">
-                                                                        {isEditing ? (
-                                                                            <input
-                                                                                type="text"
-                                                                                value={editingMarqueNom}
-                                                                                onChange={(e) => setEditingMarqueNom(e.target.value)}
-                                                                                className="h-8 w-full border rounded-md px-2 text-sm bg-background"
-                                                                            />
-                                                                        ) : (
-                                                                            m.nom
-                                                                        )}
-                                                                    </td>
-                                                                    <td className="px-3 py-2">
-                                                                        {isEditing ? (
-                                                                            <Select value={editingMarqueEtat} onValueChange={(v) => setEditingMarqueEtat(v as "1" | "0")}>
-                                                                                <SelectTrigger className="h-8 w-28">
-                                                                                    <SelectValue />
-                                                                                </SelectTrigger>
-                                                                                <SelectContent>
-                                                                                    <SelectItem value="1">Active</SelectItem>
-                                                                                    <SelectItem value="0">Inactive</SelectItem>
-                                                                                </SelectContent>
-                                                                            </Select>
-                                                                        ) : Number(m.etat) ? (
-                                                                            <span className="text-emerald-700 text-xs font-semibold">Active</span>
-                                                                        ) : (
-                                                                            <span className="text-zinc-500 text-xs font-semibold">Inactive</span>
-                                                                        )}
-                                                                    </td>
-                                                                    <td className="px-3 py-2 text-right">
-                                                                        {isEditing ? (
-                                                                            <div className="inline-flex items-center gap-1">
-                                                                                <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-emerald-700 hover:bg-emerald-50" onClick={saveEditMarque}>
-                                                                                    Enregistrer
-                                                                                </Button>
-                                                                                <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={cancelEditMarque}>
-                                                                                    Annuler
-                                                                                </Button>
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="inline-flex items-center gap-1">
-                                                                                <Button
-                                                                                    type="button"
-                                                                                    variant="ghost"
-                                                                                    size="icon"
-                                                                                    className="h-8 w-8 text-indigo-600 hover:bg-indigo-50"
-                                                                                    onClick={() => startEditMarque(m)}
-                                                                                >
-                                                                                    <Edit className="h-3.5 w-3.5" />
-                                                                                </Button>
-                                                                                <Button
-                                                                                    type="button"
-                                                                                    variant="ghost"
-                                                                                    size="icon"
-                                                                                    className="h-8 w-8 text-red-600 hover:bg-red-50"
-                                                                                    onClick={() => handleDeleteMarque(m)}
-                                                                                >
-                                                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                                                </Button>
-                                                                            </div>
-                                                                        )}
-                                                                    </td>
-                                                                </tr>
-                                                            );
-                                                        })
-                                                    )}
-                                                </tbody>
-                                            </table>
-                                        </div>
                                     </div>
                                 )}
                             </div>

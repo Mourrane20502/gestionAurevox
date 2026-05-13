@@ -53,7 +53,7 @@ import {
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
 import SignatureCanvas from "react-signature-canvas";
-import SousLogo from "@/assets/sous_logo.jpg";
+import AurevoxLogo from "@/assets/aurevox_logo.png";
 
 
 
@@ -435,7 +435,7 @@ export default function Salaries() {
             try {
                 const logoSource = gestionnaireLogoPath
                     ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${gestionnaireLogoPath}`
-                    : SousLogo;
+                    : AurevoxLogo;
                 const logoData = await loadImgToBase64(logoSource);
                 if (logoData) {
                     doc.addImage(logoData, "PNG", margin, 10, 25, 25);
@@ -453,7 +453,7 @@ export default function Salaries() {
             doc.setFontSize(11);
             doc.setFont("helvetica", "normal");
             const today = new Date().toLocaleDateString("fr-FR");
-            doc.text(`Fait à ${salary.pv_name || "Gestion ERP"}, le ${today}`, 105, margin + 10, { align: "center" });
+            doc.text(`Fait à ${salary.pv_name || "Aurevox"}, le ${today}`, 105, margin + 10, { align: "center" });
 
             // Corps
             const yStart = margin + 30;
@@ -461,7 +461,7 @@ export default function Salaries() {
             const periode = `${MONTHS[salary.mois - 1]} ${salary.annee}`;
 
             const paragraphs = [
-                `Je soussigné(e), représentant légal de la société Gestion ERP, atteste que :`,
+                `Je soussigné(e), représentant légal de la société AUREVOX, atteste que :`,
                 ``,
                 `${fullName}, perçoit un salaire net de ${Number(salary.salaire_net || 0).toFixed(2).replace(".", ",")} DH pour la période de ${periode}.`,
                 `L'intéressé(e) travaille au sein de notre établissement ${salary.pv_name || ""} en qualité de salarié(e).`,

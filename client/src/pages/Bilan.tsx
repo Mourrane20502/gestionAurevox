@@ -214,6 +214,12 @@ export default function Bilan() {
             maximumFractionDigits: 2,
         });
 
+    const selectedFilterLabel = (items: { id: number; nom: string }[] | undefined, value: string, allLabel: string) => {
+        if (value === "all") return allLabel;
+        const found = (items || []).find((it) => String(it.id) === String(value));
+        return found?.nom || `ID ${value}`;
+    };
+
     const handleExportCsv = () => {
         if (!data) return;
         const rows: string[] = [];
@@ -357,14 +363,51 @@ export default function Bilan() {
             doc.text(`Période : ${dateFrom || "Toutes"} au ${dateTo || "Toutes"}`, pageWidth - 14, 18, { align: "right" });
             doc.text(`Généré le : ${new Date().toLocaleDateString("fr-FR")}`, pageWidth - 14, 24, { align: "right" });
 
+            const filtersSummary = [
+                `PDV: ${selectedFilterLabel(data.filters.pdvs, pdvId, "Tous")}`,
+                `Utilisateur: ${selectedFilterLabel(data.filters.users, userId, "Tous")}`,
+                `Client: ${selectedFilterLabel(data.filters.clients, clientId, "Tous")}`,
+                `Fournisseur: ${selectedFilterLabel(data.filters.fournisseurs, fournisseurId, "Tous")}`,
+                `Recherche client: ${searchClient.trim() || "Aucune"}`,
+                `Recherche fournisseur: ${searchFournisseur.trim() || "Aucune"}`,
+                `Filtre clients: ${
+                    clientBalanceFilter === "withReste"
+                        ? "Avec reste à encaisser"
+                        : clientBalanceFilter === "fullyPaid"
+                          ? "Soldés"
+                          : "Tous"
+                }`,
+                `Filtre fournisseurs: ${
+                    fournisseurBalanceFilter === "withReste"
+                        ? "Avec reste à payer"
+                        : fournisseurBalanceFilter === "fullyPaid"
+                          ? "Soldés"
+                          : "Tous"
+                }`,
+            ];
+            autoTable(doc, {
+                startY: 42,
+                head: [["Filtres appliqués", "Valeur"]],
+                body: filtersSummary.map((row) => {
+                    const parts = row.split(": ");
+                    return [parts[0], parts.slice(1).join(": ")];
+                }),
+                theme: "grid",
+                styles: { fontSize: 8, cellPadding: 2.5 },
+                headStyles: { fillColor: [99, 102, 241], textColor: 255 },
+                columnStyles: { 0: { cellWidth: 48 }, 1: { cellWidth: "auto" } },
+                margin: { left: 14, right: 14 },
+            });
+
             // 1. Section Clients
             doc.setFontSize(12);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(30, 41, 59);
-            doc.text("I. RÉCAPITULATIF CLIENTS", 14, 50);
+            const filtersEndY = (doc as any).lastAutoTable?.finalY || 42;
+            doc.text("I. RÉCAPITULATIF CLIENTS", 14, filtersEndY + 10);
 
             autoTable(doc, {
-                startY: 55,
+                startY: filtersEndY + 15,
                 head: [["Client", "Devis", "Commandes", "Facturé", "Réglé", "Reste"]],
                 body: displayedClients.map(c => [
                     c.client_nom,
@@ -824,14 +867,14 @@ export default function Bilan() {
                                 className="h-9"
                             />
                         </div>
-                        <div className="space-y-1">
+                        <div className="space-y-1 min-w-0">
                             <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
                                 <Store className="h-3 w-3" />
                                 Point de vente
                             </label>
                             <Select value={pdvId} onValueChange={setPdvId}>
-                                <SelectTrigger className="h-9 text-xs">
-                                    <SelectValue placeholder="Tous les PDV" />
+                                <SelectTrigger className="h-9 text-xs w-full min-w-0">
+                                    <SelectValue placeholder="Tous les PDV" className="truncate" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">Tous</SelectItem>
@@ -843,14 +886,14 @@ export default function Bilan() {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div className="space-y-1">
+                        <div className="space-y-1 min-w-0">
                             <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
                                 <User className="h-3 w-3" />
                                 Utilisateur
                             </label>
                             <Select value={userId} onValueChange={setUserId}>
-                                <SelectTrigger className="h-9 text-xs">
-                                    <SelectValue placeholder="Tous les utilisateurs" />
+                                <SelectTrigger className="h-9 text-xs w-full min-w-0">
+                                    <SelectValue placeholder="Tous les utilisateurs" className="truncate" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">Tous</SelectItem>

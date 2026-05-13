@@ -10,6 +10,7 @@ const routeTitles: Record<string, string> = {
     "/dashboard/mouvements": "Mouvements Stock",
     "/dashboard/clients": "Clients",
     "/dashboard/clients/situation": "Situation Client",
+    "/dashboard/clients/contrats": "Contrats Clients",
     "/dashboard/pdv": "Point de Vente",
     "/dashboard/categories": "Catégories",
     "/dashboard/devis": "Devis",
@@ -28,6 +29,7 @@ const routeTitles: Record<string, string> = {
     "/dashboard/fournisseurs/reglements": "Règlements Fournisseurs",
     "/dashboard/employes": "Employés",
     "/dashboard/conges": "Congés",
+    "/dashboard/pointage": "Pointage",
     "/dashboard/salaires": "Salaires",
     "/dashboard/paiement": "Paie",
     "/dashboard/users": "Utilisateurs",
@@ -57,7 +59,7 @@ export default function PageTitle() {
 
         // Try exact match
         if (routeTitles[path]) {
-            title = `${routeTitles[path]} | Gestion ERP`;
+            title = `${routeTitles[path]} | Gestion ERP `;
         } else {
             // Try prefix match for dynamic routes like /dashboard/devis/123
             const parts = path.split("/");

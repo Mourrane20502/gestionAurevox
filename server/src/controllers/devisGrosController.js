@@ -160,7 +160,8 @@ exports.createDevisGros = async (req, res) => {
         const devisGrosId = result.insertId;
 
         const sousSociete = await resolveSousSocieteFromItems(connection, items);
-        const seqNumber = await getNextNumber("DG", devisGrosId, connection, { sousSocieteId: sousSociete.id });
+        // DG partage la même séquence que DE (paramètres Settings)
+        const seqNumber = await getNextNumber("DE", devisGrosId, connection, { sousSocieteId: sousSociete.id });
         const final_numero = formatDocumentNumber("DG", seqNumber, new Date(), { sousSocieteNom: sousSociete.nom });
         await connection.execute("UPDATE devis_gros SET numero_devis = ? WHERE id = ?", [final_numero, devisGrosId]);
 

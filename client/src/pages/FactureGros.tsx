@@ -78,6 +78,8 @@ interface Product {
     reference?: string | null;
     prix?: number;
     grammage?: number;
+    id_point_de_vente?: number | null;
+    point_de_vente_id?: number | null;
     nature_produit?: string;
     Nature_Produit?: string;
 }
@@ -337,10 +339,7 @@ export default function FactureGros() {
         [list]
     );
     const totalPaid = useMemo(
-        () =>
-            list
-                .filter((f) => String(f.statut || "").toLowerCase() === "payee")
-                .reduce((acc, f) => acc + factureGrosRowMontantTtc(f), 0),
+        () => list.reduce((acc, f) => acc + (Number((f as any).total_regle) || 0), 0),
         [list]
     );
     const totalDraft = useMemo(
@@ -526,18 +525,13 @@ export default function FactureGros() {
                 setImportedBanqueNom(banqueNomFromApi || banqueNomFromList || "—");
                 setModePaiement(d.mode_paiement || "virement");
                 const raw = Array.isArray(d.items) ? d.items : [];
+                const importedPdvId = resolveImportedItemsPdvId(raw);
                 setItems(
                     raw.length
-                        ? raw.map((it: { produit_id?: number; designation?: string; grammage?: number }) => ({
-                              produit_id: it.produit_id,
-                              designation: it.designation || "",
-                              grammage: it.grammage != null ? String(it.grammage) : "",
-                              prix_unitaire: (it as unknown as { prix_unitaire?: number }).prix_unitaire != null ? String((it as unknown as { prix_unitaire?: number }).prix_unitaire) : "",
-                              reduction: (it as unknown as { reduction?: number }).reduction != null ? String((it as unknown as { reduction?: number }).reduction) : "0",
-                              taux_tva: (it as unknown as { taux_tva?: number }).taux_tva != null ? String((it as unknown as { taux_tva?: number }).taux_tva) : "0",
-                          }))
+                        ? raw.map((it: any) => mapImportedGrosLine(it))
                         : [{ designation: "", grammage: "", prix_unitaire: "", reduction: "0", taux_tva: "0" }]
                 );
+                if (importedPdvId) setPdvId(importedPdvId);
             } catch {
                 /* ignore */
             }
@@ -559,6 +553,34 @@ export default function FactureGros() {
         });
     };
 
+    const mapImportedGrosLine = (it: any): FactureGrosItemForm => {
+        const grammageRaw = it?.grammage != null ? String(it.grammage) : "";
+        const grammageNum = parseFloat(grammageRaw.replace(",", ".")) || 0;
+        const netCandidate =
+            Number(it?.montant_ttc) ||
+            ((Number(it?.montant_ht) || 0) + (Number(it?.montant_tva) || 0)) ||
+            Number(it?.prix_net) ||
+            Number(it?.prix_total) ||
+            0;
+        const prixUnitaireRaw =
+            it?.prix_unitaire != null
+                ? String(it.prix_unitaire)
+                : "";
+        const prixUnitaire =
+            grammageNum > 0 && netCandidate > 0
+                ? String(netCandidate / grammageNum)
+                : prixUnitaireRaw;
+
+        return {
+            produit_id: it?.produit_id,
+            designation: it?.designation || "",
+            grammage: grammageRaw,
+            prix_unitaire: prixUnitaire,
+            reduction: it?.reduction != null ? String(it.reduction) : "0",
+            taux_tva: it?.taux_tva != null ? String(it.taux_tva) : "0",
+        };
+    };
+
     const handlePrixNetChange = (index: number, rawValue: string) => {
         const net = parseFloat(String(rawValue).replace(",", ".")) || 0;
         const g = parseFloat(String(items[index]?.grammage || "0").replace(",", ".")) || 0;
@@ -568,14 +590,35 @@ export default function FactureGros() {
         updateLine(index, "taux_tva", "0");
     };
 
+    const resolveProductPdvId = (product: Product): string => {
+        const raw = product.id_point_de_vente ?? product.point_de_vente_id;
+        const n = Number(raw);
+        return Number.isFinite(n) && n > 0 ? String(n) : "";
+    };
+
+    const resolveImportedItemsPdvId = (rawItems: any[]): string => {
+        const pdvIds = new Set<string>();
+        rawItems.forEach((it: any) => {
+            const productId = Number(it?.produit_id);
+            if (!Number.isFinite(productId) || productId <= 0) return;
+            const p = products.find((prod) => Number(prod.id) === productId);
+            if (!p) return;
+            const pdv = resolveProductPdvId(p);
+            if (pdv) pdvIds.add(pdv);
+        });
+        return pdvIds.size === 1 ? Array.from(pdvIds)[0] : "";
+    };
+
     const applyProduct = (index: number, product: Product) => {
         const g = Number(product.grammage);
         const pTotal = Number(product.prix);
         const pu = Number.isFinite(pTotal) ? pTotal : 0;
+        const productPdvId = resolveProductPdvId(product);
         updateLine(index, "produit_id", product.id);
         updateLine(index, "designation", product.nom);
         updateLine(index, "grammage", Number.isFinite(g) && g > 0 ? String(g) : "");
         updateLine(index, "prix_unitaire", String(pu));
+        if (productPdvId) setPdvId(productPdvId);
         setActiveProductSearchIndex(null);
     };
 
@@ -614,14 +657,7 @@ export default function FactureGros() {
             const raw = Array.isArray(d.items) ? d.items : [];
             setItems(
                 raw.length
-                    ? raw.map((it: { produit_id?: number; designation?: string; grammage?: number }) => ({
-                          produit_id: it.produit_id,
-                          designation: it.designation || "",
-                          grammage: it.grammage != null ? String(it.grammage) : "",
-                          prix_unitaire: (it as unknown as { prix_unitaire?: number }).prix_unitaire != null ? String((it as unknown as { prix_unitaire?: number }).prix_unitaire) : "",
-                          reduction: (it as unknown as { reduction?: number }).reduction != null ? String((it as unknown as { reduction?: number }).reduction) : "0",
-                          taux_tva: (it as unknown as { taux_tva?: number }).taux_tva != null ? String((it as unknown as { taux_tva?: number }).taux_tva) : "0",
-                      }))
+                    ? raw.map((it: any) => mapImportedGrosLine(it))
                     : [{ designation: "", grammage: "", prix_unitaire: "", reduction: "0", taux_tva: "0" }]
             );
             setTab("form");
@@ -1449,7 +1485,7 @@ export default function FactureGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.0001"
+                                                                step="any"
                                                                 min={0}
                                                                 value={line.prix_unitaire}
                                                                 onChange={(e) => updateLine(index, "prix_unitaire", e.target.value)}
@@ -1461,7 +1497,7 @@ export default function FactureGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.0001"
+                                                                step="any"
                                                                 min={0}
                                                                 value={line.grammage}
                                                                 onChange={(e) => updateLine(index, "grammage", e.target.value)}
@@ -1473,13 +1509,14 @@ export default function FactureGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.01"
+                                                                step="any"
                                                                 min={0}
                                                                 value={(() => {
                                                                     const g = parseFloat(line.grammage || "0") || 0;
                                                                     const pu = parseFloat(line.prix_unitaire || "0") || 0;
                                                                     const net = g * pu;
-                                                                    return Number.isFinite(net) ? String(Number(net.toFixed(4))) : "0";
+                                                                    const rounded = Math.round((net + Number.EPSILON) * 100) / 100;
+                                                                    return Number.isFinite(rounded) ? String(rounded) : "0";
                                                                 })()}
                                                                 onChange={(e) => handlePrixNetChange(index, e.target.value)}
                                                                 disabled={Boolean(commandeGrosId) && fromCommande}

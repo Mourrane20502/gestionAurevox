@@ -25,6 +25,7 @@ interface FacturePdfData {
     client_ice?: string;
     client_email?: string;
     client_adresse?: string;
+    client_id?: number;
     montant_ht?: number;
     montant_tva?: number;
     montant_ttc?: number;
@@ -48,6 +49,7 @@ interface FacturePdfData {
 
 interface FacturePdfReglement {
     id?: number;
+    facture_id?: number | null;
     date_reglement?: string;
     created_at?: string;
     mode_paiement?: string;
@@ -204,32 +206,62 @@ const loadPdvInfo = async (
 };
 
 const loadReglementsForPdf = async (facture: FacturePdfData): Promise<FacturePdfReglement[]> => {
+    const currentFactureId = Number(facture.id);
+    const keepOnlyCurrentFacture = (rows: FacturePdfReglement[]) => {
+        if (!Number.isFinite(currentFactureId) || currentFactureId <= 0) return rows;
+        return rows.filter((r) => {
+            const fid = Number((r as any)?.facture_id);
+            // If facture_id is present, keep only exact matches to current facture.
+            // If not present in payload, keep row as fallback.
+            return !Number.isFinite(fid) || fid <= 0 || fid === currentFactureId;
+        });
+    };
+
     if (Array.isArray(facture.reglements) && facture.reglements.length > 0) {
-        return facture.reglements;
+        return keepOnlyCurrentFacture(facture.reglements);
     }
     try {
         const token = localStorage.getItem("token");
         const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-        const reqs: Promise<any>[] = [
-            fetch(`/api/reglements-clients?factureId=${facture.id}`, { headers }).then((r) => (r.ok ? r.json() : [])),
-        ];
-        if (facture.commande_id) {
-            reqs.push(
-                fetch(`/api/reglements-clients?commandeId=${facture.commande_id}`, { headers }).then((r) => (r.ok ? r.json() : []))
-            );
-        }
-        const [rowsA, rowsB] = await Promise.all(reqs);
-        const merged = [...(Array.isArray(rowsA) ? rowsA : []), ...(Array.isArray(rowsB) ? rowsB : [])];
+        const rowsA = await fetch(`/api/reglements-clients?factureId=${facture.id}`, { headers }).then((r) =>
+            r.ok ? r.json() : []
+        );
+        const merged = Array.isArray(rowsA) ? rowsA : [];
         const seen = new Set<number>();
-        return merged.filter((r: any) => {
+        const unique = merged.filter((r: any) => {
             const idNum = Number(r?.id);
             if (!Number.isFinite(idNum)) return true;
             if (seen.has(idNum)) return false;
             seen.add(idNum);
             return true;
         });
+        return keepOnlyCurrentFacture(unique);
     } catch {
         return [];
+    }
+};
+
+const enrichFactureClientInfo = async (facture: FacturePdfData): Promise<FacturePdfData> => {
+    const clientId = Number(facture.client_id);
+    if (!Number.isFinite(clientId) || clientId <= 0) return facture;
+    if (facture.client_ice || facture.client_adresse) return facture;
+    try {
+        const token = localStorage.getItem("token");
+        const res = await fetch("/api/clients", {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return facture;
+        const clients = await res.json();
+        if (!Array.isArray(clients)) return facture;
+        const client = clients.find((c: any) => Number(c?.id) === clientId);
+        if (!client) return facture;
+        return {
+            ...facture,
+            client_ice: facture.client_ice || client?.ice || undefined,
+            client_adresse: facture.client_adresse || client?.adresse || undefined,
+        };
+    } catch {
+        return facture;
     }
 };
 
@@ -300,6 +332,33 @@ const amountToWordsFrDh = (amount: number): string => {
     return `${dirhamsWords} et ${centimesWords}`;
 };
 
+const toSafeNumber = (value: unknown): number => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+};
+
+const round2 = (value: unknown): number => Math.round(toSafeNumber(value) * 100) / 100;
+
+const formatQty = (value: unknown): string => {
+    const qty = toSafeNumber(value);
+    // Keep quantity readable in PDF (avoid long floating tails).
+    const abs = Math.abs(qty);
+    const maxFractionDigits = abs > 0 && abs < 1 ? 6 : 3;
+    return qty.toLocaleString("fr-FR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: maxFractionDigits,
+    });
+};
+
+const formatNumberForPdf = (
+    value: unknown,
+    options?: Intl.NumberFormatOptions
+): string => {
+    const formatted = toSafeNumber(value).toLocaleString("fr-FR", options);
+    // jsPDF built-in fonts can render nbsp/nnbsp poorly; normalize to ASCII space.
+    return formatted.replace(/[\u00A0\u202F]/g, " ");
+};
+
 const formatDhPlain = (value: number): string => {
     const amount = Number.isFinite(Number(value)) ? Number(value) : 0;
     const fixed = amount.toFixed(2);
@@ -330,17 +389,18 @@ const qrDataUrlFromValue = async (value: string): Promise<string | null> => {
 };
 
 export const generateFacturePdf = async (facture: FacturePdfData) => {
+    const enrichedFacture = await enrichFactureClientInfo(facture);
     const doc = new jsPDF("p", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
     let currentY = 20;
 
   // HEADER AVEC LOGO + IDENTITÉ DU POINT DE VENTE
   const pdv = await loadPdvInfo(
-      facture.point_de_vente_id ?? undefined,
-      facture.sous_societe_nom ?? null,
-      facture.numero_facture
+      enrichedFacture.point_de_vente_id ?? undefined,
+      enrichedFacture.sous_societe_nom ?? null,
+      enrichedFacture.numero_facture
   );
-  const forcedLogoUrl = toLogoUrl(facture.point_de_vente_logo) || null;
+  const forcedLogoUrl = toLogoUrl(enrichedFacture.point_de_vente_logo) || null;
   if (forcedLogoUrl) {
     const logoDataUrl = await loadImageAsPngDataUrl(forcedLogoUrl);
     if (logoDataUrl) doc.addImage(logoDataUrl, inferImageFormat(logoDataUrl), 20, 12, 28, 28);
@@ -349,7 +409,7 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
   doc.setTextColor(30, 30, 30);
-  doc.text((facture.sous_societe_nom || "").trim() || pdv?.nom || "Point de vente", pageWidth - 20, 18, { align: "right" });
+  doc.text((enrichedFacture.sous_societe_nom || "").trim() || pdv?.nom || "Point de vente", pageWidth - 20, 18, { align: "right" });
 
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
@@ -373,11 +433,11 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
 
     // INFOS FACTURE + CLIENT
     currentY += 12;
-    const formattedDate = facture.date_facture
-        ? new Date(facture.date_facture).toLocaleDateString("fr-FR")
+    const formattedDate = enrichedFacture.date_facture
+        ? new Date(enrichedFacture.date_facture).toLocaleDateString("fr-FR")
         : "";
-    const formattedEcheance = facture.date_echeance
-        ? new Date(facture.date_echeance).toLocaleDateString("fr-FR")
+    const formattedEcheance = enrichedFacture.date_echeance
+        ? new Date(enrichedFacture.date_echeance).toLocaleDateString("fr-FR")
         : "";
 
     doc.setFontSize(11);
@@ -388,7 +448,7 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(70, 70, 70);
     currentY += 7;
-    doc.text(`Numéro : ${facture.numero_facture}`, 20, currentY);
+    doc.text(`Numéro : ${enrichedFacture.numero_facture}`, 20, currentY);
     currentY += 6;
     if (formattedDate) {
         doc.text(`Date : ${formattedDate}`, 20, currentY);
@@ -408,26 +468,24 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(70, 70, 70);
     currentY += 7;
-    doc.text(facture.client_nom || "Client non renseigné", clientBlockX, currentY);
-    if (facture.client_type === "societe") {
-        if (facture.client_email) {
-            currentY += 5;
-            doc.text(`Email : ${facture.client_email}`, clientBlockX, currentY);
-        }
-        if (facture.client_telephone) {
-            currentY += 5;
-            doc.text(`Tél : ${facture.client_telephone}`, clientBlockX, currentY);
-        }
-        if (facture.client_ice) {
-            currentY += 5;
-            doc.text(`ICE : ${facture.client_ice}`, clientBlockX, currentY);
-        }
-        if (facture.client_adresse) {
-            currentY += 5;
-            const addrLines = doc.splitTextToSize(`Adresse : ${facture.client_adresse}`, pageWidth / 2 - 24);
-            doc.text(addrLines as string[], clientBlockX, currentY);
-            currentY += 4 * ((addrLines as string[]).length - 1);
-        }
+    doc.text(enrichedFacture.client_nom || "Client non renseigné", clientBlockX, currentY);
+    if (enrichedFacture.client_email) {
+        currentY += 5;
+        doc.text(`Email : ${enrichedFacture.client_email}`, clientBlockX, currentY);
+    }
+    if (enrichedFacture.client_telephone) {
+        currentY += 5;
+        doc.text(`Tél : ${enrichedFacture.client_telephone}`, clientBlockX, currentY);
+    }
+    if (enrichedFacture.client_ice) {
+        currentY += 5;
+        doc.text(`ICE : ${enrichedFacture.client_ice}`, clientBlockX, currentY);
+    }
+    if (enrichedFacture.client_adresse) {
+        currentY += 5;
+        const addrLines = doc.splitTextToSize(`Adresse : ${enrichedFacture.client_adresse}`, pageWidth / 2 - 24);
+        doc.text(addrLines as string[], clientBlockX, currentY);
+        currentY += 4 * ((addrLines as string[]).length - 1);
     }
 
     // ESPACE AVANT TABLEAU D'ARTICLES
@@ -435,33 +493,60 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
 
     // TABLEAU DES LIGNES
     const startTableY = currentY;
+    const tableLeft = 20;
+    const tableRight = pageWidth - 20;
     const colX = {
-        designation: 20,
-        quantite: 118,
-        prixUnitaire: 138,
-        reduction: 160,
-        tva: 176,
-        total: pageWidth - 20,
+        designation: tableLeft,
+        grammage: 98,
+        quantite: 112,
+        prixUnitaire: 131,
+        reduction: 150,
+        tvaCenter: 166,
+        total: tableRight - 2,
     };
 
     doc.setFillColor(248, 249, 252);
     doc.setDrawColor(220, 223, 230);
-    doc.rect(20, startTableY, pageWidth - 40, 8, "FD");
+    doc.rect(tableLeft, startTableY, tableRight - tableLeft, 8, "FD");
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
 
     doc.text("Désignation", colX.designation, startTableY + 5);
+    doc.text("Gramme", colX.grammage, startTableY + 5, { align: "right" });
     doc.text("Qté", colX.quantite, startTableY + 5, { align: "right" });
     doc.text("PU", colX.prixUnitaire, startTableY + 5, { align: "right" });
     doc.text("Reduction", colX.reduction, startTableY + 5, { align: "right" });
-    doc.text("TVA %", colX.tva, startTableY + 5, { align: "right" });
-    doc.text("Total ", colX.total, startTableY + 5, { align: "right" });
+    doc.text("TVA %", colX.tvaCenter, startTableY + 5, { align: "center" });
+    doc.text("Total", colX.total, startTableY + 5, { align: "right" });
 
     currentY = startTableY + 10;
 
-    const items = (facture.items || []) as FacturePdfItem[];
+    const items = (enrichedFacture.items || []) as FacturePdfItem[];
+    const rawTargetHt = round2(
+        enrichedFacture.montant_ht ??
+            items.reduce(
+                (sum, item) =>
+                    sum + (toSafeNumber(item.montant_ht) || toSafeNumber(item.quantite) * toSafeNumber(item.prix_unitaire)),
+                0
+            )
+    );
+    const rawTargetTva = round2(enrichedFacture.montant_tva ?? 0);
+    const rawTargetTtc = round2(enrichedFacture.montant_ttc ?? rawTargetHt + rawTargetTva);
+    const rowAllTvaZero = items.length > 0 && items.every((item) => Math.abs(toSafeNumber(item.tva)) < 0.0001);
+    const targetHtForRows =
+        rowAllTvaZero && Math.abs(rawTargetTva) <= 0.05 ? rawTargetTtc : rawTargetHt;
+    const lineDisplayTotals = (() => {
+        const base = items.map((item) => round2(toSafeNumber(item.montant_ht) || toSafeNumber(item.quantite) * toSafeNumber(item.prix_unitaire)));
+        if (base.length === 0) return base;
+        const sumBase = round2(base.reduce((s, n) => s + n, 0));
+        const delta = round2(targetHtForRows - sumBase);
+        if (Math.abs(delta) <= 0.009) return base;
+        const adjusted = [...base];
+        adjusted[adjusted.length - 1] = round2(adjusted[adjusted.length - 1] + delta);
+        return adjusted;
+    })();
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(50, 50, 50);
@@ -472,15 +557,23 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     } else {
         const maxYBeforeFooter = 250;
 
-        items.forEach((item) => {
+        items.forEach((item, itemIndex) => {
             if (currentY > maxYBeforeFooter) {
                 doc.addPage();
               currentY = startTableY;
             }
 
-            const lineBrutHT = (item.quantite || 0) * (item.prix_unitaire || 0);
-            const totalHTLigne = item.montant_ht ?? lineBrutHT;
-            const lineReductionAmount = Math.max(0, lineBrutHT - totalHTLigne);
+            const lineBrutHT = toSafeNumber(item.quantite) * toSafeNumber(item.prix_unitaire);
+            const totalHTLigne = toSafeNumber(item.montant_ht ?? lineBrutHT);
+            const displayedLineHt = lineDisplayTotals[itemIndex] ?? round2(totalHTLigne);
+            // Requested behavior: "PU" column should reflect printed invoice amount
+            // (line amount on this facture), not product unit price source.
+            const displayUnitPrice = round2(displayedLineHt);
+            const lineReductionPct = Math.max(0, toSafeNumber(item.reduction));
+            const lineReductionAmount =
+                lineReductionPct > 0
+                    ? Math.max(0, round2((lineBrutHT * lineReductionPct) / 100))
+                    : 0;
 
             const designation = item.designation || "";
             const reference = String(item.reference || "").trim();
@@ -492,29 +585,38 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
             const lineHeight = 4 * (designationLines as string[]).length;
             const rowMidY = currentY + 4;
 
-            doc.text(String(item.quantite ?? 0), colX.quantite, rowMidY, { align: "right" });
             doc.text(
-                (item.prix_unitaire ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                formatNumberForPdf(item.grammage, { maximumFractionDigits: 2 }),
+                colX.grammage,
+                rowMidY,
+                { align: "right" }
+            );
+            doc.text(formatQty(item.quantite), colX.quantite, rowMidY, { align: "right" });
+            doc.text(
+                formatNumberForPdf(displayUnitPrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                 colX.prixUnitaire,
               rowMidY,
                 { align: "right" }
             );
             const reductionCell =
                 lineReductionAmount > 0
-                    ? `- (${lineReductionAmount.toLocaleString("fr-FR", {
+                    ? `- (${formatNumberForPdf(lineReductionAmount, {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                       })})`
-                    : (0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    : formatNumberForPdf(0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             doc.text(reductionCell, colX.reduction, rowMidY, { align: "right" });
             doc.text(
-                (item.tva ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 }),
-                colX.tva,
+                formatNumberForPdf(item.tva, { maximumFractionDigits: 2 }),
+                colX.tvaCenter,
               rowMidY,
-                { align: "right" }
+                { align: "center" }
             );
             doc.text(
-                totalHTLigne.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                formatNumberForPdf(displayedLineHt, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                }),
                 colX.total,
               rowMidY,
                 { align: "right" }
@@ -522,17 +624,25 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
 
             const rowBottomY = currentY + lineHeight + 4;
             doc.setDrawColor(240, 240, 240);
-            doc.line(20, rowBottomY + 0.5, pageWidth - 20, rowBottomY + 0.5);
+            doc.line(tableLeft, rowBottomY + 0.5, tableRight, rowBottomY + 0.5);
             currentY = rowBottomY + 3;
         });
     }
 
     // CALCUL DES TOTAUX (montant_ht est déjà net après réduction en base)
-    const computedHT =
-        facture.montant_ht ??
-        items.reduce((sum, item) => sum + (item.montant_ht ?? (item.quantite || 0) * (item.prix_unitaire || 0)), 0);
-    const computedTVA = facture.montant_tva ?? 0;
-    const computedRemisePct = Number(facture.reduction) || 0;
+    let computedHT = round2(
+        enrichedFacture.montant_ht ??
+            items.reduce((sum, item) => sum + (toSafeNumber(item.montant_ht) || toSafeNumber(item.quantite) * toSafeNumber(item.prix_unitaire)), 0)
+    );
+    let computedTVA = round2(
+        enrichedFacture.montant_tva ??
+            items.reduce((sum, item) => {
+                const ht = toSafeNumber(item.montant_ht ?? toSafeNumber(item.quantite) * toSafeNumber(item.prix_unitaire));
+                const tvaPct = toSafeNumber(item.tva);
+                return sum + (ht * tvaPct) / 100;
+            }, 0)
+    );
+    const computedRemisePct = Number(enrichedFacture.reduction) || 0;
     const computedRemiseDh =
         items.length > 0
             ? items.reduce((sum, item) => {
@@ -540,9 +650,14 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
                   const redPct = Number(item.reduction) || 0;
                   return sum + (brute * redPct) / 100;
               }, 0)
-            : Number(facture.total_reduction) || (computedHT * computedRemisePct) / 100;
-    const computedTTC =
-        facture.montant_ttc ?? computedHT + computedTVA;
+            : Number(enrichedFacture.total_reduction) || (computedHT * computedRemisePct) / 100;
+    const computedTTC = round2(enrichedFacture.montant_ttc ?? (computedHT + computedTVA));
+    const allItemsTvaZero = items.length > 0 && items.every((item) => Math.abs(toSafeNumber(item.tva)) < 0.0001);
+    if (allItemsTvaZero && Math.abs(computedTVA) <= 0.05) {
+        // Prevent tiny rounding artifacts like TVA = 0.02 for TVA-zero lines.
+        computedTVA = 0;
+        computedHT = computedTTC;
+    }
 
     // BLOC TOTAUX
     currentY += 6;
@@ -569,14 +684,14 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
 
     line(
         "Montant :",
-        `${computedHT.toLocaleString("fr-FR", {
+        `${formatNumberForPdf(computedHT, {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         })} DH`
     );
     line(
         "TVA :",
-        `${computedTVA.toLocaleString("fr-FR", {
+        `${formatNumberForPdf(computedTVA, {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         })} DH`
@@ -584,18 +699,18 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     line(
         "Réduction :",
         computedRemiseDh > 0
-            ? `- ${computedRemiseDh.toLocaleString("fr-FR", {
+            ? `- ${formatNumberForPdf(computedRemiseDh, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
               })} DH`
-            : `${(0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`
+            : `${formatNumberForPdf(0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`
     );
 
     doc.setFont("helvetica", "bold");
     doc.setTextColor(16, 185, 129);
     line(
         "Total :",
-        `${computedTTC.toLocaleString("fr-FR", {
+        `${formatNumberForPdf(computedTTC, {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         })} DH`
@@ -616,7 +731,7 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     doc.text(amountWordsLines as string[], 20, currentY + 5);
     const amountWordsLineCount = Array.isArray(amountWordsLines) ? amountWordsLines.length : 1;
     currentY += 5 + amountWordsLineCount * 4 + 4;
-    const reglements = await loadReglementsForPdf(facture);
+    const reglements = await loadReglementsForPdf(enrichedFacture);
     const reglementsSorted = reglements
         .slice()
         .sort(
@@ -695,8 +810,8 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     }
 
     const downloadUrl =
-        Number.isFinite(Number(facture.id)) && Number(facture.id) > 0
-            ? `${window.location.origin}/api/factures/${facture.id}/pdf/download?source=qr`
+        Number.isFinite(Number(enrichedFacture.id)) && Number(enrichedFacture.id) > 0
+            ? `${window.location.origin}/api/factures/${enrichedFacture.id}/pdf/download?source=qr`
             : "";
 
     if (downloadUrl) {
@@ -751,5 +866,5 @@ export const generateFacturePdf = async (facture: FacturePdfData) => {
     doc.text(fiscalLines as string[], pageWidth / 2, footerY + 5, { align: "center" });
   }
 
-    doc.save(`Facture-${facture.numero_facture}.pdf`);
+    doc.save(`Facture-${enrichedFacture.numero_facture}.pdf`);
 };

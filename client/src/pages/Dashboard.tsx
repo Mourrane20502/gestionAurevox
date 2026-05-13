@@ -10,9 +10,8 @@ import {
     ArrowRight,
     Store,
     Package,
-    Users,
     FileText,
-    
+    Users,
     TrendingDown,
     Sparkles,
     Clock,
@@ -54,6 +53,8 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 const BRAND_ACCENT = "#E09536"; // Warm amber/orange brand accent
+/** Taux fixe pour affichage indicatif sur le dashboard (USD → MAD). */
+const USD_TO_MAD = 9.37;
 const COLORS = [
     '#6366f1', // Indigo 500
     '#10b981', // Emerald 500
@@ -160,8 +161,9 @@ export default function Dashboard() {
     });
     const [monthlySales, setMonthlySales] = useState<{ label: string; mois: string; commandes: number; factures: number; total: number; achats: number }[]>([]);
     const [pdvSales, setPdvSales] = useState<{ name: string; value: number }[]>([]);
-    const [clientTypes, setClientTypes] = useState<{ name: string; value: number }[]>([]);
     const [topProducts, setTopProducts] = useState<{ name: string; quantity: number }[]>([]);
+    const [pdvSalesGros, setPdvSalesGros] = useState<{ name: string; value: number }[]>([]);
+    const [topProductsGros, setTopProductsGros] = useState<{ name: string; quantity: number }[]>([]);
     const [salesInsights, setSalesInsights] = useState({
         caLast30d: 0,
         caMonthTotal: 0,
@@ -185,6 +187,12 @@ export default function Dashboard() {
     const [searchQuery, setSearchQuery] = useState("");
     const [isNotifOpen, setIsNotifOpen] = useState(false);
     const [visibility, setVisibility] = useState<any>({});
+    const [goldPriceUsd, setGoldPriceUsd] = useState<number | null>(null);
+    const [goldUpdatedAt, setGoldUpdatedAt] = useState<string>("");
+    const [goldLoading, setGoldLoading] = useState<boolean>(true);
+    const [silverPriceUsd, setSilverPriceUsd] = useState<number | null>(null);
+    const [silverUpdatedAt, setSilverUpdatedAt] = useState<string>("");
+    const [silverLoading, setSilverLoading] = useState<boolean>(true);
 
     // Superadmin: rediriger vers Point de Vente (pas de dashboard)
     useEffect(() => {
@@ -193,6 +201,57 @@ export default function Dashboard() {
             navigate("/dashboard/pdv", { replace: true });
         }
     }, [navigate]);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const fetchMetalPrices = async () => {
+            if (mounted) {
+                setGoldLoading(true);
+                setSilverLoading(true);
+            }
+            try {
+                const [goldRes, silverRes] = await Promise.all([
+                    fetch("https://api.gold-api.com/price/XAU"),
+                    fetch("https://api.gold-api.com/price/XAG"),
+                ]);
+                if (!goldRes.ok) throw new Error("Gold API request failed");
+                if (!silverRes.ok) throw new Error("Silver API request failed");
+
+                const [goldData, silverData] = await Promise.all([
+                    goldRes.json(),
+                    silverRes.json(),
+                ]);
+                if (!mounted) return;
+
+                const goldPrice = Number(goldData?.price);
+                setGoldPriceUsd(Number.isFinite(goldPrice) ? goldPrice : null);
+                setGoldUpdatedAt(goldData?.updatedAtReadable || "");
+
+                const silverPrice = Number(silverData?.price);
+                setSilverPriceUsd(Number.isFinite(silverPrice) ? silverPrice : null);
+                setSilverUpdatedAt(silverData?.updatedAtReadable || "");
+            } catch {
+                if (!mounted) return;
+                setGoldPriceUsd(null);
+                setGoldUpdatedAt("");
+                setSilverPriceUsd(null);
+                setSilverUpdatedAt("");
+            } finally {
+                if (mounted) {
+                    setGoldLoading(false);
+                    setSilverLoading(false);
+                }
+            }
+        };
+
+        fetchMetalPrices();
+        const timer = window.setInterval(fetchMetalPrices, 5 * 60 * 1000);
+        return () => {
+            mounted = false;
+            window.clearInterval(timer);
+        };
+    }, []);
 
     useEffect(() => {
         const storedRole = localStorage.getItem("role");
@@ -219,7 +278,7 @@ export default function Dashboard() {
 
         const fetchData = async () => {
             try {
-                const [prodRes, clientRes, devisRes, fournisseursRes, commandesRes, facturesRes, avoirsRes, achatsRes, reglementsRes, banqueRes, reglementsFournisseursRes, caisseRes, remboursementsRes, topProductsRes, visRes, gestionnairesRes] =
+                const [prodRes, clientRes, devisRes, fournisseursRes, commandesRes, facturesRes, avoirsRes, achatsRes, reglementsRes, banqueRes, caisseRes, remboursementsRes, topProductsRes, visRes, gestionnairesRes, commandesGrosRes, facturesGrosRes] =
                     await Promise.all([
                     fetch("/api/products", { headers }),
                     fetch("/api/clients", { headers }),
@@ -231,12 +290,13 @@ export default function Dashboard() {
                     fetch("/api/achats", { headers }),
                     fetch("/api/reglements-clients", { headers }),
                     fetch("/api/banque", { headers }),
-                    fetch("/api/reglements-fournisseurs", { headers }),
                     fetch("/api/caisse", { headers }),
                     fetch("/api/remboursements", { headers }),
                     fetch("/api/factures/top-products?limit=5&months=6", { headers }),
                     fetch("/api/settings/dashboard-visibility", { headers }),
                     fetch("/api/gestionnaires", { headers }),
+                    fetch("/api/commandes-gros", { headers }),
+                    fetch("/api/factures-gros", { headers }),
                 ]);
 
                 const products = prodRes.ok ? await prodRes.json() : [];
@@ -249,12 +309,13 @@ export default function Dashboard() {
                 const achats = achatsRes.ok ? await achatsRes.json() : [];
                 const reglements = reglementsRes.ok ? await reglementsRes.json() : [];
                 const banqueData = banqueRes.ok ? await banqueRes.json() : [];
-                const reglementsFournisseurs = reglementsFournisseursRes.ok ? await reglementsFournisseursRes.json() : [];
                 const remboursements = remboursementsRes.ok ? await remboursementsRes.json() : [];
                 const caisse = caisseRes.ok ? await caisseRes.json() : [];
                 const topProductsApi = topProductsRes.ok ? await topProductsRes.json() : [];
                 const visibilityData = visRes.ok ? await visRes.json() : {};
                 const gestionnairesData = gestionnairesRes.ok ? await gestionnairesRes.json() : [];
+                const commandesGros = commandesGrosRes.ok ? await commandesGrosRes.json() : [];
+                const facturesGros = facturesGrosRes.ok ? await facturesGrosRes.json() : [];
                 setVisibility(visibilityData);
                 setGestionnaireName(
                     Array.isArray(gestionnairesData) && gestionnairesData[0]?.nom
@@ -264,7 +325,7 @@ export default function Dashboard() {
 
                 const commandeIdsFacturees = getCommandeIdsLinkedToFactures(factures);
 
-                // Total avoirs (montant TTC des avoirs)
+              
                 const totalAvoirs = Array.isArray(avoirs)
                     ? avoirs.reduce((sum: number, a: any) => sum + Number(a.montant_ttc || 0), 0)
                     : 0;
@@ -273,8 +334,20 @@ export default function Dashboard() {
                 const soldeCourant = Array.isArray(banqueData)
                     ? banqueData.reduce((sum: number, b: any) => sum + (Number(b.solde_actuel) || 0), 0)
                     : 0;
+                const isApprovedOrValidated = (value: unknown) => {
+                    const normalized = String(value || "")
+                        .trim()
+                        .toLowerCase()
+                        .normalize("NFD")
+                        .replace(/\p{Diacritic}/gu, "");
+                    return normalized === "approuve" || normalized === "valide";
+                };
                 const totalReglementsClients = Array.isArray(reglements)
-                    ? reglements.reduce((sum: number, r: any) => sum + (Number(r.montant) || 0), 0)
+                    ? reglements.reduce(
+                          (sum: number, r: any) =>
+                              isApprovedOrValidated(r?.statut) ? sum + (Number(r.montant) || 0) : sum,
+                          0
+                      )
                     : 0;
                 const totalCaisse = Array.isArray(caisse)
                     ? caisse.reduce((sum: number, c: any) => sum + (Number(c.montant) || 0), 0)
@@ -282,11 +355,7 @@ export default function Dashboard() {
                 const totalRemboursements = Array.isArray(remboursements)
                     ? remboursements.reduce((sum: number, r: any) => sum + (Number(r.montant) || 0), 0)
                     : 0;
-                const totalReglementsFournisseurs = Array.isArray(reglementsFournisseurs)
-                    ? reglementsFournisseurs.reduce((sum: number, r: any) => sum + (Number(r.montant) || 0), 0)
-                    : 0;
-
-                const liquiditesTotales = soldeCourant + totalReglementsClients - totalAvoirs - totalCaisse - totalRemboursements - totalReglementsFournisseurs;
+                const liquiditesTotales = soldeCourant + totalReglementsClients - totalAvoirs - totalCaisse - totalRemboursements;
 
                 // Dernières commandes
                 // Note: Logic removed as variables are currently unused.
@@ -308,16 +377,11 @@ export default function Dashboard() {
                 const totalSalesFactures = Array.isArray(factures)
                     ? factures.reduce((sum: number, f: any) => sum + Number(f.montant_ttc || 0), 0)
                     : 0;
-                const totalCommandesBrut = Array.isArray(commandes)
-                    ? commandes.reduce((sum: number, c: any) => sum + Number(c.montant_ttc || 0), 0)
-                    : 0;
-                const totalCommandesFacturees = Array.isArray(commandes)
-                    ? commandes
-                          .filter((c: any) => commandeIdsFacturees.has(Number(c.id)))
-                          .reduce((sum: number, c: any) => sum + Number(c.montant_ttc || 0), 0)
-                    : 0;
+                const montantTtcCommandeRow = (c: any) =>
+                    Number(c.montant_ttc) || (Number(c.montant_ht) + Number(c.montant_tva)) || 0;
+                // TTC total des commandes détail uniquement (hors gros) — PDF « Chiffre d'affaires total commandes »
                 const totalSalesCommandes = Array.isArray(commandes)
-                    ? Math.max(totalCommandesBrut - totalCommandesFacturees, 0)
+                    ? commandes.reduce((s, c) => s + montantTtcCommandeRow(c), 0)
                     : 0;
                 const totalRegleCommandes = Array.isArray(commandes)
                     ? commandes.reduce((sum: number, c: any) => sum + Number(c.total_regle || 0), 0)
@@ -405,6 +469,26 @@ export default function Dashboard() {
                     partFacturesPct,
                 });
 
+                const facturesForReglee = Array.isArray(factures) ? factures : [];
+                const isCommandeReglee = (commande: any): boolean => {
+                    const linkedFacture = facturesForReglee.find(
+                        (f: any) => Number(f?.commande_id) === Number(commande?.id)
+                    );
+                    const factureIsPaid =
+                        !!linkedFacture &&
+                        (String(linkedFacture?.statut || "").toLowerCase() === "paye" ||
+                            String(linkedFacture?.statut || "").toLowerCase() === "payee");
+                    const totalRegle = Number(commande?.total_regle) || 0;
+                    const montantTtc =
+                        Number(commande?.montant_ttc) ||
+                        (Number(commande?.montant_ht) + Number(commande?.montant_tva)) ||
+                        0;
+                    const statut = String(commande?.statut || "").toLowerCase();
+                    const commandeStatutReglee = statut === "paye" || statut === "payee" || statut === "reglee";
+                    const paidByAmounts = montantTtc > 0 && totalRegle >= montantTtc - 0.01;
+                    return factureIsPaid || commandeStatutReglee || paidByAmounts;
+                };
+
                 // Monthly Sales & comparison with Expenses
                 const chartData = [];
                 for (let i = 5; i >= 0; i--) {
@@ -416,7 +500,6 @@ export default function Dashboard() {
                     const cmdVal = Array.isArray(commandes)
                         ? commandes
                               .filter((c: any) => {
-                                  if (commandeIdsFacturees.has(Number(c.id))) return false;
                                   const cd = new Date(c.date_commande || c.created_at);
                                   return cd.getMonth() === month && cd.getFullYear() === year;
                               })
@@ -440,24 +523,158 @@ export default function Dashboard() {
                               .reduce((sum: number, a: any) => sum + (Number(a.quantite) * Number(a.prix_unitaire) * (1 + (Number(a.tva) || 0) / 100)), 0)
                         : 0;
 
-                    chartData.push({ label, mois: `${label} ${year}`, commandes: cmdVal, factures: facVal, total: cmdVal + facVal, achats: achatVal });
+                    // « Vente » = total TTC des commandes réglées dont la date de commande tombe dans le mois
+                    const venteVal = Array.isArray(commandes)
+                        ? commandes
+                              .filter((c: any) => {
+                                  const cd = new Date(c.date_commande || c.created_at);
+                                  if (Number.isNaN(cd.getTime())) return false;
+                                  return (
+                                      cd.getMonth() === month &&
+                                      cd.getFullYear() === year &&
+                                      isCommandeReglee(c)
+                                  );
+                              })
+                              .reduce(
+                                  (sum: number, c: any) =>
+                                      sum +
+                                      (Number(c.montant_ttc) ||
+                                          (Number(c.montant_ht) + Number(c.montant_tva)) ||
+                                          0),
+                                  0
+                              )
+                        : 0;
+
+                    chartData.push({ label, mois: `${label} ${year}`, commandes: cmdVal, factures: facVal, total: venteVal, achats: achatVal });
                 }
                 setMonthlySales(chartData);
 
-                // Sales by PDV: aggregate by point_de_vente_id then map to PDV names (so all PDVs appear)
+                const commandeGrosIdsFacturees = new Set<number>(
+                    (Array.isArray(facturesGros) ? facturesGros : [])
+                        .map((f: any) => Number(f.commande_gros_id))
+                        .filter((id: number) => Number.isFinite(id))
+                );
+
+                // CA par PDV = somme des montants TTC des commandes (classique + gros), par point de vente
                 const byName: Record<string, number> = {};
                 const addPdvByName = (doc: any, montant: number) => {
                     const name = doc.point_de_vente_nom || "Principal";
                     byName[name] = (byName[name] || 0) + montant;
                 };
-                (Array.isArray(factures) ? factures : []).forEach((doc: any) =>
-                    addPdvByName(doc, Number(doc.montant_ttc || 0))
+                const montantTtcCommande = (doc: any) =>
+                    Number(doc.montant_ttc) ||
+                    (Number(doc.montant_ht) + Number(doc.montant_tva)) ||
+                    0;
+                (Array.isArray(commandes) ? commandes : []).forEach((doc: any) =>
+                    addPdvByName(doc, montantTtcCommande(doc))
                 );
-                (Array.isArray(commandes) ? commandes : []).forEach((doc: any) => {
-                    if (commandeIdsFacturees.has(Number(doc.id))) return;
-                    addPdvByName(doc, Number(doc.montant_ttc || 0));
-                });
+                (Array.isArray(commandesGros) ? commandesGros : []).forEach((doc: any) =>
+                    addPdvByName(doc, montantTtcCommande(doc))
+                );
                 setPdvSales(Object.entries(byName).map(([name, value]) => ({ name, value })));
+
+                // Part « Gros » par PDV = commandes gros uniquement (même clé nom que la carte principale)
+                const byNameGros: Record<string, number> = {};
+                const addPdvByNameGros = (doc: any, montant: number) => {
+                    const name = doc.point_de_vente_nom || "Principal";
+                    byNameGros[name] = (byNameGros[name] || 0) + montant;
+                };
+                (Array.isArray(commandesGros) ? commandesGros : []).forEach((doc: any) =>
+                    addPdvByNameGros(doc, montantTtcCommande(doc))
+                );
+                setPdvSalesGros(Object.entries(byNameGros).map(([name, value]) => ({ name, value })));
+
+                // Top produits vendus (Gros)
+                const productSalesMapGros: Record<string, { name: string; quantity: number }> = {};
+                const parseGrosQty = (val: unknown) => {
+                    if (typeof val === "number") return Number.isFinite(val) ? val : 0;
+                    if (typeof val !== "string") return 0;
+                    const normalized = val
+                        .replace(/\s+/g, "")
+                        .replace(",", ".")
+                        .replace(/[^0-9.\-]/g, "");
+                    const n = Number.parseFloat(normalized);
+                    return Number.isFinite(n) ? n : 0;
+                };
+                const appendGrosItems = (doc: any) => {
+                    const items = Array.isArray(doc?.items)
+                        ? doc.items
+                        : (Array.isArray(doc?.lignes)
+                            ? doc.lignes
+                            : (Array.isArray(doc?.produits) ? doc.produits : []));
+                    items.forEach((it: any) => {
+                        const name = String(
+                            it?.designation ||
+                            it?.produit_nom ||
+                            it?.nom ||
+                            `Produit gros #${it?.produit_id || "inconnu"}`
+                        );
+                        const key = String(it?.produit_id || name);
+                        const qte = parseGrosQty(
+                            it?.quantite ??
+                            it?.quantity ??
+                            it?.grammage ??
+                            it?.poids ??
+                            0
+                        );
+                        if (!productSalesMapGros[key]) {
+                            productSalesMapGros[key] = { name, quantity: 0 };
+                        }
+                        productSalesMapGros[key].quantity += qte;
+                    });
+                };
+
+                const facturesGrosList = (Array.isArray(facturesGros) ? facturesGros : []);
+                const commandesGrosList = (Array.isArray(commandesGros) ? commandesGros : []);
+
+                const facturesNeedDetails = facturesGrosList.filter((doc: any) => !Array.isArray(doc?.items));
+                const commandesNeedDetails = commandesGrosList.filter(
+                    (doc: any) => !commandeGrosIdsFacturees.has(Number(doc.id)) && !Array.isArray(doc?.items)
+                );
+
+                const [facturesGrosWithItems, commandesGrosWithItems] = await Promise.all([
+                    Promise.all(
+                        facturesNeedDetails.map(async (doc: any) => {
+                            try {
+                                const res = await fetch(`/api/factures-gros/${doc.id}`, { headers });
+                                if (!res.ok) return doc;
+                                return await res.json();
+                            } catch {
+                                return doc;
+                            }
+                        })
+                    ),
+                    Promise.all(
+                        commandesNeedDetails.map(async (doc: any) => {
+                            try {
+                                const res = await fetch(`/api/commandes-gros/${doc.id}`, { headers });
+                                if (!res.ok) return doc;
+                                return await res.json();
+                            } catch {
+                                return doc;
+                            }
+                        })
+                    ),
+                ]);
+
+                const facturesGrosForTopProducts = [
+                    ...facturesGrosList.filter((doc: any) => Array.isArray(doc?.items)),
+                    ...facturesGrosWithItems,
+                ];
+                const commandesGrosForTopProducts = [
+                    ...commandesGrosList.filter(
+                        (doc: any) => !commandeGrosIdsFacturees.has(Number(doc.id)) && Array.isArray(doc?.items)
+                    ),
+                    ...commandesGrosWithItems,
+                ];
+
+                facturesGrosForTopProducts.forEach((doc: any) => appendGrosItems(doc));
+                commandesGrosForTopProducts.forEach((doc: any) => appendGrosItems(doc));
+                setTopProductsGros(
+                    Object.values(productSalesMapGros)
+                        .sort((a, b) => b.quantity - a.quantity)
+                        .slice(0, 5)
+                );
 
                 // Top produits vendus
                 if (Array.isArray(topProductsApi) && topProductsApi.length > 0) {
@@ -481,8 +698,8 @@ export default function Dashboard() {
                 }
 
 
-                // Synthèse règlements clients (aujourd'hui et hier pour trend)
-                if (Array.isArray(reglements)) {
+                // Synthèse commandes créées et réglées (aujourd'hui et hier pour trend)
+                if (Array.isArray(commandes)) {
                     const today = new Date();
                     const yesterday = new Date(today);
                     yesterday.setDate(yesterday.getDate() - 1);
@@ -490,24 +707,37 @@ export default function Dashboard() {
                         d.getDate() === ref.getDate() &&
                         d.getMonth() === ref.getMonth() &&
                         d.getFullYear() === ref.getFullYear();
-                    const approved = reglements.filter((r: any) => r.statut === "approuve");
 
-                    const todayApproved = approved.filter((r: any) => {
-                        const dt = new Date(r.date_reglement || r.created_at);
-                        return !Number.isNaN(dt.getTime()) && isSameDay(dt, today);
+                    const todayCommandes = commandes.filter((c: any) => {
+                        const dt = new Date(c.date_commande || c.created_at);
+                        return !Number.isNaN(dt.getTime()) && isSameDay(dt, today) && isCommandeReglee(c);
                     });
-                    const ca = todayApproved.reduce((sum: number, r: any) => sum + Number(r.montant || 0), 0);
-                    const todayCount = todayApproved.length;
+                    const ca = todayCommandes.reduce(
+                        (sum: number, c: any) =>
+                            sum +
+                            (Number(c.montant_ttc) ||
+                                (Number(c.montant_ht) + Number(c.montant_tva)) ||
+                                0),
+                        0
+                    );
+                    const todayCount = todayCommandes.length;
                     setCaToday(ca);
                     setTransactionsToday(todayCount);
                     setAverageBasketToday(todayCount > 0 ? ca / todayCount : 0);
 
-                    const caYesterdayVal = approved
-                        .filter((r: any) => {
-                            const dt = new Date(r.date_reglement || r.created_at);
-                            return !Number.isNaN(dt.getTime()) && isSameDay(dt, yesterday);
+                    const caYesterdayVal = commandes
+                        .filter((c: any) => {
+                            const dt = new Date(c.date_commande || c.created_at);
+                            return !Number.isNaN(dt.getTime()) && isSameDay(dt, yesterday) && isCommandeReglee(c);
                         })
-                        .reduce((sum: number, r: any) => sum + Number(r.montant || 0), 0);
+                        .reduce(
+                            (sum: number, c: any) =>
+                                sum +
+                                (Number(c.montant_ttc) ||
+                                    (Number(c.montant_ht) + Number(c.montant_tva)) ||
+                                    0),
+                            0
+                        );
                     setCaYesterday(caYesterdayVal);
                 } else {
                     setCaToday(0);
@@ -515,17 +745,6 @@ export default function Dashboard() {
                     setTransactionsToday(0);
                     setAverageBasketToday(0);
                 }
-
-
-
-                // Client types
-                const typeMap: any = {};
-                clients.forEach((c: any) => {
-                    const type = c.type === 'revendeur' ? 'Revendeur' : 'Particulier';
-                    typeMap[type] = (typeMap[type] || 0) + 1;
-                });
-                setClientTypes(Object.entries(typeMap).map(([name, value]: any) => ({ name, value })));
-
                 setCounts({
                     products: Array.isArray(products) ? products.length : 0,
                     clients: Array.isArray(clients) ? clients.length : 0,
@@ -561,11 +780,26 @@ export default function Dashboard() {
         return visibility[userRole].includes(id);
     };
 
-    const totalRevenue = counts.totalRegleCommandes;
+    /** PDV avec chiffre d’affaires > 0 (factures + commandes non facturées), tri décroissant */
+    const pdvSalesAvecCa = useMemo(
+        () =>
+            pdvSales
+                .filter((p) => (Number(p.value) || 0) > 0)
+                .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)),
+        [pdvSales]
+    );
+    const totalCaPdv = useMemo(
+        () => pdvSalesAvecCa.reduce((sum, pdv) => sum + (Number(pdv.value) || 0), 0),
+        [pdvSalesAvecCa]
+    );
+    const topPdvLeader = pdvSalesAvecCa[0] || null;
    
 
-    const formatDH = (n: number) => `${Math.round(Number(n))} DH`;
-    const formatShortDH = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+    // Use plain ASCII spaces to avoid PDF glyph issues (slashes instead of separators).
+    const formatInt = (n: number) =>
+        String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    const formatDH = (n: number) => `${formatInt(n)} DH`;
+    const formatShortDH = (n: number) => formatInt(n);
     const chartTooltipStyle = {
         border: "1px solid rgba(99, 102, 241, 0.12)",
         borderRadius: 14,
@@ -622,6 +856,14 @@ export default function Dashboard() {
     const handleDownloadReport = () => {
         const doc = new jsPDF();
         const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const ensureSectionFits = (desiredY: number, minRemaining = 45) => {
+            if (desiredY > pageHeight - minRemaining) {
+                doc.addPage();
+                return 20;
+            }
+            return desiredY;
+        };
 
         // Header
         doc.setFillColor(67, 56, 202); // indigo-600
@@ -648,12 +890,11 @@ export default function Dashboard() {
             body: [
                 ["Chiffre d'Affaires (Réglé)", formatDH(counts.totalRegleCommandes)],
                 ["Chiffre d'Affaires Total (Factures)", formatDH(counts.totalSalesFactures)],
-                ["Chiffre d'Affaires Total (Commandes)", formatDH(counts.totalSalesCommandes)],
+                ["Chiffre d'Affaires Total (Commandes)", formatDH(counts.totalRegleCommandes)],
                 ["Total Avoirs", formatDH(counts.totalAvoirs)],
                 ["CA Aujourd'hui", formatDH(caToday)],
                 ["Total Clients", counts.clients.toString()],
                 ["Total Produits", counts.products.toString()],
-                ["Produits en Alerte Stock", counts.lowStockCount.toString()],
             ],
             theme: "striped",
             headStyles: { fillColor: [67, 56, 202] },
@@ -677,14 +918,50 @@ export default function Dashboard() {
         const finalY2 = (doc as any).lastAutoTable.finalY + 15;
         doc.setFontSize(14);
         doc.setFont("helvetica", "bold");
-        doc.text("III. VENTES PAR POINT DE VENTE", 14, finalY2);
+        doc.text("III. COMMANDES PAR POINT DE VENTE", 14, finalY2);
 
         autoTable(doc, {
             startY: finalY2 + 5,
-            head: [["Point de Vente", "Chiffre d'Affaires"]],
-            body: pdvSales.map(p => [p.name, formatDH(p.value)]),
+            head: [["Point de Vente", "Somme commandes"]],
+            body: pdvSalesAvecCa.map((p) => [p.name, formatDH(p.value)]),
             theme: "grid",
             headStyles: { fillColor: [245, 158, 11] }, // amber-500
+        });
+
+        // Section 4: Top Produits Gros
+        let finalY3 = (doc as any).lastAutoTable.finalY + 15;
+        finalY3 = ensureSectionFits(finalY3, 55);
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.text("IV. TOP 5 PRODUITS VENDUS (GROS)", 14, finalY3);
+
+        autoTable(doc, {
+            startY: finalY3 + 5,
+            head: [["Produit Gros", "Quantité Vendue"]],
+            body: (topProductsGros.length > 0
+                ? topProductsGros
+                : [{ name: "Aucune donnée gros", quantity: 0 }]
+            ).map((p) => [p.name, `${p.quantity} g`]),
+            theme: "grid",
+            headStyles: { fillColor: [79, 70, 229] }, // indigo-600
+        });
+
+        // Section 5: Ventes Gros par PDV
+        let finalY4 = (doc as any).lastAutoTable.finalY + 15;
+        finalY4 = ensureSectionFits(finalY4, 55);
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.text("V. VENTES GROS PAR POINT DE VENTE", 14, finalY4);
+
+        autoTable(doc, {
+            startY: finalY4 + 5,
+            head: [["Point de Vente", "Chiffre d'Affaires Gros"]],
+            body: (pdvSalesGros.length > 0
+                ? pdvSalesGros
+                : [{ name: "Aucune donnée gros", value: 0 }]
+            ).map((p) => [p.name, formatDH(p.value)]),
+            theme: "grid",
+            headStyles: { fillColor: [16, 185, 129] }, // emerald-500
         });
 
         doc.save(`rapport_dashboard_${new Date().toISOString().split('T')[0]}.pdf`);
@@ -944,8 +1221,20 @@ export default function Dashboard() {
                 <div className="absolute -bottom-24 -left-24 h-96 w-96 bg-emerald-500/10 blur-[100px] rounded-full" />
                 
                 <div className="relative z-10 p-8 sm:p-12 flex flex-col lg:flex-row lg:items-center justify-between gap-12">
+                    <div className="hidden lg:flex absolute top-8 right-8 xl:right-12">
+                        <div className="relative group inline-flex items-center justify-center gap-2 px-5 py-2 rounded-full bg-gradient-to-r from-yellow-300 via-amber-300 to-yellow-400 border-2 border-amber-500 text-amber-950 text-[11px] font-black uppercase tracking-[0.16em] shadow-[0_0_0_1px_rgba(146,64,14,0.18),0_16px_34px_-14px_rgba(217,119,6,0.9)]">
+                            <span className="pointer-events-none absolute inset-0 rounded-full bg-[linear-gradient(120deg,rgba(255,255,255,0.05)_20%,rgba(255,255,255,0.25)_45%,rgba(255,255,255,0.05)_70%)] opacity-60" />
+                            <span className="relative h-2.5 w-2.5 rounded-full bg-amber-100 shadow-[0_0_10px_rgba(251,191,36,0.85)]" />
+                            <span className="relative whitespace-nowrap text-center">
+                            Prix de l'or 18K du jour •{" "}
+                                {goldPriceUsd != null
+                                    ? `${(((goldPriceUsd * USD_TO_MAD) / 31.1035) / 1.35).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} DH/g`
+                                    : ""}
+                            </span>
+                        </div>
+                    </div>
                     <div className="space-y-6 max-w-3xl">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-col items-start gap-3">
                             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/5 backdrop-blur-xl border border-white/10 text-emerald-400 text-[10px] font-black uppercase tracking-[0.2em]">
                                 <Sparkles className="h-3.5 w-3.5" />
                                 Aperçu de l&apos;activité • {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
@@ -960,9 +1249,68 @@ export default function Dashboard() {
                                 </span>
                             </h1>
                             <p className="text-lg text-white/50 font-medium max-w-xl leading-relaxed">
-                            Bienvenue. Vos indicateurs business sont à jour et prêts à être consultés.
+                                Votre bijouterie se porte bien. Voici une analyse détaillée de vos performances aujourd&apos;hui.
                             </p>
                         </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="inline-flex items-center gap-3 rounded-2xl border border-amber-300/25 bg-gradient-to-r from-amber-500/20 via-yellow-400/10 to-transparent px-4 py-3 backdrop-blur-xl shadow-[0_10px_30px_-18px_rgba(251,191,36,0.65)]">
+                                <div className="h-10 w-10 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center border border-amber-300/25">
+                                    <CircleDollarSign className="h-5 w-5" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200/80">Cours de l&apos;or · XAU/USD</p>
+                                    <p className="text-lg font-black text-amber-100 tabular-nums">
+                                        {goldLoading
+                                            ? "Chargement..."
+                                            : goldPriceUsd != null
+                                                ? `${goldPriceUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} $/oz`
+                                                : "Indispo"}
+                                    </p>
+                                    {goldPriceUsd != null && !goldLoading && (
+                                        <p className="text-sm font-bold text-amber-50/95 tabular-nums mt-0.5">
+                                            ≈{" "}
+                                            {(goldPriceUsd * USD_TO_MAD).toLocaleString("fr-FR", {
+                                                maximumFractionDigits: 0,
+                                            })}{" "}
+                                            MAD/oz{" "}
+                                            <span className="text-[10px] font-semibold text-amber-100/60">(troy)</span>
+                                        </p>
+                                    )}
+                                    <p className="text-[10px] font-bold text-amber-100/70">{goldUpdatedAt || "Source: gold-api.com"}</p>
+                                </div>
+                            </div>
+
+                            <div className="inline-flex items-center gap-3 rounded-2xl border border-slate-200/15 bg-gradient-to-r from-slate-200/15 via-white/10 to-transparent px-4 py-3 backdrop-blur-xl shadow-[0_10px_30px_-18px_rgba(148,163,184,0.5)]">
+                                <div className="h-10 w-10 rounded-xl bg-slate-200/15 text-slate-100 flex items-center justify-center border border-white/10">
+                                    <Banknote className="h-5 w-5" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-100/80">Cours de l&apos;argent · XAG/USD</p>
+                                    <p className="text-lg font-black text-slate-50 tabular-nums">
+                                        {silverLoading
+                                            ? "Chargement..."
+                                            : silverPriceUsd != null
+                                                ? `${silverPriceUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} $/oz`
+                                                : "Indispo"}
+                                    </p>
+                                    {silverPriceUsd != null && !silverLoading && (
+                                        <p className="text-sm font-bold text-slate-100 tabular-nums mt-0.5">
+                                            ≈{" "}
+                                            {(silverPriceUsd * USD_TO_MAD).toLocaleString("fr-FR", {
+                                                maximumFractionDigits: 2,
+                                            })}{" "}
+                                            MAD/oz{" "}
+                                            <span className="text-[10px] font-semibold text-slate-300/80">(troy)</span>
+                                        </p>
+                                    )}
+                                    <p className="text-[10px] font-bold text-slate-100/70">{silverUpdatedAt || "Source: gold-api.com"}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <p className="text-[10px] font-medium text-white/45">
+                            Conversion MAD : 1 USD = {USD_TO_MAD.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD
+                        </p>
 
                         <div className="flex flex-wrap gap-4">
                             <button 
@@ -1003,7 +1351,7 @@ export default function Dashboard() {
                                             )}>
                                                 {caToday >= caYesterday ? "+" : ""}{caYesterday > 0 ? (((caToday - caYesterday) / caYesterday) * 100).toFixed(0) : "100"}%
                                             </div>
-                                            <span className="text-white/30">vs hier ({formatShortDH(caYesterday)})</span>
+                                            <span className="text-white/30">vs hier ({formatDH(caYesterday)})</span>
                                         </div>
                                     )}
                                 </div>
@@ -1021,7 +1369,7 @@ export default function Dashboard() {
                                         <span className="text-[9px] font-black text-white/50 uppercase tracking-widest">Panier Moyen</span>
                                         <AnimatedCounter
                                             value={averageBasketToday}
-                                            format={(n) => formatShortDH(n)}
+                                            format={(n) => formatDH(n)}
                                             className="text-lg font-bold text-white"
                                         />
                                     </div>
@@ -1067,13 +1415,13 @@ export default function Dashboard() {
                                     Vue d'ensemble <span className="text-indigo-500">Flux & Volume</span>
                                 </h2>
                                 <p className="text-base text-muted-foreground font-medium max-w-2xl">
-                                    Analyse consolidée de votre trésorerie, mix client et pipeline commercial.
+                                    Analyse consolidée de votre trésorerie et du pipeline commercial.
                                 </p>
                             </div>
                         </div>
 
                         {/* Critical Metric Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                             {isVisible('stats_ca_today') && (
                                 <motion.div variants={itemVariants} whileHover={{ y: -6 }} className="h-full">
                                     <Card className={cn(dashGlassCard, "h-full flex flex-col group border-emerald-100/50 dark:border-emerald-500/10")}>
@@ -1128,7 +1476,7 @@ export default function Dashboard() {
                             )}
 
                             {/* Liquidités Card */}
-                            <motion.div variants={itemVariants} whileHover={{ y: -6 }} className="h-full">
+                            <motion.div variants={itemVariants} whileHover={{ y: -6 }} className="h-full lg:col-span-2">
                                 <Card className={cn(dashGlassCard, "h-full flex flex-col group border-indigo-100/50 dark:border-indigo-500/10")}>
                                     <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 to-violet-600" />
                                     <CardContent className="p-8 flex flex-col h-full gap-6">
@@ -1136,7 +1484,7 @@ export default function Dashboard() {
                                             <div className="space-y-1">
                                                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-400/80">Disponibilités</p>
                                                 <h3 className="text-3xl font-black text-slate-900 dark:text-white tabular-nums tracking-tighter">
-                                                    {formatShortDH(counts.liquiditesTotales)}
+                                                    {formatShortDH(totalCaPdv)} DH
                                                 </h3>
                                             </div>
                                             <div className="h-14 w-14 rounded-2xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center shadow-inner group-hover:scale-110 transition-transform">
@@ -1145,105 +1493,72 @@ export default function Dashboard() {
                                         </div>
                                         
                                         <div className="text-sm font-bold text-indigo-600/80 bg-indigo-500/5 px-3 py-1.5 rounded-xl self-start">
-                                            {formatDH(counts.liquiditesTotales)} total
+                                            {formatDH(totalCaPdv)} total
                                         </div>
 
-                                        <div className="mt-auto h-20 pt-4">
+                                        <div className="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-4">
+                                            <div className="rounded-2xl bg-indigo-500/5 border border-indigo-200/40 dark:border-indigo-400/20 p-5 space-y-4 min-h-[220px]">
+                                                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-indigo-600/85">
+                                                    CA par point de vente (inclut gros)
+                                                </p>
+                                                <div className="grid grid-cols-[0.8fr_1.4fr] gap-2">
+                                                    <div className="rounded-lg bg-white/70 dark:bg-black/15 p-2">
+                                                        <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">PDV actifs</p>
+                                                        <p className="text-base font-black text-indigo-700 dark:text-indigo-300">{pdvSalesAvecCa.length}</p>
+                                                    </div>
+                                                    <div className="rounded-lg bg-white/70 dark:bg-black/15 p-2">
+                                                        <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">Top PDV</p>
+                                                        <p className="text-sm font-black text-indigo-700 dark:text-indigo-300 truncate">{topPdvLeader?.name || "—"}</p>
+                                                        <p className="text-xs font-semibold text-indigo-600/80 dark:text-indigo-300/80 mt-0.5">
+                                                            {topPdvLeader ? formatShortDH(topPdvLeader.value) : "—"} DH
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                                                    {pdvSalesAvecCa.map((pdv) => {
+                                                        const pdvGros = pdvSalesGros.find((g) => g.name === pdv.name)?.value || 0;
+                                                        return (
+                                                            <div key={pdv.name} className="flex items-center justify-between gap-3 text-sm">
+                                                                <div className="min-w-0">
+                                                                    <p className="font-bold text-slate-700 dark:text-slate-200 truncate">{pdv.name}</p>
+                                                                    <p className="text-[11px] font-semibold text-indigo-600/80 dark:text-indigo-300/80 truncate">
+                                                                        Gros: {formatShortDH(pdvGros)}
+                                                                    </p>
+                                                                </div>
+                                                                <span className="font-black text-indigo-700 dark:text-indigo-300 tabular-nums shrink-0 text-base">
+                                                                    {formatShortDH(pdv.value)} DH
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+
+                                            <div className="h-28 pt-2">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <AreaChart data={monthlySales.slice(-4)}>
+                                                        <defs>
+                                                            <linearGradient id="liquidityFill" x1="0" y1="0" x2="0" y2="1">
+                                                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                                                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                                                            </linearGradient>
+                                                        </defs>
+                                                        <Area type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={3} fill="url(#liquidityFill)" />
+                                                    </AreaChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-auto h-20 pt-2">
                                             <ResponsiveContainer width="100%" height="100%">
-                                                <AreaChart data={monthlySales.slice(-4)}>
-                                                    <defs>
-                                                        <linearGradient id="liquidityFill" x1="0" y1="0" x2="0" y2="1">
-                                                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                                                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                                                        </linearGradient>
-                                                    </defs>
-                                                    <Area type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={3} fill="url(#liquidityFill)" />
-                                                </AreaChart>
+                                                <ReBarChart data={pdvSalesAvecCa}>
+                                                    <Bar dataKey="value" radius={[6, 6, 0, 0]} fill="#6366f1" />
+                                                </ReBarChart>
                                             </ResponsiveContainer>
                                         </div>
                                     </CardContent>
                                 </Card>
                             </motion.div>
-
-                            {/* Client Segment Card */}
-                            {isVisible('chart_client_types') && (
-                                <motion.div variants={itemVariants} whileHover={{ y: -6 }} className="h-full">
-                                    <Card className={cn(dashGlassCard, "h-full flex flex-col group border-violet-100/50 dark:border-violet-500/10")}>
-                                        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-violet-500 to-fuchsia-600" />
-                                        <CardContent className="p-8 flex flex-col h-full gap-6">
-                                            <div className="flex items-start justify-between">
-                                                <div className="space-y-1">
-                                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400/80">Mix Clients</p>
-                                                    <h3 className="text-3xl font-black text-slate-900 dark:text-white tabular-nums tracking-tighter">
-                                                        {clientTypes.reduce((sum, c) => sum + (c.value || 0), 0)}
-                                                    </h3>
-                                                </div>
-                                                <div className="h-14 w-14 rounded-2xl bg-violet-500/10 text-violet-600 flex items-center justify-center shadow-inner group-hover:scale-110 transition-transform">
-                                                    <Users className="h-7 w-7" />
-                                                </div>
-                                            </div>
-                                            
-                                            <div className="flex-1 flex flex-col justify-center">
-                                                <div className="flex items-center gap-4">
-                                                    {clientTypes.map((c, idx) => (
-                                                        <div key={c.name} className="flex flex-col gap-0.5">
-                                                            <div className="flex items-center gap-1.5">
-                                                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
-                                                                <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">{c.name}</span>
-                                                            </div>
-                                                            <span className="text-xs font-black">{c.value}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                            <div className="h-1.5 w-full bg-slate-100 dark:bg-white/5 rounded-full overflow-hidden flex">
-                                                {clientTypes.map((c, idx) => (
-                                                    <div 
-                                                        key={idx} 
-                                                        className="h-full transition-all duration-1000"
-                                                        style={{ 
-                                                            width: `${(c.value / Math.max(1, clientTypes.reduce((s, x) => s + x.value, 0))) * 100}%`,
-                                                            backgroundColor: COLORS[idx % COLORS.length]
-                                                        }} 
-                                                    />
-                                                ))}
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </motion.div>
-                            )}
-
-                            {/* Pipeline Card */}
-                            {isVisible('stats_pending_commandes') && (
-                                <motion.div variants={itemVariants} whileHover={{ y: -6 }} className="h-full">
-                                    <Card className={cn(dashGlassCard, "h-full flex flex-col group border-amber-100/50 dark:border-amber-500/10")}>
-                                        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-400 to-orange-500" />
-                                        <CardContent className="p-8 flex flex-col h-full gap-6">
-                                            <div className="flex items-start justify-between">
-                                                <div className="space-y-1">
-                                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-600 dark:text-amber-400/80">Flux Approbation</p>
-                                                    <h3 className="text-3xl font-black text-slate-900 dark:text-white tabular-nums tracking-tighter">
-                                                        {pendingByType.reduce((s, i) => s + i.value, 0)}
-                                                    </h3>
-                                                </div>
-                                                <div className="h-14 w-14 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center shadow-inner group-hover:scale-110 transition-transform">
-                                                    <ListOrdered className="h-7 w-7" />
-                                                </div>
-                                            </div>
-                                            
-                                            <div className="grid grid-cols-2 gap-y-3">
-                                                {pendingByType.slice(0, 4).map((item) => (
-                                                    <div key={item.label} className="flex flex-col">
-                                                        <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">{item.label}</span>
-                                                        <span className="text-sm font-black text-amber-600">{item.value}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </motion.div>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -1269,14 +1584,14 @@ export default function Dashboard() {
                             <div className="grid grid-cols-2 gap-4 lg:min-w-[400px]">
                                 <div className="p-5 rounded-3xl bg-white/40 dark:bg-white/5 border border-white/60 dark:border-white/10 backdrop-blur-md">
                                     <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">Mois en cours</p>
-                                    <p className="text-xl font-black text-emerald-600 tabular-nums">{formatShortDH(salesInsights.caMonthTotal)}</p>
+                                    <p className="text-xl font-black text-emerald-600 tabular-nums">{formatShortDH(salesInsights.caMonthTotal)} DH</p>
                                     <div className="mt-2 h-1 w-full bg-emerald-500/10 rounded-full overflow-hidden">
                                         <div className="h-full bg-emerald-500" style={{ width: `${salesInsights.partFacturesPct}%` }} />
                                     </div>
                                 </div>
                                 <div className="p-5 rounded-3xl bg-white/40 dark:bg-white/5 border border-white/60 dark:border-white/10 backdrop-blur-md">
                                     <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">Panier Moyen</p>
-                                    <p className="text-xl font-black text-indigo-600 tabular-nums">{formatShortDH(salesInsights.avgFactureTtc)}</p>
+                                    <p className="text-xl font-black text-indigo-600 tabular-nums">{formatShortDH(salesInsights.avgFactureTtc)} DH</p>
                                     <p className="text-[10px] font-bold text-muted-foreground mt-2">Basé sur {salesInsights.invoicesThisMonthCount} factures</p>
                                 </div>
                             </div>
@@ -1391,17 +1706,19 @@ export default function Dashboard() {
                                                     Analyse de Performance
                                                 </div>
                                                 <h3 className="text-3xl font-black tracking-tight">Capitaux <span className="text-indigo-500">& Flux</span></h3>
-                                                <p className="text-sm font-medium text-muted-foreground">Comparaison temporelle des revenus encaissés et des investissements (achats).</p>
+                                                <p className="text-sm font-medium text-muted-foreground">
+                                                    Comparaison temporelle du total TTC des commandes réglées (par mois de commande) et des achats.
+                                                </p>
                                             </div>
                                             
                                             <div className="flex items-center gap-6 p-3 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-100 dark:border-white/5">
                                                 <div className="flex items-center gap-2">
                                                     <div className="h-2.5 w-2.5 rounded-full bg-indigo-600 shadow-[0_0_10px_rgba(79,70,229,0.5)]" />
-                                                    <span className="text-[10px] font-black uppercase tracking-widest">Revenus</span>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest">Vente</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <div className="h-2.5 w-2.5 rounded-full bg-amber-500/60" />
-                                                    <span className="text-[10px] font-black uppercase tracking-widest">Dépenses</span>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest">Achat</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -1423,8 +1740,8 @@ export default function Dashboard() {
                                                     <XAxis dataKey="label" tick={{ fontSize: 10, fontWeight: 800 }} axisLine={false} tickLine={false} dy={12} />
                                                     <YAxis tick={{ fontSize: 10, fontWeight: 800 }} axisLine={false} tickLine={false} tickFormatter={(v) => formatShortDH(v)} />
                                                     <Tooltip contentStyle={chartTooltipStyle} />
-                                                    <Area type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={5} fill="url(#mainRevGrad)" animationDuration={1800} />
-                                                    <Area type="monotone" dataKey="achats" stroke="#f59e0b" strokeWidth={3} strokeDasharray="6 4" fill="url(#mainExpGrad)" />
+                                                    <Area type="monotone" dataKey="total" name="Vente" stroke="#6366f1" strokeWidth={5} fill="url(#mainRevGrad)" animationDuration={1800} />
+                                                    <Area type="monotone" dataKey="achats" name="Achat" stroke="#f59e0b" strokeWidth={3} strokeDasharray="6 4" fill="url(#mainExpGrad)" />
                                                 </AreaChart>
                                             </ResponsiveContainer>
                                         </div>
@@ -1451,7 +1768,7 @@ export default function Dashboard() {
                                     <div className="space-y-6">
                                         {/* Simplified Bar Chart or List for Space Optimization */}
                                         <div className="grid grid-cols-1 gap-4">
-                                            {topProducts.slice(0, 3).map((p, i) => (
+                                            {topProducts.slice(0, 7).map((p, i) => (
                                                 <div key={i} className="flex flex-col gap-2">
                                                     <div className="flex justify-between items-end">
                                                         <span className="text-[11px] font-black uppercase truncate max-w-[180px]">{p.name}</span>
@@ -1481,7 +1798,7 @@ export default function Dashboard() {
                                     <div className="flex items-center justify-between">
                                         <div className="space-y-1">
                                             <h4 className="text-lg font-black tracking-tight capitalize">Points de Vente</h4>
-                                            <p className="text-xs font-bold text-muted-foreground">Répartition de la performance globale</p>
+                                           
                                         </div>
                                         <div className="h-10 w-10 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
                                             <Store className="h-5 w-5" />
@@ -1489,23 +1806,40 @@ export default function Dashboard() {
                                     </div>
 
                                     <div className="h-48 relative flex items-center justify-center">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <PieChart>
-                                                <Pie data={pdvSales} innerRadius={60} outerRadius={80} paddingAngle={8} dataKey="value" stroke="none">
-                                                    {pdvSales.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
-                                                </Pie>
-                                                <Tooltip contentStyle={chartTooltipStyle} />
-                                            </PieChart>
-                                        </ResponsiveContainer>
-                                        <div className="absolute flex flex-col items-center pointer-events-none">
-                                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">TOTAL</span>
-                                            <span className="text-lg font-black tabular-nums">{formatShortDH(totalRevenue)}</span>
-                                        </div>
+                                        {pdvSalesAvecCa.length > 0 ? (
+                                            <>
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={pdvSalesAvecCa}
+                                                            innerRadius={60}
+                                                            outerRadius={80}
+                                                            paddingAngle={8}
+                                                            dataKey="value"
+                                                            stroke="none"
+                                                        >
+                                                            {pdvSalesAvecCa.map((_, index) => (
+                                                                <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip contentStyle={chartTooltipStyle} />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                                <div className="absolute flex flex-col items-center pointer-events-none">
+                                                    <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">TOTAL</span>
+                                                    <span className="text-lg font-black tabular-nums">{formatShortDH(totalCaPdv)}</span>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <p className="text-sm font-bold text-muted-foreground text-center px-4">
+                                                Aucun point de vente avec un CA supérieur à 0.
+                                            </p>
+                                        )}
                                     </div>
 
                                     <div className="flex flex-wrap gap-x-4 gap-y-2 pt-4 border-t border-slate-100 dark:border-white/5">
-                                        {pdvSales.map((s, i) => (
-                                            <div key={i} className="flex items-center gap-2">
+                                        {pdvSalesAvecCa.map((s, i) => (
+                                            <div key={s.name} className="flex items-center gap-2">
                                                 <div className="h-2 w-2 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
                                                 <span className="text-[10px] font-bold text-muted-foreground">{s.name}</span>
                                             </div>

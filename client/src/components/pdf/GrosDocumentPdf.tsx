@@ -18,6 +18,8 @@ export interface GrosPdfPayload {
     dateDoc: string;
     dateEcheance?: string | null;
     client_nom?: string;
+    client_ice?: string | null;
+    client_adresse?: string | null;
     statut?: string;
     grammage?: number;
     montant_ht?: number;
@@ -45,32 +47,12 @@ const toLogoUrl = (rawLogo: unknown): string | null => {
 const loadImageAsPngDataUrl = async (url: string): Promise<string | null> => {
     const toDataUrl = async (res: Response): Promise<string | null> => {
         const blob = await res.blob();
-        const objectUrl = URL.createObjectURL(blob);
         return await new Promise<string | null>((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-                try {
-                    const canvas = document.createElement("canvas");
-                    canvas.width = Math.max(1, img.naturalWidth || img.width || 1);
-                    canvas.height = Math.max(1, img.naturalHeight || img.height || 1);
-                    const ctx = canvas.getContext("2d");
-                    if (!ctx) {
-                        resolve(null);
-                        return;
-                    }
-                    ctx.drawImage(img, 0, 0);
-                    resolve(canvas.toDataURL("image/png"));
-                } catch {
-                    resolve(null);
-                } finally {
-                    URL.revokeObjectURL(objectUrl);
-                }
-            };
-            img.onerror = () => {
-                URL.revokeObjectURL(objectUrl);
-                resolve(null);
-            };
-            img.src = objectUrl;
+            // État "original": pas de redimensionnement ni compression du logo.
+            const reader = new FileReader();
+            reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
         });
     };
     const candidates = [url];
@@ -101,6 +83,29 @@ const loadImageAsPngDataUrl = async (url: string): Promise<string | null> => {
 
 const inferImageFormat = (dataUrl: string): "PNG" | "JPEG" => {
     return dataUrl.startsWith("data:image/jpeg") || dataUrl.startsWith("data:image/jpg") ? "JPEG" : "PNG";
+};
+
+const drawImageContain = (
+    doc: jsPDF,
+    dataUrl: string,
+    x: number,
+    y: number,
+    boxW: number,
+    boxH: number
+) => {
+    try {
+        const props = doc.getImageProperties(dataUrl);
+        const iw = Number(props?.width) || boxW;
+        const ih = Number(props?.height) || boxH;
+        const scale = Math.min(boxW / iw, boxH / ih);
+        const w = Math.max(1, iw * scale);
+        const h = Math.max(1, ih * scale);
+        const dx = x + (boxW - w) / 2;
+        const dy = y + (boxH - h) / 2;
+        doc.addImage(dataUrl, inferImageFormat(dataUrl), dx, dy, w, h);
+    } catch {
+        doc.addImage(dataUrl, inferImageFormat(dataUrl), x, y, boxW, boxH);
+    }
 };
 
 const loadPdvInfo = async (
@@ -286,7 +291,8 @@ const amountToWordsFrDh = (amount: number): string => {
 };
 
 export async function generateGrosDocumentPdf(payload: GrosPdfPayload): Promise<void> {
-    const doc = new jsPDF("l", "mm", "a4");
+    // Aligner tous les documents gros sur le format classique (portrait A4).
+    const doc = new jsPDF("p", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     let currentY = 18;
@@ -298,7 +304,13 @@ export async function generateGrosDocumentPdf(payload: GrosPdfPayload): Promise<
     );
     if (pdv?.logoUrl) {
         const logoDataUrl = await loadImageAsPngDataUrl(pdv.logoUrl);
-        if (logoDataUrl) doc.addImage(logoDataUrl, inferImageFormat(logoDataUrl), 15, 10, 26, 26);
+        if (logoDataUrl) {
+            const logoBoxX = 15;
+            const logoBoxY = 8;
+            const logoBoxW = 34;
+            const logoBoxH = 34;
+            drawImageContain(doc, logoDataUrl, logoBoxX, logoBoxY, logoBoxW, logoBoxH);
+        }
     }
 
     const sousSocieteName =
@@ -325,7 +337,7 @@ export async function generateGrosDocumentPdf(payload: GrosPdfPayload): Promise<
         hy += 4;
     }
 
-    currentY = 42;
+    currentY = 52;
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(40, 40, 40);
@@ -368,6 +380,19 @@ export async function generateGrosDocumentPdf(payload: GrosPdfPayload): Promise<
     cy += 5;
     doc.text(payload.client_nom || "—", clientX, cy);
     cy += 5;
+    if (payload.kind === "facture") {
+        const clientIce = String(payload.client_ice || "").trim();
+        const clientAdresse = String(payload.client_adresse || "").trim();
+        if (clientIce) {
+            doc.text(`ICE : ${clientIce}`, clientX, cy);
+            cy += 5;
+        }
+        if (clientAdresse) {
+            const addrLines = doc.splitTextToSize(`Adresse : ${clientAdresse}`, pageWidth / 2 - 20);
+            doc.text(addrLines as string[], clientX, cy);
+            cy += (Array.isArray(addrLines) ? addrLines.length : 1) * 4 + 1;
+        }
+    }
 
     currentY = Math.max(infoY, cy) + 8;
 
@@ -473,6 +498,17 @@ export async function generateGrosDocumentPdf(payload: GrosPdfPayload): Promise<
         doc.setTextColor(70, 70, 70);
         const wordsLines = doc.splitTextToSize(amountWords, pageWidth - 30);
         doc.text(wordsLines as string[], 15, wordsY + 5);
+        const linesCount = Array.isArray(wordsLines) ? wordsLines.length : 1;
+        const modeLabel = String(payload.mode_paiement || "").trim();
+        if (modeLabel) {
+            const modeY = wordsY + 5 + linesCount * 4 + 2;
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(55, 55, 55);
+            doc.text("Mode de paiement :", 15, modeY);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(70, 70, 70);
+            doc.text(modeLabel, 48, modeY);
+        }
     }
 
     const foot = pageHeight - 8;
@@ -543,6 +579,8 @@ function mapApiToPayload(
         dateDoc,
         dateEcheance: kind === "facture" && raw.date_echeance ? String(raw.date_echeance) : null,
         client_nom: raw.client_nom != null ? String(raw.client_nom) : undefined,
+        client_ice: kind === "facture" && raw.client_ice != null ? String(raw.client_ice) : null,
+        client_adresse: kind === "facture" && raw.client_adresse != null ? String(raw.client_adresse) : null,
         statut,
         grammage: raw.grammage != null ? Number(raw.grammage) : undefined,
         montant_ht: raw.montant_ht != null ? Number(raw.montant_ht) : undefined,
@@ -561,6 +599,30 @@ function mapApiToPayload(
     };
 }
 
+async function enrichFactureClientInfo(raw: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const clientId = Number(raw.client_id);
+    if (!Number.isFinite(clientId) || clientId <= 0) return raw;
+    if (raw.client_ice != null || raw.client_adresse != null) return raw;
+    try {
+        const token = localStorage.getItem("token");
+        const res = await fetch("/api/clients", {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return raw;
+        const clients = await res.json();
+        if (!Array.isArray(clients)) return raw;
+        const client = clients.find((c: any) => Number(c?.id) === clientId);
+        if (!client) return raw;
+        return {
+            ...raw,
+            client_ice: client?.ice ?? null,
+            client_adresse: client?.adresse ?? null,
+        };
+    } catch {
+        return raw;
+    }
+}
+
 export async function generateDevisGrosPdfFromApiRow(raw: Record<string, unknown>): Promise<void> {
     await generateGrosDocumentPdf(mapApiToPayload("devis", raw));
 }
@@ -570,7 +632,8 @@ export async function generateCommandeGrosPdfFromApiRow(raw: Record<string, unkn
 }
 
 export async function generateFactureGrosPdfFromApiRow(raw: Record<string, unknown>): Promise<void> {
-    await generateGrosDocumentPdf(mapApiToPayload("facture", raw));
+    const enriched = await enrichFactureClientInfo(raw);
+    await generateGrosDocumentPdf(mapApiToPayload("facture", enriched));
 }
 
 export async function generateAvoirGrosPdfFromApiRow(raw: Record<string, unknown>): Promise<void> {

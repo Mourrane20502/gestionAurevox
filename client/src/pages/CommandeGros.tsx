@@ -176,6 +176,12 @@ function userSelectLabel(u: { id: number; username?: string; nom?: string; preno
     return full || u.username || `Utilisateur #${u.id}`;
 }
 
+function roundTo(value: number, decimals = 2): number {
+    if (!Number.isFinite(value)) return 0;
+    const factor = 10 ** decimals;
+    return Math.round((value + Number.EPSILON) * factor) / factor;
+}
+
 /** Aligne refusée / validée avec les valeurs du filtre */
 function normCommandeGrosStatut(s: string): string {
     const v = String(s || "").toLowerCase();
@@ -190,7 +196,7 @@ function isCommandeGrosReglee(
     factureGrosResteMap: Record<number, number>
 ): boolean {
     const totalRegle = Number((row as any).total_regle) || 0;
-    const mtTtc = Number((row as any).montant_ttc) || 0;
+    const mtTtc = commandeGrosRowMontantTtc(row);
     const linkedFactureId =
         row.linked_facture_gros_id != null
             ? Number(row.linked_facture_gros_id)
@@ -246,6 +252,7 @@ export default function CommandeGros() {
     const [pdfLoadingId, setPdfLoadingId] = useState<number | null>(null);
     const [factureGrosStatusMap, setFactureGrosStatusMap] = useState<Record<number, string>>({});
     const [factureGrosResteMap, setFactureGrosResteMap] = useState<Record<number, number>>({});
+    const [reglementsGros, setReglementsGros] = useState<any[]>([]);
 
     const [dateCommande, setDateCommande] = useState(() => new Date().toISOString().split("T")[0]);
     const [clientId, setClientId] = useState<string>("");
@@ -377,7 +384,7 @@ export default function CommandeGros() {
     const fetchAll = async () => {
         setLoading(true);
         try {
-            const [rCmd, rClients, rPdv, rDevis, rBanq, rProducts, rPm, rUsers, rFacturesGros] = await Promise.all([
+            const [rCmd, rClients, rPdv, rDevis, rBanq, rProducts, rPm, rUsers, rFacturesGros, rReglementsGros] = await Promise.all([
                 fetch("/api/commandes-gros", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/clients", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/pdv", { headers: { Authorization: `Bearer ${token}` } }),
@@ -387,6 +394,7 @@ export default function CommandeGros() {
                 fetch("/api/settings/payment-modes", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/users/all-users", { headers: { Authorization: `Bearer ${token}` } }),
                 fetch("/api/factures-gros", { headers: { Authorization: `Bearer ${token}` } }),
+                fetch("/api/reglements-clients-gros", { headers: { Authorization: `Bearer ${token}` } }),
             ]);
             if (rCmd.ok) setList(await rCmd.json());
             if (rClients.ok) setClients(await rClients.json());
@@ -411,6 +419,12 @@ export default function CommandeGros() {
             if (rUsers.ok) {
                 const data = await rUsers.json();
                 setUsers(Array.isArray(data?.users) ? data.users : []);
+            }
+            if (rReglementsGros.ok) {
+                const data = await rReglementsGros.json();
+                setReglementsGros(Array.isArray(data) ? data : []);
+            } else {
+                setReglementsGros([]);
             }
             if (rFacturesGros.ok) {
                 const data = await rFacturesGros.json();
@@ -501,14 +515,7 @@ export default function CommandeGros() {
                 const raw = Array.isArray(d.items) ? d.items : [];
                 setItems(
                     raw.length
-                        ? raw.map((it: { produit_id?: number; designation?: string; grammage?: number }) => ({
-                              produit_id: it.produit_id,
-                              designation: it.designation || "",
-                              grammage: it.grammage != null ? String(it.grammage) : "",
-                              prix_unitaire: (it as unknown as { prix_unitaire?: number }).prix_unitaire != null ? String((it as unknown as { prix_unitaire?: number }).prix_unitaire) : "",
-                              reduction: (it as unknown as { reduction?: number }).reduction != null ? String((it as unknown as { reduction?: number }).reduction) : "0",
-                              taux_tva: (it as unknown as { taux_tva?: number }).taux_tva != null ? String((it as unknown as { taux_tva?: number }).taux_tva) : "0",
-                          }))
+                        ? raw.map((it: any) => mapImportedGrosLine(it))
                         : [{ designation: "", grammage: "", prix_unitaire: "", reduction: "0", taux_tva: "0" }]
                 );
                 setTab("form");
@@ -557,23 +564,7 @@ export default function CommandeGros() {
                 const raw = Array.isArray(d.items) ? d.items : [];
                 setItems(
                     raw.length
-                        ? raw.map((it: { produit_id?: number; designation?: string; grammage?: number }) => ({
-                              produit_id: it.produit_id,
-                              designation: it.designation || "",
-                              grammage: it.grammage != null ? String(it.grammage) : "",
-                              prix_unitaire:
-                                  (it as unknown as { prix_unitaire?: number }).prix_unitaire != null
-                                      ? String((it as unknown as { prix_unitaire?: number }).prix_unitaire)
-                                      : "",
-                              reduction:
-                                  (it as unknown as { reduction?: number }).reduction != null
-                                      ? String((it as unknown as { reduction?: number }).reduction)
-                                      : "0",
-                              taux_tva:
-                                  (it as unknown as { taux_tva?: number }).taux_tva != null
-                                      ? String((it as unknown as { taux_tva?: number }).taux_tva)
-                                      : "0",
-                          }))
+                        ? raw.map((it: any) => mapImportedGrosLine(it))
                         : [{ designation: "", grammage: "", prix_unitaire: "", reduction: "0", taux_tva: "0" }]
                 );
             } catch {
@@ -597,10 +588,38 @@ export default function CommandeGros() {
         });
     };
 
+    const mapImportedGrosLine = (it: any): CommandeGrosItemForm => {
+        const grammageRaw = it?.grammage != null ? String(it.grammage) : "";
+        const grammageNum = parseFloat(grammageRaw.replace(",", ".")) || 0;
+        const netCandidate =
+            Number(it?.montant_ttc) ||
+            ((Number(it?.montant_ht) || 0) + (Number(it?.montant_tva) || 0)) ||
+            Number(it?.prix_net) ||
+            Number(it?.prix_total) ||
+            0;
+        const prixUnitaireRaw =
+            it?.prix_unitaire != null
+                ? String(it.prix_unitaire)
+                : "";
+        const prixUnitaire =
+            grammageNum > 0 && netCandidate > 0
+                ? String(roundTo(netCandidate / grammageNum, 8))
+                : prixUnitaireRaw;
+
+        return {
+            produit_id: it?.produit_id,
+            designation: it?.designation || "",
+            grammage: grammageRaw,
+            prix_unitaire: prixUnitaire,
+            reduction: it?.reduction != null ? String(it.reduction) : "0",
+            taux_tva: it?.taux_tva != null ? String(it.taux_tva) : "0",
+        };
+    };
+
     const handlePrixNetChange = (index: number, rawValue: string) => {
         const net = parseFloat(String(rawValue).replace(",", ".")) || 0;
         const g = parseFloat(String(items[index]?.grammage || "0").replace(",", ".")) || 0;
-        const prixUnitaire = g > 0 ? net / g : net;
+        const prixUnitaire = g > 0 ? roundTo(net / g, 8) : roundTo(net, 8);
         updateLine(index, "prix_unitaire", String(prixUnitaire));
         updateLine(index, "reduction", "0");
         updateLine(index, "taux_tva", "0");
@@ -641,14 +660,7 @@ export default function CommandeGros() {
             const raw = Array.isArray(d.items) ? d.items : [];
             setItems(
                 raw.length
-                    ? raw.map((it: { produit_id?: number; designation?: string; grammage?: number }) => ({
-                          produit_id: it.produit_id,
-                          designation: it.designation || "",
-                          grammage: it.grammage != null ? String(it.grammage) : "",
-                          prix_unitaire: (it as unknown as { prix_unitaire?: number }).prix_unitaire != null ? String((it as unknown as { prix_unitaire?: number }).prix_unitaire) : "",
-                          reduction: (it as unknown as { reduction?: number }).reduction != null ? String((it as unknown as { reduction?: number }).reduction) : "0",
-                          taux_tva: (it as unknown as { taux_tva?: number }).taux_tva != null ? String((it as unknown as { taux_tva?: number }).taux_tva) : "0",
-                      }))
+                    ? raw.map((it: any) => mapImportedGrosLine(it))
                     : [{ designation: "", grammage: "", prix_unitaire: "", reduction: "0", taux_tva: "0" }]
             );
             setTab("form");
@@ -1126,7 +1138,7 @@ export default function CommandeGros() {
                                                 <TableCell className="px-6 text-center">
                                                     {(() => {
                                                         const totalRegle = Number((row as any).total_regle) || 0;
-                                                        const mtTtc = Number((row as any).montant_ttc) || 0;
+                                                        const mtTtc = commandeGrosRowMontantTtc(row);
                                                         const resteCalc =
                                                             typeof (row as any).reste_a_payer !== "undefined"
                                                                 ? Number((row as any).reste_a_payer)
@@ -1153,43 +1165,39 @@ export default function CommandeGros() {
                                                             : resteCalc;
                                                         const hasLinkedFactureReste = Number.isFinite(linkedFactureReste);
                                                         const isRegleByAmounts = mtTtc > 0 && totalRegle >= mtTtc - 0.01;
+                                                        const latestReglement = reglementsGros
+                                                            .filter((r: any) => {
+                                                                const byCommande = Number(r?.commande_gros_id) === Number(row.id);
+                                                                const byFacture =
+                                                                    row.linked_facture_gros_id != null &&
+                                                                    Number(r?.facture_gros_id) === Number(row.linked_facture_gros_id);
+                                                                return byCommande || byFacture;
+                                                            })
+                                                            .sort((a: any, b: any) => {
+                                                                const da = new Date(a?.date_reglement || 0).getTime();
+                                                                const db = new Date(b?.date_reglement || 0).getTime();
+                                                                if (db !== da) return db - da;
+                                                                return Number(b?.id || 0) - Number(a?.id || 0);
+                                                            })[0];
+                                                        const latestReglementStatut = String(latestReglement?.statut || "").toLowerCase();
                                                         // Statut règlement doit dépendre du règlement/facture, jamais du statut de validation de commande.
                                                         const isRegle = hasLinkedFacture
                                                             ? (factureIsPaid || (hasLinkedFactureReste && Math.max(linkedFactureReste, 0) <= 0.01))
                                                             : isRegleByAmounts;
                                                         const reste = isRegle ? 0 : Math.max(baseReste, 0);
-                                                        const isReglementCommence = !isRegle && totalRegle > 0 && reste > 0;
 
-                                                        return isRegle ? (
+                                                        return latestReglementStatut === "approuve" || isRegle ? (
                                                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                                                                 <CheckCircle2 className="h-3 w-3" /> Réglé
                                                             </span>
-                                                        ) : isReglementCommence ? (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() =>
-                                                                    toast.info(
-                                                                        `Commande gros liée à un règlement : ${Number(totalRegle || 0).toLocaleString("fr-FR", {
-                                                                            minimumFractionDigits: 2,
-                                                                            maximumFractionDigits: 2,
-                                                                        })} DH déjà saisi(s).`
-                                                                    )
-                                                                }
-                                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 hover:bg-amber-200/70 dark:hover:bg-amber-900/40 transition-colors"
-                                                            >
-                                                                <Clock className="h-3 w-3" />
-                                                                Règlement commencé
-                                                            </button>
                                                         ) : (
                                                             <div className="flex flex-col items-center gap-1">
                                                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
                                                                     <DollarSign className="h-3 w-3" /> Non réglé
                                                                 </span>
-                                                                {reste > 0 ? (
-                                                                    <span className="text-[11px] font-semibold text-muted-foreground">
-                                                                        Reste : {Number(reste).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
-                                                                    </span>
-                                                                ) : null}
+                                                                <span className="text-[11px] font-semibold text-muted-foreground">
+                                                                    Reste : {Number(Math.max(reste, 0)).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
+                                                                </span>
                                                             </div>
                                                         );
                                                     })()}
@@ -1213,6 +1221,38 @@ export default function CommandeGros() {
                                                             </Button>
                                                         </DropdownMenuTrigger>
                                                         <DropdownMenuContent align="end">
+                                                            {(() => {
+                                                                const linkedFactureId = Number(row.linked_facture_gros_id);
+                                                                const hasLinkedFacture =
+                                                                    Number.isFinite(linkedFactureId) &&
+                                                                    linkedFactureId > 0;
+
+                                                                if (hasLinkedFacture) {
+                                                                    return (
+                                                                        <DropdownMenuItem
+                                                                            className="cursor-pointer"
+                                                                            onClick={() => navigate(`/dashboard/factures-gros/${linkedFactureId}`)}
+                                                                        >
+                                                                            <ArrowUpRight className="h-4 w-4 mr-2" />
+                                                                            Voir la facture gros
+                                                                        </DropdownMenuItem>
+                                                                    );
+                                                                }
+
+                                                                return (
+                                                                    <DropdownMenuItem
+                                                                        className="cursor-pointer font-bold text-indigo-600"
+                                                                        onClick={() => {
+                                                                            navigate("/dashboard/factures-gros", {
+                                                                                state: { commandeGrosId: row.id },
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        <ArrowUpRight className="h-4 w-4 mr-2" />
+                                                                        Convertir en facture gros
+                                                                    </DropdownMenuItem>
+                                                                );
+                                                            })()}
                                                             <DropdownMenuItem
                                                                 disabled={pdfLoadingId === row.id}
                                                                 onClick={() => handleDownloadPdf(row.id)}
@@ -1480,7 +1520,7 @@ export default function CommandeGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.0001"
+                                                                step="any"
                                                                 min={0}
                                                                 value={line.prix_unitaire}
                                                                 onChange={(e) => updateLine(index, "prix_unitaire", e.target.value)}
@@ -1490,7 +1530,7 @@ export default function CommandeGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.0001"
+                                                                step="any"
                                                                 min={0}
                                                                 value={line.grammage}
                                                                 onChange={(e) => updateLine(index, "grammage", e.target.value)}
@@ -1501,13 +1541,13 @@ export default function CommandeGros() {
                                                         <TableCell className="py-2">
                                                             <Input
                                                                 type="number"
-                                                                step="0.01"
+                                                                step="any"
                                                                 min={0}
                                                                 value={(() => {
                                                                     const g = parseFloat(line.grammage || "0") || 0;
                                                                     const pu = parseFloat(line.prix_unitaire || "0") || 0;
-                                                                    const net = g * pu;
-                                                                    return Number.isFinite(net) ? String(Number(net.toFixed(4))) : "0";
+                                                                    const net = roundTo(g * pu, 2);
+                                                                    return Number.isFinite(net) ? String(net) : "0";
                                                                 })()}
                                                                 onChange={(e) => handlePrixNetChange(index, e.target.value)}
                                                                 className="h-11 border-transparent bg-transparent focus:bg-card focus:border-indigo-400 text-base text-right font-semibold"

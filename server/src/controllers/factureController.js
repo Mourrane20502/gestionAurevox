@@ -5,6 +5,23 @@ const { canApprove } = require("../utils/approvalSettings");
 const { logProductMovement } = require("../utils/productMovementLogger");
 const fs = require("fs");
 const path = require("path");
+const MAX_ESPECE_FACTURE_TTC = 20000;
+const EPSILON = 1e-6;
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const parseDateOnlySafe = (value) => {
+    const raw = String(value || "").trim();
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
+        if (!Number.isNaN(dt.getTime())) return dt;
+    }
+    const fallback = new Date(raw);
+    return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+};
 
 const getUploadedSupplierInvoicePath = (filename) => {
     const safe = String(filename || "").trim();
@@ -66,7 +83,216 @@ async function resolveSousSocieteFromItems(connection, items) {
  * @param {number} commandeId
  * @param {number|null} excludeFactureId — facture en cours d'édition (même liaison autorisée)
  */
-async function assertCommandeEligibleForFactureLink(connection, commandeId, excludeFactureId) {
+function normalizeModePaiement(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "");
+}
+
+function isEspeceMode(value) {
+    const normalized = normalizeModePaiement(value);
+    return normalized === "espece" || normalized === "especes" || normalized === "cash";
+}
+
+function computeItemAmounts(item, qtyOverride = null) {
+    const qty = qtyOverride == null ? Number(item?.quantite) || 0 : Number(qtyOverride) || 0;
+    const pu = Number(item?.prix_unitaire) || 0;
+    const red = (Number(item?.reduction) || 0) / 100;
+    const tva = (Number(item?.tva) || 0) / 100;
+    const ht = qty * pu * (1 - red);
+    const tvaAmount = ht * tva;
+    return { ht, tva: tvaAmount, ttc: ht + tvaAmount };
+}
+
+function splitFactureItemsByCap(items, capTtc) {
+    const cap = Number(capTtc) || 0;
+    if (!Array.isArray(items) || items.length === 0 || cap <= 0) return [];
+
+    const buckets = [{ items: [], ttc: 0 }];
+    const QTY_PRECISION = 8;
+    const MIN_BATCH_TTC = 0.01;
+    const DUST_BATCH_TTC = 0.1;
+
+    for (const sourceItem of items) {
+        let remainingQty = Number(sourceItem?.quantite) || 0;
+        if (remainingQty <= EPSILON) continue;
+
+        const unit = computeItemAmounts(sourceItem, 1);
+        if (unit.ttc <= EPSILON) {
+            const current = buckets[buckets.length - 1];
+            current.items.push({ ...sourceItem, quantite: remainingQty });
+            continue;
+        }
+
+        while (remainingQty > EPSILON) {
+            let current = buckets[buckets.length - 1];
+            let remainingCap = cap - current.ttc;
+
+            if (remainingCap <= EPSILON) {
+                buckets.push({ items: [], ttc: 0 });
+                current = buckets[buckets.length - 1];
+                remainingCap = cap;
+            }
+
+            let qtySlice = Math.min(remainingQty, remainingCap / unit.ttc);
+            qtySlice = Number(qtySlice.toFixed(QTY_PRECISION));
+            if (remainingQty - qtySlice <= Math.pow(10, -QTY_PRECISION)) {
+                // Snap to the exact remainder to avoid creating a tiny trailing slice (e.g. 0.06 DH).
+                qtySlice = Number(remainingQty.toFixed(QTY_PRECISION));
+            }
+
+            if (qtySlice <= EPSILON) {
+                buckets.push({ items: [], ttc: 0 });
+                continue;
+            }
+
+            let sliceAmounts = computeItemAmounts(sourceItem, qtySlice);
+            // Guard against floating-point overshoot (e.g. 20000.01 after split/rounding)
+            while (sliceAmounts.ttc - remainingCap > EPSILON && qtySlice > EPSILON) {
+                qtySlice = Number((qtySlice - 0.000001).toFixed(6));
+                if (qtySlice <= EPSILON) break;
+                sliceAmounts = computeItemAmounts(sourceItem, qtySlice);
+            }
+            if (qtySlice <= EPSILON) {
+                buckets.push({ items: [], ttc: 0 });
+                continue;
+            }
+
+            current.items.push({ ...sourceItem, quantite: qtySlice });
+            current.ttc += sliceAmounts.ttc;
+            remainingQty = Number((remainingQty - qtySlice).toFixed(QTY_PRECISION));
+        }
+    }
+
+    const normalizedBuckets = buckets
+        .map((b) => ({ items: Array.isArray(b.items) ? [...b.items] : [] }))
+        .filter((b) => b.items.length > 0);
+
+    // Merge tiny trailing buckets (floating split dust) into previous bucket.
+    for (let i = normalizedBuckets.length - 1; i > 0; i--) {
+        const batchTtc = round2(
+            normalizedBuckets[i].items.reduce(
+                (sum, it) => sum + (computeItemAmounts(it, Number(it?.quantite) || 0).ttc || 0),
+                0
+            )
+        );
+        if (batchTtc > 0 && batchTtc <= DUST_BATCH_TTC) {
+            normalizedBuckets[i - 1].items.push(...normalizedBuckets[i].items);
+            normalizedBuckets[i].items = [];
+        }
+    }
+
+    const filtered = normalizedBuckets
+        .filter((b) => {
+            if (!Array.isArray(b.items) || b.items.length === 0) return false;
+            const batchTtc = b.items.reduce(
+                (sum, it) => sum + (computeItemAmounts(it, Number(it?.quantite) || 0).ttc || 0),
+                0
+            );
+            // Ignore dust batches caused by floating residuals after quantity slicing.
+            return round2(batchTtc) >= MIN_BATCH_TTC;
+        })
+        .map((b) => b.items);
+
+    try {
+        const batchTtcs = filtered.map((batch, idx) => ({
+            index: idx,
+            ttc: round2(
+                batch.reduce(
+                    (sum, it) => sum + (computeItemAmounts(it, Number(it?.quantite) || 0).ttc || 0),
+                    0
+                )
+            ),
+            lines: batch.length,
+        }));
+        console.log("[SPLIT_DEBUG] splitFactureItemsByCap", {
+            cap,
+            sourceLines: Array.isArray(items) ? items.length : 0,
+            sourceTotalTtc: round2(
+                (Array.isArray(items) ? items : []).reduce(
+                    (sum, it) => sum + (computeItemAmounts(it, Number(it?.quantite) || 0).ttc || 0),
+                    0
+                )
+            ),
+            bucketCount: filtered.length,
+            batchTtcs,
+        });
+    } catch (e) {
+        console.log("[SPLIT_DEBUG] failed to print split summary", e?.message || e);
+    }
+
+    return filtered;
+}
+
+function splitFactureItemsByTargets(items, targetTotals) {
+    const targets = (Array.isArray(targetTotals) ? targetTotals : [])
+        .map((v) => round2(Number(v) || 0))
+        .filter((v) => v > 0.009);
+    if (!Array.isArray(items) || items.length === 0 || targets.length === 0) return [];
+
+    const buckets = targets.map((target) => ({ target, ttc: 0, items: [] }));
+    const QTY_PRECISION = 8;
+    let bucketIndex = 0;
+
+    for (const sourceItem of items) {
+        let remainingQty = Number(sourceItem?.quantite) || 0;
+        if (remainingQty <= EPSILON) continue;
+
+        const unit = computeItemAmounts(sourceItem, 1);
+        if (unit.ttc <= EPSILON) {
+            if (bucketIndex >= buckets.length) return [];
+            buckets[bucketIndex].items.push({ ...sourceItem, quantite: remainingQty });
+            continue;
+        }
+
+        while (remainingQty > EPSILON) {
+            if (bucketIndex >= buckets.length) return [];
+            let current = buckets[bucketIndex];
+            let remainingCap = current.target - current.ttc;
+
+            if (remainingCap <= EPSILON) {
+                bucketIndex += 1;
+                continue;
+            }
+
+            let qtySlice = Math.min(remainingQty, remainingCap / unit.ttc);
+            qtySlice = Number(qtySlice.toFixed(QTY_PRECISION));
+            if (remainingQty - qtySlice <= Math.pow(10, -QTY_PRECISION)) {
+                qtySlice = Number(remainingQty.toFixed(QTY_PRECISION));
+            }
+            if (qtySlice <= EPSILON) {
+                bucketIndex += 1;
+                continue;
+            }
+
+            let sliceAmounts = computeItemAmounts(sourceItem, qtySlice);
+            while (sliceAmounts.ttc - remainingCap > EPSILON && qtySlice > EPSILON) {
+                qtySlice = Number((qtySlice - 0.00000001).toFixed(QTY_PRECISION));
+                if (qtySlice <= EPSILON) break;
+                sliceAmounts = computeItemAmounts(sourceItem, qtySlice);
+            }
+            if (qtySlice <= EPSILON) {
+                bucketIndex += 1;
+                continue;
+            }
+
+            current.items.push({ ...sourceItem, quantite: qtySlice });
+            current.ttc += sliceAmounts.ttc;
+            remainingQty = Number((remainingQty - qtySlice).toFixed(QTY_PRECISION));
+        }
+    }
+
+    const result = buckets
+        .filter((b) => Array.isArray(b.items) && b.items.length > 0)
+        .map((b) => b.items);
+
+    return result;
+}
+
+async function assertCommandeEligibleForFactureLink(connection, commandeId, excludeFactureId, options = {}) {
+    const allowExistingFactures = options?.allowExistingFactures === true;
     const cid = Number(commandeId);
     if (!Number.isFinite(cid)) {
         const err = new Error("Identifiant de commande invalide.");
@@ -74,16 +300,18 @@ async function assertCommandeEligibleForFactureLink(connection, commandeId, excl
         throw err;
     }
 
-    const [dupFac] = await connection.execute(
-        excludeFactureId != null
-            ? "SELECT id FROM factures WHERE commande_id = ? AND id <> ? LIMIT 1"
-            : "SELECT id FROM factures WHERE commande_id = ? LIMIT 1",
-        excludeFactureId != null ? [cid, excludeFactureId] : [cid]
-    );
-    if (dupFac.length > 0) {
-        const err = new Error("Cette commande est déjà liée à une facture.");
-        err.statusCode = 400;
-        throw err;
+    if (!allowExistingFactures) {
+        const [dupFac] = await connection.execute(
+            excludeFactureId != null
+                ? "SELECT id FROM factures WHERE commande_id = ? AND id <> ? LIMIT 1"
+                : "SELECT id FROM factures WHERE commande_id = ? LIMIT 1",
+            excludeFactureId != null ? [cid, excludeFactureId] : [cid]
+        );
+        if (dupFac.length > 0) {
+            const err = new Error("Cette commande est déjà liée à une facture.");
+            err.statusCode = 400;
+            throw err;
+        }
     }
 
     const [rem] = await connection.execute(
@@ -155,7 +383,6 @@ exports.createFacture = async (req, res) => {
         devis_id,
         items,
         mode_paiement,
-        banque_id,
         status,
         statut,
         reduction,
@@ -213,22 +440,364 @@ exports.createFacture = async (req, res) => {
         // Clean other nullable fields
         let final_commande_id = (commande_id === "" || commande_id === "none" || !commande_id) ? null : commande_id;
         let final_devis_id = (devis_id === "" || devis_id === "none" || !devis_id) ? null : devis_id;
-        let final_banque_id = (banque_id === "" || banque_id === "none" || !banque_id) ? null : banque_id;
+        const numeroDate = parseDateOnlySafe(date_facture || new Date().toISOString().split("T")[0]);
 
         // If commande is provided but devis is not, try to find the devis associated with that commande
+        let commandeMontantTtc = 0;
         if (final_commande_id && !final_devis_id) {
-            const [cmdRows] = await connection.execute("SELECT devis_id FROM commandes WHERE id = ?", [final_commande_id]);
+            const [cmdRows] = await connection.execute("SELECT devis_id, montant_ttc FROM commandes WHERE id = ?", [final_commande_id]);
             if (cmdRows.length > 0 && cmdRows[0].devis_id) {
                 final_devis_id = cmdRows[0].devis_id;
             }
+            if (cmdRows.length > 0) {
+                commandeMontantTtc = Number(cmdRows[0].montant_ttc) || 0;
+            }
+        } else if (final_commande_id) {
+            const [cmdRows] = await connection.execute("SELECT montant_ttc FROM commandes WHERE id = ?", [final_commande_id]);
+            if (cmdRows.length > 0) {
+                commandeMontantTtc = Number(cmdRows[0].montant_ttc) || 0;
+            }
+        }
+
+        const requestedMode = normalizeModePaiement(mode_paiement);
+        const isEspeceRequested = isEspeceMode(requestedMode);
+        let hasEspeceReglementOnCommande = false;
+        let hasAnyReglementOnCommande = false;
+        let reglementRowsForCommande = [];
+        if (final_commande_id) {
+            const [reglementRows] = await connection.execute(
+                `SELECT mode_paiement, montant
+                 FROM reglements_clients
+                 WHERE commande_id = ?`,
+                [final_commande_id]
+            );
+            reglementRowsForCommande = Array.isArray(reglementRows) ? reglementRows : [];
+            console.log("[SPLIT_DEBUG] reglements for commande", {
+                commandeId: Number(final_commande_id),
+                count: reglementRowsForCommande.length,
+                rows: reglementRowsForCommande.map((r) => ({
+                    mode: String(r?.mode_paiement || ""),
+                    montant: round2(Number(r?.montant) || 0),
+                })),
+            });
+            hasAnyReglementOnCommande = Array.isArray(reglementRows)
+                ? reglementRows.some((r) => (Number(r?.montant) || 0) > 0)
+                : false;
+            hasEspeceReglementOnCommande = Array.isArray(reglementRows)
+                ? reglementRows.some((r) => {
+                      const mode = normalizeModePaiement(r?.mode_paiement);
+                      const montant = Number(r?.montant) || 0;
+                      return isEspeceMode(mode) && montant > 0;
+                  })
+                : false;
+        }
+        // Règle métier:
+        // - S'il existe déjà des règlements saisis pour la commande, on se base UNIQUEMENT
+        //   sur ces règlements pour décider le split espèces.
+        // - Sinon, fallback sur le mode demandé côté facture.
+        const shouldSplitForEspece = hasAnyReglementOnCommande
+            ? hasEspeceReglementOnCommande
+            : isEspeceRequested;
+        const totalFromItems = Array.isArray(items)
+            ? items.reduce((sum, it) => sum + computeItemAmounts(it).ttc, 0)
+            : 0;
+        const totalReference = Math.max(totalFromItems, commandeMontantTtc, Number(prop_montant_ttc) || 0);
+
+        if (
+            !final_commande_id &&
+            totalReference > MAX_ESPECE_FACTURE_TTC + 0.01
+        ) {
+            const err = new Error(
+                "Facture > 20000 DH sans commande liée: liez d'abord une commande puis saisissez le règlement (modes/montants)."
+            );
+            err.statusCode = 400;
+            throw err;
+        }
+
+        if (
+            final_commande_id &&
+            totalReference > MAX_ESPECE_FACTURE_TTC + 0.01 &&
+            !isEspeceRequested &&
+            !hasAnyReglementOnCommande
+        ) {
+            const err = new Error(
+                "Commande > 20000 DH: saisissez d'abord le règlement (modes/montants), puis créez la facture."
+            );
+            err.statusCode = 400;
+            throw err;
+        }
+
+        if (
+            final_commande_id &&
+            shouldSplitForEspece &&
+            totalReference > MAX_ESPECE_FACTURE_TTC + 0.01 &&
+            Array.isArray(items) &&
+            items.length > 0
+        ) {
+            await assertCommandeEligibleForFactureLink(
+                connection,
+                Number(final_commande_id),
+                null,
+                { allowExistingFactures: true }
+            );
+
+            const reglementTargetEntries = reglementRowsForCommande
+                .map((r) => ({
+                    montant: round2(Number(r?.montant) || 0),
+                    mode: normalizeModePaiement(r?.mode_paiement),
+                }))
+                .filter((x) => x.montant > 0.009);
+            const reglementTargets = reglementTargetEntries.map((x) => x.montant);
+            const reglementTargetsTotal = round2(
+                reglementTargets.reduce((sum, m) => sum + m, 0)
+            );
+            const canSplitByReglements =
+                reglementTargets.length >= 2 &&
+                Math.abs(reglementTargetsTotal - round2(totalReference)) <= 0.05;
+
+            const splitBatches = canSplitByReglements
+                ? splitFactureItemsByTargets(items, reglementTargets)
+                : splitFactureItemsByCap(items, MAX_ESPECE_FACTURE_TTC);
+            if (!splitBatches.length) {
+                const err = new Error("Impossible de répartir les lignes de la commande en factures.");
+                err.statusCode = 400;
+                throw err;
+            }
+            console.log("[SPLIT_DEBUG] createFacture split trigger", {
+                commandeId: Number(final_commande_id),
+                totalFromItems: round2(totalFromItems),
+                commandeMontantTtc: round2(commandeMontantTtc),
+                propMontantTtc: round2(Number(prop_montant_ttc) || 0),
+                totalReference: round2(totalReference),
+                shouldSplitForEspece,
+                hasAnyReglementOnCommande,
+                hasEspeceReglementOnCommande,
+                splitBatchesCount: splitBatches.length,
+                canSplitByReglements,
+                reglementTargets,
+                reglementTargetModes: reglementTargetEntries.map((x) => x.mode),
+            });
+            const expectedBatchTotals = canSplitByReglements
+                ? reglementTargets
+                : (() => {
+                      const totals = [];
+                      let remainingTtc = round2(totalReference);
+                      while (remainingTtc > 0.009) {
+                          const chunk = Math.min(MAX_ESPECE_FACTURE_TTC, remainingTtc);
+                          totals.push(round2(chunk));
+                          remainingTtc = round2(remainingTtc - chunk);
+                      }
+                      return totals;
+                  })();
+            console.log("[SPLIT_DEBUG] batch alignment", {
+                splitBatchesCount: splitBatches.length,
+                expectedBatchTotals,
+                expectedCount: expectedBatchTotals.length,
+                computedBatchTotals: splitBatches.map((batch) =>
+                    round2(
+                        batch.reduce(
+                            (sum, it) => sum + (computeItemAmounts(it, Number(it?.quantite) || 0).ttc || 0),
+                            0
+                        )
+                    )
+                ),
+            });
+            console.log("[SPLIT_DEBUG] expectedBatchTotals", {
+                expectedBatchTotals,
+                expectedCount: expectedBatchTotals.length,
+            });
+
+            const createdFactureIds = [];
+            for (let batchIndex = 0; batchIndex < splitBatches.length; batchIndex++) {
+                const batchItems = splitBatches[batchIndex];
+                const batchComputedTtc = round2(
+                    batchItems.reduce(
+                        (sum, it) => sum + (computeItemAmounts(it, Number(it?.quantite) || 0).ttc || 0),
+                        0
+                    )
+                );
+                console.log("[SPLIT_DEBUG] creating split facture", {
+                    batchIndex,
+                    batchLines: batchItems.length,
+                    batchComputedTtc,
+                    expectedTtc: round2(Number(expectedBatchTotals[batchIndex]) || 0),
+                });
+                const insertFactureQuery = `
+                    INSERT INTO factures
+                    (numero_facture, date_facture, date_echeance,
+                    client_id, user_id, point_de_vente_id,
+                    commande_id, devis_id, statut, reduction, montant_ttc)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `;
+
+                const [factureRes] = await connection.execute(insertFactureQuery, [
+                    `TEMP-${Date.now()}`,
+                    date_facture,
+                    date_echeance,
+                    effectiveClientId,
+                    user_id,
+                    pdv_id,
+                    null,
+                    null,
+                    final_statut,
+                    0,
+                    0,
+                ]);
+
+                const factureId = factureRes.insertId;
+                const fromItems = await resolveSousSocieteFromItems(connection, batchItems);
+                const fromPdv = await resolveSousSocieteFromPdv(connection, pdv_id);
+                const sousSociete = fromItems.id ? fromItems : fromPdv;
+                const faNumber = await getNextNumber("FA", factureId, connection, { sousSocieteId: sousSociete.id });
+                const finalFactureNumero = formatDocumentNumber("FA", faNumber, numeroDate, { sousSocieteNom: sousSociete.nom });
+
+                await connection.execute(
+                    `UPDATE factures SET numero_facture = ?, commande_id = ?, devis_id = ? WHERE id = ?`,
+                    [finalFactureNumero, final_commande_id, final_devis_id, factureId]
+                );
+
+                let montantHtTotal = 0;
+                let montantTvaTotal = 0;
+                let totalItemsReduction = 0;
+                let sumRedPct = 0;
+
+                for (const item of batchItems) {
+                    const brutHT = Number(item.quantite) * Number(item.prix_unitaire);
+                    const redItem = Number(item.reduction) || 0;
+                    const itemReductionAmount = brutHT * (redItem / 100);
+                    const montant_ht = brutHT - itemReductionAmount;
+                    const montant_tva = montant_ht * (Number(item.tva) / 100);
+
+                    montantHtTotal += montant_ht;
+                    montantTvaTotal += montant_tva;
+                    totalItemsReduction += itemReductionAmount;
+                    sumRedPct += redItem;
+
+                    if (!item.produit_id && !item.designation) {
+                        throw new Error("Désignation ou produit manquant");
+                    }
+
+                    await connection.execute(
+                        `INSERT INTO facture_items
+                         (facture_id, produit_id, designation, quantite, prix_unitaire, tva, reduction, montant_ht)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            factureId,
+                            item.produit_id || null,
+                            item.designation,
+                            item.quantite,
+                            item.prix_unitaire,
+                            item.tva,
+                            item.reduction || 0,
+                            montant_ht,
+                        ]
+                    );
+                }
+
+                const finalMontantTtcRaw = montantHtTotal + montantTvaTotal;
+                const expectedTtc = expectedBatchTotals[batchIndex];
+                const finalMontantTtc =
+                    typeof expectedTtc === "number" ? round2(expectedTtc) : round2(finalMontantTtcRaw);
+                const deltaTtc = round2(finalMontantTtc - round2(finalMontantTtcRaw));
+                console.log("[SPLIT_DEBUG] montant final batch", {
+                    batchIndex,
+                    finalMontantTtcRaw: round2(finalMontantTtcRaw),
+                    expectedTtc:
+                        typeof expectedTtc === "number" ? round2(expectedTtc) : null,
+                    finalMontantTtc,
+                    deltaTtc,
+                });
+                if (Math.abs(deltaTtc) > 0.0001) {
+                    // Keep HT untouched, adjust TVA by the rounding delta so HT+TVA stays exact TTC.
+                    montantTvaTotal = round2(montantTvaTotal + deltaTtc);
+                }
+                const currentBatchMode = canSplitByReglements
+                    ? String(reglementTargetEntries[batchIndex]?.mode || "")
+                    : requestedMode;
+                const shouldEnforceEspeceCap = isEspeceMode(currentBatchMode);
+                if (shouldEnforceEspeceCap && finalMontantTtc > MAX_ESPECE_FACTURE_TTC + 0.05) {
+                    const err = new Error(`Une facture dépasse la limite espèces (${MAX_ESPECE_FACTURE_TTC} DH).`);
+                    err.statusCode = 400;
+                    throw err;
+                }
+
+                await connection.execute(
+                    `UPDATE factures
+                     SET montant_ht = ?, montant_tva = ?, montant_ttc = ?, reduction = ?, total_reduction = ?
+                     WHERE id = ?`,
+                    [
+                        round2(montantHtTotal),
+                        montantTvaTotal,
+                        finalMontantTtc,
+                        parseFloat(sumRedPct.toFixed(4)),
+                        totalItemsReduction,
+                        factureId,
+                    ]
+                );
+
+                createdFactureIds.push(factureId);
+            }
+
+            // Si des règlements existent déjà sur la commande (avant split),
+            // répartir les lignes non liées (facture_id NULL) sur les factures créées.
+            if (final_commande_id && createdFactureIds.length > 0) {
+                const [unlinkedReglements] = await connection.execute(
+                    `SELECT id, montant
+                     FROM reglements_clients
+                     WHERE commande_id = ?
+                       AND (facture_id IS NULL OR facture_id = 0)
+                     ORDER BY date_reglement ASC, id ASC
+                     FOR UPDATE`,
+                    [final_commande_id]
+                );
+
+                if (Array.isArray(unlinkedReglements) && unlinkedReglements.length > 0) {
+                    const remainingByFacture = createdFactureIds.map((factureId, idx) => ({
+                        factureId,
+                        remaining: round2(expectedBatchTotals[idx] || 0),
+                    }));
+
+                    for (const reg of unlinkedReglements) {
+                        const regAmount = round2(Number(reg.montant) || 0);
+                        if (regAmount <= 0) continue;
+
+                        // Priorité à la première facture ayant un reste suffisant.
+                        let target = remainingByFacture.find((f) => f.remaining + 0.01 >= regAmount);
+
+                        // Fallback: s'il n'y en a pas, prendre celle avec le plus grand reste.
+                        if (!target) {
+                            target = remainingByFacture.reduce((best, current) =>
+                                current.remaining > best.remaining ? current : best
+                            );
+                        }
+
+                        if (!target) continue;
+
+                        await connection.execute(
+                            "UPDATE reglements_clients SET facture_id = ? WHERE id = ?",
+                            [target.factureId, reg.id]
+                        );
+
+                        target.remaining = round2(target.remaining - regAmount);
+                    }
+                }
+            }
+
+            await connection.commit();
+            return res.status(201).json({
+                message: `Factures créées (${createdFactureIds.length})`,
+                ids: createdFactureIds,
+                split: true,
+                maxPerFacture: MAX_ESPECE_FACTURE_TTC,
+            });
         }
 
         const insertFactureQuery = `
             INSERT INTO factures
             (numero_facture, date_facture, date_echeance,
             client_id, user_id, point_de_vente_id,
-            commande_id, devis_id, mode_paiement, banque_id, statut, reduction, montant_ttc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            commande_id, devis_id, statut, reduction, montant_ttc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const [result] = await connection.execute(insertFactureQuery, [
@@ -240,8 +809,6 @@ exports.createFacture = async (req, res) => {
             pdv_id,
             null,
             null,
-            mode_paiement,
-            final_banque_id,
             final_statut,
             reduction || 0,
             prop_montant_ttc || 0
@@ -253,7 +820,7 @@ exports.createFacture = async (req, res) => {
         const fromPdv = await resolveSousSocieteFromPdv(connection, pdv_id);
         const sousSociete = fromItems.id ? fromItems : fromPdv;
         const faNumber = await getNextNumber("FA", factureId, connection, { sousSocieteId: sousSociete.id });
-        const final_facture_numero = formatDocumentNumber('FA', faNumber, new Date(), { sousSocieteNom: sousSociete.nom });
+        const final_facture_numero = formatDocumentNumber('FA', faNumber, numeroDate, { sousSocieteNom: sousSociete.nom });
 
         // Traceability: Create Devis and Commande if not provided
         if (!final_devis_id || !final_commande_id) {
@@ -298,7 +865,7 @@ exports.createFacture = async (req, res) => {
                     current_devis_id = devisResult.insertId;
 
                     const devisItemsData = items.map(it => [
-                        current_devis_id, it.produit_id || null, it.designation, it.quantite || 1, it.prix_unitaire || 0, it.tva ?? 20, it.reduction || 0, (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0) * (1 - (Number(it.reduction) || 0) / 100)
+                        current_devis_id, it.produit_id || null, it.designation, it.quantite || 1, it.prix_unitaire || 0, it.tva || 0, it.reduction || 0, (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0) * (1 - (Number(it.reduction) || 0) / 100)
                     ]);
                     await connection.query(`INSERT INTO devis_items (devis_id, produit_id, designation, quantite, prix_unitaire, tva, reduction, montant_ht) VALUES ?`, [devisItemsData]);
 
@@ -306,7 +873,7 @@ exports.createFacture = async (req, res) => {
                     const deNumber = await getNextNumber("DE", current_devis_id, connection, {
                         sousSocieteId: sousSociete.id,
                     });
-                    const final_devis_numero = formatDocumentNumber('DE', deNumber, new Date(), {
+                    const final_devis_numero = formatDocumentNumber('DE', deNumber, numeroDate, {
                         sousSocieteNom: sousSociete.nom,
                     });
                     await connection.execute(
@@ -334,8 +901,8 @@ exports.createFacture = async (req, res) => {
                     });
 
                     const [cmdResult] = await connection.execute(`
-                        INSERT INTO commandes (numero_commande, date_commande, client_id, user_id, point_de_vente_id, devis_id, banque_id, statut, montant_ht, montant_tva, montant_ttc, reduction, total_reduction)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO commandes (numero_commande, date_commande, client_id, user_id, point_de_vente_id, devis_id, statut, montant_ht, montant_tva, montant_ttc, reduction, total_reduction)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     `, [
                         `TEMP-${Date.now()}`,
                         date_facture,
@@ -343,7 +910,6 @@ exports.createFacture = async (req, res) => {
                         user_id,
                         pdv_id,
                         current_devis_id,
-                        final_banque_id,
                         'en_attente',
                         cmd_ht,
                         cmd_tva,
@@ -367,7 +933,7 @@ exports.createFacture = async (req, res) => {
                     const coNumber = await getNextNumber("CO", current_commande_id, connection, {
                         sousSocieteId: sousSociete.id,
                     });
-                    const final_cmd_numero = formatDocumentNumber('CO', coNumber, new Date(), {
+                    const final_cmd_numero = formatDocumentNumber('CO', coNumber, numeroDate, {
                         sousSocieteNom: sousSociete.nom,
                     });
                     await connection.execute("UPDATE commandes SET numero_commande = ? WHERE id = ?", [final_cmd_numero, current_commande_id]);
@@ -395,7 +961,7 @@ exports.createFacture = async (req, res) => {
             const redItem = Number(item.reduction) || 0;
             const itemReductionAmount = brutHT * (redItem / 100);
             const montant_ht = brutHT - itemReductionAmount;
-            const montant_tva = montant_ht * (Number(item.tva ?? 20) / 100);
+            const montant_tva = montant_ht * (Number(item.tva) / 100);
 
             montant_ht_total += montant_ht;
             montant_tva_total += montant_tva;
@@ -441,6 +1007,18 @@ exports.createFacture = async (req, res) => {
             total_items_reduction,
             factureId
         ]);
+
+        // Si des règlements ont été saisis sur la commande avant création de facture,
+        // rattacher automatiquement les lignes encore non liées à cette nouvelle facture.
+        if (final_commande_id) {
+            await connection.execute(
+                `UPDATE reglements_clients
+                 SET facture_id = ?
+                 WHERE commande_id = ?
+                   AND (facture_id IS NULL OR facture_id = 0)`,
+                [factureId, final_commande_id]
+            );
+        }
 
         // La facture reste en_attente jusqu'à validation explicite dans Approvals.
 
@@ -541,6 +1119,7 @@ exports.getAllFactures = async (req, res) => {
                         SELECT SUM(rc2.montant)
                         FROM reglements_clients rc2
                         WHERE rc2.commande_id = f.commande_id AND rc2.statut = 'approuve'
+                          AND (rc2.facture_id IS NULL OR rc2.facture_id = 0)
                     ), 0)
                 ) AS total_regle,
                 GREATEST(
@@ -555,10 +1134,12 @@ exports.getAllFactures = async (req, res) => {
                             SELECT SUM(rc2.montant)
                             FROM reglements_clients rc2
                             WHERE rc2.commande_id = f.commande_id AND rc2.statut = 'approuve'
+                              AND (rc2.facture_id IS NULL OR rc2.facture_id = 0)
                         ), 0)
                     ),
                     0
-                ) AS reste_a_payer
+                ) AS reste_a_payer,
+                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = f.commande_id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id
             FROM factures f
             LEFT JOIN clients cl ON f.client_id = cl.id
             LEFT JOIN users u ON f.user_id = u.id
@@ -672,6 +1253,7 @@ exports.getFactureById = async (req, res) => {
                         SELECT SUM(rc2.montant)
                         FROM reglements_clients rc2
                         WHERE rc2.commande_id = f.commande_id AND rc2.statut = 'approuve'
+                          AND (rc2.facture_id IS NULL OR rc2.facture_id = 0)
                     ), 0)
                 ) AS total_regle,
                 GREATEST(
@@ -686,12 +1268,16 @@ exports.getFactureById = async (req, res) => {
                             SELECT SUM(rc2.montant)
                             FROM reglements_clients rc2
                             WHERE rc2.commande_id = f.commande_id AND rc2.statut = 'approuve'
+                              AND (rc2.facture_id IS NULL OR rc2.facture_id = 0)
                         ), 0)
                     ),
                     0
-                ) AS reste_a_payer
+                ) AS reste_a_payer,
+                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = f.commande_id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
+                (SELECT bl.numero_bon_livraison FROM bon_de_livraison bl WHERE bl.commande_id = f.commande_id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS numero_bon_livraison_linked
             FROM factures f
             LEFT JOIN clients cl ON f.client_id = cl.id
+            LEFT JOIN users u ON f.user_id = u.id
             LEFT JOIN point_de_vente pvf ON pvf.id = f.point_de_vente_id
             LEFT JOIN commandes c ON c.id = f.commande_id
             LEFT JOIN point_de_vente pvc ON pvc.id = c.point_de_vente_id
@@ -701,8 +1287,8 @@ exports.getFactureById = async (req, res) => {
         `;
         const params = [id];
 
-        // Admin et Directeur peuvent consulter toutes les factures, les autres seulement les leurs
-        if (req.user.role !== 'admin' && req.user.role !== 'directeur') {
+        // Admin, Directeur et Responsable peuvent consulter toutes les factures, les autres seulement les leurs
+        if (req.user.role !== 'admin' && req.user.role !== 'directeur' && req.user.role !== 'responsable') {
             sql += " AND f.user_id = ?";
             params.push(req.user.id);
         }
@@ -713,7 +1299,7 @@ exports.getFactureById = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.poids AS grammage, p.code_barre, p.reference, COALESCE(p.nom, fi.designation) as designation,
+            SELECT fi.*, p.photo, p.grammage, p.code_barre, p.reference, COALESCE(p.nom, fi.designation) as designation,
                    pt.name AS product_type_name
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id
@@ -813,7 +1399,6 @@ exports.updateFacture = async (req, res) => {
         devis_id,
         items,
         mode_paiement,
-        banque_id,
         statut,
         status,
         reduction,
@@ -831,14 +1416,18 @@ exports.updateFacture = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ message: "Facture not found" });
         }
-        if (req.user.role !== 'admin' && rows[0].user_id !== req.user.id) {
+        if (
+            req.user.role !== 'admin' &&
+            req.user.role !== 'directeur' &&
+            req.user.role !== 'responsable' &&
+            rows[0].user_id !== req.user.id
+        ) {
             await connection.rollback();
             return res.status(403).json({ message: "Unauthorized" });
         }
 
         const final_statut = "en_attente";
         const clean_commande_id = (commande_id === "" || commande_id === "none" || !commande_id) ? null : commande_id;
-        const clean_banque_id = (banque_id === "" || banque_id === "none" || !banque_id) ? null : banque_id;
 
         // Resolve point_de_vente_id (same logic as createFacture)
         let pdv_id = point_de_vente_id;
@@ -859,7 +1448,7 @@ exports.updateFacture = async (req, res) => {
                 const itemRedRate = Number(item.reduction) || 0;
                 const itemRedAmount = bruteHT * (itemRedRate / 100);
                 const ht = bruteHT - itemRedAmount;
-                const tva = ht * (Number(item.tva ?? 20) / 100);
+                const tva = ht * (Number(item.tva) / 100);
                 totalHT += ht;
                 totalTVA += tva;
                 totalItemsRed += itemRedAmount;
@@ -880,7 +1469,7 @@ exports.updateFacture = async (req, res) => {
             UPDATE factures
             SET numero_facture = ?, date_facture = ?, date_echeance = ?, 
                 client_id = ?, point_de_vente_id = ?, commande_id = ?, devis_id = ?, 
-                mode_paiement = ?, banque_id = ?, statut = ?,
+                statut = ?,
                 montant_ht = ?, montant_tva = ?, montant_ttc = ?,
                 reduction = ?, total_reduction = ?
             WHERE id = ?
@@ -892,8 +1481,6 @@ exports.updateFacture = async (req, res) => {
             pdv_id,
             clean_commande_id,
             (devis_id === "" || devis_id === "none" || !devis_id) ? null : devis_id,
-            mode_paiement,
-            clean_banque_id,
             final_statut,
             totalHT_after_red,
             totalTVA_after_red,
@@ -1008,6 +1595,7 @@ exports.approveFacture = async (req, res) => {
                         WHERE f.commande_id IS NOT NULL
                           AND rc2.commande_id = f.commande_id
                           AND rc2.statut = 'approuve'
+                          AND (rc2.facture_id IS NULL OR rc2.facture_id = 0)
                     ), 0)
                 ) AS total_regle
              FROM factures f
@@ -1237,7 +1825,7 @@ exports.sendFactureEmail = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.poids AS grammage, COALESCE(p.nom, fi.designation) as designation
+            SELECT fi.*, p.photo, p.grammage, COALESCE(p.nom, fi.designation) as designation 
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id
             WHERE fi.facture_id = ?
@@ -1359,7 +1947,7 @@ exports.sendFacturesBulkEmail = async (req, res) => {
 
             const [items] = await db.execute(
                 `
-                SELECT fi.*, p.photo, p.poids AS grammage, COALESCE(p.nom, fi.designation) as designation
+                SELECT fi.*, p.photo, p.grammage, COALESCE(p.nom, fi.designation) as designation
                 FROM facture_items fi
                 LEFT JOIN products p ON fi.produit_id = p.id
                 WHERE fi.facture_id = ?
@@ -1465,7 +2053,7 @@ exports.sendFacturesBulkEmail = async (req, res) => {
                     designation: it.designation || "Article",
                     quantite: qte,
                     prix_unitaire: pu,
-                    tva: Number(it.tva ?? 20),
+                    tva: Number(it.tva || 0),
                     reduction: 0,
                     montant_ht: montantHt,
                 };
@@ -1473,7 +2061,7 @@ exports.sendFacturesBulkEmail = async (req, res) => {
 
             const montantHt = items.reduce((sum, it) => sum + Number(it.montant_ht || 0), 0);
             const montantTva = items.reduce(
-                (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva ?? 20)) / 100,
+                (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva || 0)) / 100,
                 0
             );
             const montantTtc = montantHt + montantTva;
@@ -1652,7 +2240,7 @@ exports.downloadFacturePdf = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT fi.*, p.photo, p.poids AS grammage, COALESCE(p.nom, fi.designation) as designation
+            SELECT fi.*, p.photo, p.grammage, COALESCE(p.nom, fi.designation) as designation 
             FROM facture_items fi
             LEFT JOIN products p ON fi.produit_id = p.id
             WHERE fi.facture_id = ?
@@ -1813,7 +2401,7 @@ exports.downloadFournisseurFacturePdf = async (req, res) => {
                 designation: it.designation || "Article",
                 quantite: qte,
                 prix_unitaire: pu,
-                tva: Number(it.tva ?? 20),
+                tva: Number(it.tva || 0),
                 reduction: 0,
                 montant_ht: montantHt,
             };
@@ -1821,7 +2409,7 @@ exports.downloadFournisseurFacturePdf = async (req, res) => {
 
         const montantHt = items.reduce((sum, it) => sum + Number(it.montant_ht || 0), 0);
         const montantTva = items.reduce(
-            (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva ?? 20)) / 100,
+            (sum, it) => sum + (Number(it.montant_ht || 0) * Number(it.tva || 0)) / 100,
             0
         );
         const montantTtc = montantHt + montantTva;

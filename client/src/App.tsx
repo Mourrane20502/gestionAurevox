@@ -5,7 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import Clients from "./pages/Clients";
 import ClientSituation from "./pages/ClientSituation";
-import Contrat from "./pages/Contrat";
+import Contrats from "./pages/Contrats";
 import PDV from "./pages/PDV";
 import Categories from "./pages/Categories";
 import Devis from "./pages/Devis";
@@ -20,11 +20,13 @@ import CommandeGrosDetails from "./pages/CommandeGrosDetails";
 import FactureGrosDetails from "./pages/FactureGrosDetails";
 import Employees from "./pages/Employees";
 import Conges from "./pages/Conges";
+import Pointage from "./pages/Pointage";
 import Salaries from "./pages/Salaries";
 import GestionPaie from "./pages/GestionPaie";
-import Pointage from "./pages/Pointage";
 import PaieDetails from "./pages/PaieDetails";
 import Commandes from "./pages/Commandes";
+import BonsLivraison from "./pages/BonsLivraison";
+import BonLivraisonDetails from "./pages/BonLivraisonDetails";
 import Achats from "./pages/Achats";
 import Factures from "./pages/Factures";
 import Avoirs from "./pages/Avoirs";
@@ -34,9 +36,11 @@ import AvoirGrosDetails from "./pages/AvoirGrosDetails";
 import Remboursements from "./pages/Remboursements";
 import RemboursementDetails from "./pages/RemboursementDetails";
 import Bilan from "./pages/Bilan";
+import CA from "./pages/CA";
 import Reglements from "./pages/Reglements";
 import ReglementsClientsGros from "./pages/ReglementsClientsGros";
 import ReglementDetails from "./pages/ReglementDetails";
+import ReglementsGroupDetails from "./pages/ReglementsGroupDetails";
 import SignIn from "./pages/SignIn";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
@@ -63,16 +67,15 @@ import Promotions from "@/pages/Promotions";
 import Autoposting from "@/pages/Autoposting";
 import AlertsNotifications from "@/pages/AlertsNotifications";
 import Impots from "@/pages/Impots";
-import TVA from "@/pages/TVA";
-import Marge from "@/pages/Marge";
 import Recus from "@/pages/Recus";
 import EmailMarketing from "@/pages/EmailMarketing";
-import BonsLivraison from "@/pages/BonsLivraison";
-import BonLivraisonDetails from "@/pages/BonLivraisonDetails";
 import NotificationManager from "./components/common/NotificationManager";
 import PageTitle from "./components/common/PageTitle";
 
 export default function App() {
+  const roleLower = (localStorage.getItem("role") || "").toLowerCase();
+  const isAdmin = roleLower === "admin";
+
   return (
     <BrowserRouter>
       <PageTitle />
@@ -92,7 +95,7 @@ export default function App() {
             <Route path="clients" element={<Clients />} />
             <Route path="clients/fidelite" element={<Navigate to="/dashboard" replace />} />
             <Route path="clients/situation" element={<ClientSituation />} />
-            <Route path="clients/contrat" element={<Contrat />} />
+            <Route path="clients/contrats" element={<Contrats />} />
             <Route path="pdv" element={<PDV />} />
             <Route path="categories" element={<Categories />} />
             <Route path="devis" element={<Devis />} />
@@ -102,9 +105,9 @@ export default function App() {
             <Route path="commandes-gros" element={<CommandeGros />} />
             <Route path="commandes-gros/:id" element={<CommandeGrosDetails />} />
             <Route path="commandes" element={<Commandes />} />
+            <Route path="commandes/:id" element={<CommandeDetails />} />
             <Route path="bons-livraison" element={<BonsLivraison />} />
             <Route path="bons-livraison/:id" element={<BonLivraisonDetails />} />
-            <Route path="commandes/:id" element={<CommandeDetails />} />
             <Route path="recus" element={<Recus />} />
             <Route path="achats" element={<Achats />} />
             <Route path="achats/:numero" element={<AchatDetails />} />
@@ -112,8 +115,6 @@ export default function App() {
             <Route path="factures-gros/:id" element={<FactureGrosDetails />} />
             <Route path="factures" element={<Factures />} />
             <Route path="impots" element={<Impots />} />
-            <Route path="tva" element={<TVA />} />
-            <Route path="marge" element={<Marge />} />
             <Route path="factures/:id" element={<FactureDetails />} />
             <Route path="avoirs" element={<Avoirs />} />
             <Route path="avoirs/:id" element={<AvoirDetails />} />
@@ -124,6 +125,7 @@ export default function App() {
             <Route path="reglements" element={<Reglements />} />
             <Route path="reglements-gros" element={<ReglementsClientsGros />} />
             <Route path="reglements/details/:type/:id" element={<ReglementDetails />} />
+            <Route path="reglements/group/:type/:commandeId" element={<ReglementsGroupDetails />} />
             <Route path="fournisseurs" element={<Fournisseurs />} />
             <Route path="fournisseurs/situation" element={<FournisseursSituation />} />
             <Route path="fournisseurs/reglements" element={<ReglementsFournisseurs />} />
@@ -131,9 +133,9 @@ export default function App() {
             <Route path="gestionnaires" element={<Gestionnaires />} />
             <Route path="employes" element={<Employees />} />
             <Route path="conges" element={<Conges />} />
+            <Route path="pointage" element={<Pointage />} />
             <Route path="salaires" element={<Salaries />} />
             <Route path="paiement" element={<GestionPaie />} />
-            <Route path="pointage" element={<Pointage />} />
             <Route path="paiement/:id" element={<PaieDetails />} />
             <Route path="users" element={<Users />} />
             <Route path="tickets" element={<Tickets />} />
@@ -141,6 +143,7 @@ export default function App() {
             <Route path="banque" element={<Banque />} />
             <Route path="caisse" element={<Caisse />} />
             <Route path="bilan" element={<Bilan />} />
+            <Route path="ca" element={isAdmin ? <CA /> : <Navigate to="/dashboard" replace />} />
             <Route path="approvals" element={<Approvals />} />
             <Route path="promotions" element={<Promotions />} />
             <Route path="autoposts" element={<Autoposting />} />

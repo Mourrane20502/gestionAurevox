@@ -276,6 +276,21 @@ exports.getProductsByPdv = async (req, res) => {
 
                     UNION ALL
 
+                    -- Commandes validées non encore facturées: elles représentent aussi du vendu
+                    SELECT
+                        ci.produit_id AS product_id,
+                        SUM(ci.quantite) AS qty
+                    FROM commande_items ci
+                    INNER JOIN commandes c ON ci.commande_id = c.id
+                    INNER JOIN products p_cmd ON p_cmd.id = ci.produit_id
+                    LEFT JOIN factures f_cmd ON f_cmd.commande_id = c.id
+                    WHERE p_cmd.id_point_de_vente = ?
+                      AND f_cmd.id IS NULL
+                      AND COALESCE(c.statut, '') NOT IN ('annulee', 'annullee', 'en_attente', 'brouillon')
+                    GROUP BY ci.produit_id
+
+                    UNION ALL
+
                     -- Fallback legacy: produit_id absent, on rapproche par désignation
                     SELECT
                         p_match.id AS product_id,
@@ -288,13 +303,30 @@ exports.getProductsByPdv = async (req, res) => {
                     WHERE (fi2.produit_id IS NULL OR fi2.produit_id = 0)
                       AND COALESCE(f2.statut, '') NOT IN ('annulee', 'annullee', 'brouillon')
                     GROUP BY p_match.id
+
+                    UNION ALL
+
+                    -- Fallback legacy commandes: produit_id absent, rapprochement par désignation
+                    SELECT
+                        p_match2.id AS product_id,
+                        SUM(ci2.quantite) AS qty
+                    FROM commande_items ci2
+                    INNER JOIN commandes c2 ON ci2.commande_id = c2.id
+                    LEFT JOIN factures f_cmd2 ON f_cmd2.commande_id = c2.id
+                    INNER JOIN products p_match2
+                        ON p_match2.id_point_de_vente = ?
+                       AND LOWER(TRIM(p_match2.nom)) = LOWER(TRIM(ci2.designation))
+                    WHERE (ci2.produit_id IS NULL OR ci2.produit_id = 0)
+                      AND f_cmd2.id IS NULL
+                      AND COALESCE(c2.statut, '') NOT IN ('annulee', 'annullee', 'en_attente', 'brouillon')
+                    GROUP BY p_match2.id
                 ) sales
                 GROUP BY sales.product_id
             ) v ON v.product_id = p.id
             WHERE p.id_point_de_vente = ?
         `;
 
-        db.query(query, [id, id, id], (err, result) => {
+        db.query(query, [id, id, id, id, id], (err, result) => {
             if (err) {
                 console.log(err);
                 return res.status(500).json({ message: "Internal server error" });

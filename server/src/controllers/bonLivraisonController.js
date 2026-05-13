@@ -1,6 +1,33 @@
 const db = require("../config/db").promise();
 
+/** Valeurs ENUM / stockées : en_attente, livree, annulee */
+const BL_STATUT = {
+    EN_ATTENTE: "en_attente",
+    LIVREE: "livree",
+    ANNULEE: "annulee",
+};
+
+function normalizeBonLivraisonStatutForDb(statut) {
+    const s = String(statut ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/é|è|ê|ë/g, "e")
+        .replace(/à/g, "a")
+        .replace(/ù|û|ü/g, "u")
+        .replace(/ô|ö/g, "o")
+        .replace(/î|ï/g, "i")
+        .replace(/ç/g, "c")
+        .replace(/[\s_-]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    if (!s) return null;
+    if (s === "en_attente" || s === "enattente" || s === "brouillon") return BL_STATUT.EN_ATTENTE;
+    if (s === "livree" || s === "livre" || s === "validee") return BL_STATUT.LIVREE;
+    if (s === "annulee" || s === "annule") return BL_STATUT.ANNULEE;
+    return null;
+}
+
 let blSchemaReady = false;
+
 const ensureBonLivraisonSchema = async () => {
     if (blSchemaReady) return;
 
@@ -12,7 +39,7 @@ const ensureBonLivraisonSchema = async () => {
             commande_id INT NOT NULL UNIQUE,
             client_id INT NOT NULL,
             user_id INT NULL,
-            statut VARCHAR(50) DEFAULT 'brouillon',
+            statut VARCHAR(50) DEFAULT 'en_attente',
             montant_ht DECIMAL(12,2) DEFAULT 0,
             montant_tva DECIMAL(12,2) DEFAULT 0,
             montant_ttc DECIMAL(12,2) DEFAULT 0,
@@ -41,7 +68,6 @@ const ensureBonLivraisonSchema = async () => {
         }
     };
 
-    // Compatibilite avec les tables deja creees manuellement.
     await ensureColumn("bon_de_livraison", "numero_bon_livraison", "numero_bon_livraison VARCHAR(100) NULL");
     await ensureColumn("bon_de_livraison", "date_bon_livraison", "date_bon_livraison DATE NULL");
     await ensureColumn("bon_de_livraison", "commande_id", "commande_id INT NULL");
@@ -61,6 +87,85 @@ const ensureBonLivraisonSchema = async () => {
     await ensureColumn("bon_de_livraison_items", "tva", "tva DECIMAL(8,2) DEFAULT 20");
     await ensureColumn("bon_de_livraison_items", "reduction", "reduction DECIMAL(8,2) DEFAULT 0");
     await ensureColumn("bon_de_livraison_items", "montant_ht", "montant_ht DECIMAL(12,2) DEFAULT 0");
+    await ensureColumn("bon_de_livraison", "point_de_vente_id", "point_de_vente_id INT NULL");
+    await ensureColumn("bon_de_livraison", "devis_id", "devis_id INT NULL");
+
+    // Statuts ENUM / VARCHAR : en_attente | livree | annulee (migration + anciens libellés)
+    try {
+        await db.query(`
+            UPDATE bon_de_livraison
+            SET statut = 'livree'
+            WHERE LOWER(TRIM(statut)) IN ('livree', 'livre', 'livré', 'validee', 'validée')
+        `);
+        await db.query(`
+            UPDATE bon_de_livraison
+            SET statut = 'annulee'
+            WHERE LOWER(TRIM(statut)) IN ('annulee', 'annule', 'annulé', 'annulée')
+        `);
+        await db.query(`
+            UPDATE bon_de_livraison
+            SET statut = 'en_attente'
+            WHERE statut IS NULL
+               OR TRIM(statut) = ''
+               OR LOWER(REPLACE(TRIM(statut), ' ', '_')) IN ('brouillon', 'en_attente', 'enattente')
+        `);
+    } catch (e) {
+        console.warn("[bonLivraison] statut migration:", e?.message || e);
+    }
+
+    // Permettre plusieurs BL par commande (ex. un annulé + un nouveau en attente)
+    try {
+        const [uindexes] = await db.query(
+            "SHOW INDEX FROM bon_de_livraison WHERE Column_name = 'commande_id' AND Non_unique = 0"
+        );
+        if (Array.isArray(uindexes)) {
+            for (const idx of uindexes) {
+                const keyName = idx && idx.Key_name;
+                if (!keyName || keyName === "PRIMARY") continue;
+                const safe = String(keyName).replace(/[^a-zA-Z0-9_]/g, "");
+                if (!safe) continue;
+                await db.query(`ALTER TABLE bon_de_livraison DROP INDEX \`${safe}\``);
+            }
+        }
+    } catch (e) {
+        console.warn("[bonLivraison] drop commande_id unique index:", e?.message || e);
+    }
+
+    // Renseigner point_de_vente_id manquant depuis la commande / première ligne article
+    try {
+        await db.query(`
+            UPDATE bon_de_livraison bl
+            INNER JOIN commandes c ON c.id = bl.commande_id
+            SET bl.point_de_vente_id = COALESCE(
+                bl.point_de_vente_id,
+                c.point_de_vente_id,
+                (
+                    SELECT p.id_point_de_vente
+                    FROM commande_items ci
+                    INNER JOIN products p ON p.id = ci.produit_id
+                    WHERE ci.commande_id = c.id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY ci.id
+                    LIMIT 1
+                )
+            )
+            WHERE bl.point_de_vente_id IS NULL
+        `);
+    } catch (e) {
+        console.warn("[bonLivraison] point_de_vente_id backfill:", e?.message || e);
+    }
+
+    try {
+        await db.query(`
+            UPDATE bon_de_livraison bl
+            INNER JOIN commandes c ON c.id = bl.commande_id
+            SET bl.devis_id = COALESCE(bl.devis_id, c.devis_id)
+            WHERE bl.devis_id IS NULL
+              AND c.devis_id IS NOT NULL
+        `);
+    } catch (e) {
+        console.warn("[bonLivraison] devis_id backfill:", e?.message || e);
+    }
 
     blSchemaReady = true;
 };
@@ -77,16 +182,13 @@ const hasColumn = async (table, column) => {
     return Array.isArray(rows) && rows.length > 0;
 };
 
-exports.getAllBonsLivraison = async (_req, res) => {
-    try {
-        await ensureBonLivraisonSchema();
-        const [rows] = await db.query(`
+const blListSelect = `
             SELECT bl.*,
                    COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
                    COALESCE(bl.date_bon_livraison, bl.date_livraison) AS date_bon_livraison,
                    c.numero_commande,
-                   c.devis_id,
                    cl.nom_complet AS client_nom,
+                   cl.email AS client_email,
                    CONCAT(u.prenom, ' ', u.nom) AS user_nom,
                    pv.nom AS point_de_vente_nom,
                    COALESCE(
@@ -116,15 +218,33 @@ exports.getAllBonsLivraison = async (_req, res) => {
                         WHERE f.commande_id = c.id
                         ORDER BY f.id DESC
                         LIMIT 1
-                   ) AS facture_id
+                   ) AS facture_id,
+                   (SELECT d.numero_devis FROM devis d WHERE d.id = COALESCE(bl.devis_id, c.devis_id) LIMIT 1) AS numero_devis,
+                   (SELECT f.numero_facture FROM factures f WHERE f.commande_id = c.id ORDER BY f.id DESC LIMIT 1) AS numero_facture
             FROM bon_de_livraison bl
             LEFT JOIN commandes c ON c.id = bl.commande_id
             LEFT JOIN clients cl ON cl.id = bl.client_id
             LEFT JOIN users u ON u.id = COALESCE(bl.user_id, c.user_id)
-            LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
+            LEFT JOIN point_de_vente pv ON pv.id = COALESCE(
+                bl.point_de_vente_id,
+                c.point_de_vente_id,
+                (
+                    SELECT p.id_point_de_vente
+                    FROM commande_items ci
+                    INNER JOIN products p ON p.id = ci.produit_id
+                    WHERE ci.commande_id = c.id
+                      AND p.id_point_de_vente IS NOT NULL
+                    ORDER BY ci.id
+                    LIMIT 1
+                )
+            )
             LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
-            ORDER BY bl.id DESC
-        `);
+`;
+
+exports.getAllBonsLivraison = async (_req, res) => {
+    try {
+        await ensureBonLivraisonSchema();
+        const [rows] = await db.query(`${blListSelect} ORDER BY bl.id DESC`);
         res.json(rows);
     } catch (error) {
         console.error("Error fetching bons de livraison:", error);
@@ -136,52 +256,8 @@ exports.getBonLivraisonById = async (req, res) => {
     try {
         await ensureBonLivraisonSchema();
         const { id } = req.params;
-        const [[row]] = await db.query(`
-            SELECT bl.*,
-                   COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
-                   COALESCE(bl.date_bon_livraison, bl.date_livraison) AS date_bon_livraison,
-                   c.numero_commande,
-                   c.devis_id,
-                   cl.nom_complet AS client_nom,
-                   CONCAT(u.prenom, ' ', u.nom) AS user_nom,
-                   pv.nom AS point_de_vente_nom,
-                   COALESCE(
-                        (
-                            SELECT ss_items.NOM_SOUS_SOCIETE
-                            FROM commande_items ci
-                            INNER JOIN products p ON p.id = ci.produit_id
-                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
-                            LEFT JOIN sous_societe ss_items ON ss_items.ID = pv_items.id_sous_gestionnaire
-                            WHERE ci.commande_id = c.id
-                              AND p.id_point_de_vente IS NOT NULL
-                            ORDER BY ci.id
-                            LIMIT 1
-                        ),
-                        ss.NOM_SOUS_SOCIETE,
-                        (
-                            SELECT ssn.NOM_SOUS_SOCIETE
-                            FROM sous_societe ssn
-                            WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
-                            ORDER BY ssn.ID
-                            LIMIT 1
-                        )
-                   ) AS sous_societe_nom,
-                   (
-                        SELECT f.id
-                        FROM factures f
-                        WHERE f.commande_id = c.id
-                        ORDER BY f.id DESC
-                        LIMIT 1
-                   ) AS facture_id
-            FROM bon_de_livraison bl
-            LEFT JOIN commandes c ON c.id = bl.commande_id
-            LEFT JOIN clients cl ON cl.id = bl.client_id
-            LEFT JOIN users u ON u.id = COALESCE(bl.user_id, c.user_id)
-            LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
-            LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
-            WHERE bl.id = ?
-            LIMIT 1
-        `, [id]);
+        const [rows] = await db.query(`${blListSelect} WHERE bl.id = ? LIMIT 1`, [id]);
+        const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
 
         if (!row) return res.status(404).json({ message: "Bon de livraison introuvable" });
 
@@ -208,10 +284,15 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
 
         await connection.beginTransaction();
 
-        const [[existing]] = await connection.query(
-            "SELECT id, numero_bon_livraison FROM bon_de_livraison WHERE commande_id = ? LIMIT 1",
+        const [existingRows] = await connection.query(
+            `SELECT id, numero_bon_livraison FROM bon_de_livraison
+             WHERE commande_id = ?
+               AND (statut IS NULL OR LOWER(TRIM(statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+             ORDER BY id DESC
+             LIMIT 1`,
             [commandeId]
         );
+        const existing = Array.isArray(existingRows) && existingRows.length > 0 ? existingRows[0] : null;
         if (existing) {
             await connection.rollback();
             return res.status(400).json({
@@ -220,17 +301,42 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
             });
         }
 
-        const [[commande]] = await connection.query(
-            `SELECT id, numero_commande, date_commande, client_id, user_id, montant_ht, montant_tva, montant_ttc
-             FROM commandes
-             WHERE id = ?
+        const [commandeRows] = await connection.query(
+            `SELECT c.id, c.numero_commande, c.date_commande, c.client_id, c.user_id, c.montant_ht, c.montant_tva, c.montant_ttc,
+                    c.devis_id,
+                    c.point_de_vente_id,
+                    (
+                        SELECT p.id_point_de_vente
+                        FROM commande_items ci
+                        INNER JOIN products p ON p.id = ci.produit_id
+                        WHERE ci.commande_id = c.id
+                          AND p.id_point_de_vente IS NOT NULL
+                        ORDER BY ci.id
+                        LIMIT 1
+                    ) AS point_de_vente_from_items
+             FROM commandes c
+             WHERE c.id = ?
              LIMIT 1`,
             [commandeId]
         );
+        const commande =
+            Array.isArray(commandeRows) && commandeRows.length > 0 ? commandeRows[0] : null;
         if (!commande) {
             await connection.rollback();
             return res.status(404).json({ message: "Commande introuvable" });
         }
+
+        const pdvFromCommande =
+            commande.point_de_vente_id != null && Number(commande.point_de_vente_id) > 0
+                ? Number(commande.point_de_vente_id)
+                : null;
+        const pdvFromItems =
+            commande.point_de_vente_from_items != null && Number(commande.point_de_vente_from_items) > 0
+                ? Number(commande.point_de_vente_from_items)
+                : null;
+        const pointDeVenteId = pdvFromCommande || pdvFromItems || null;
+        const devisId =
+            commande.devis_id != null && Number(commande.devis_id) > 0 ? Number(commande.devis_id) : null;
 
         const [commandeItems] = await connection.query(
             `SELECT produit_id, designation, quantite, prix_unitaire, tva, reduction, montant_ht
@@ -270,7 +376,6 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
             Number(commande.montant_ttc) || 0,
         ];
 
-        // Compatibilite schema legacy: certains environnements utilisent numero_bl/date_bl.
         if (await hasColumn("bon_de_livraison", "numero_bl")) {
             insertColumns.push("numero_bl");
             insertValues.push(numero);
@@ -282,6 +387,14 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
         if (await hasColumn("bon_de_livraison", "date_livraison")) {
             insertColumns.push("date_livraison");
             insertValues.push(dateBl);
+        }
+        if (await hasColumn("bon_de_livraison", "point_de_vente_id")) {
+            insertColumns.push("point_de_vente_id");
+            insertValues.push(pointDeVenteId);
+        }
+        if (await hasColumn("bon_de_livraison", "devis_id")) {
+            insertColumns.push("devis_id");
+            insertValues.push(devisId);
         }
 
         const placeholders = insertColumns.map(() => "?").join(", ");
@@ -330,19 +443,18 @@ exports.approveBonLivraison = async (req, res) => {
         const { id } = req.params;
         const [result] = await db.query(
             `UPDATE bon_de_livraison
-             SET statut = 'livré'
+             SET statut = ?
              WHERE id = ?
                AND (
-                    statut = 'en_attente'
-                    OR statut = 'en attente'
-                    OR statut = 'brouillon'
+                    statut = ?
+                    OR LOWER(REPLACE(TRIM(COALESCE(statut, '')), ' ', '_')) IN ('en_attente', 'enattente', 'brouillon')
                )`,
-            [id]
+            [BL_STATUT.LIVREE, id, BL_STATUT.EN_ATTENTE]
         );
         if (!result?.affectedRows) {
             return res.status(404).json({ message: "Bon de livraison non trouvé ou déjà traité" });
         }
-        res.json({ message: "Bon de livraison validé" });
+        res.json({ message: "Bon de livraison validé (livré)" });
     } catch (error) {
         console.error("Error approving bon de livraison:", error);
         res.status(500).json({ message: "Server error" });
@@ -353,16 +465,25 @@ exports.rejectBonLivraison = async (req, res) => {
     try {
         await ensureBonLivraisonSchema();
         const { id } = req.params;
+        const blId = Number(id);
+        if (!Number.isFinite(blId) || blId <= 0) {
+            return res.status(400).json({ message: "ID invalide" });
+        }
+
         const [result] = await db.query(
             `UPDATE bon_de_livraison
-             SET statut = 'annulee'
-             WHERE id = ?`,
-            [id]
+             SET statut = ?
+             WHERE id = ?
+               AND (
+                    statut = ?
+                    OR LOWER(REPLACE(TRIM(COALESCE(statut, '')), ' ', '_')) IN ('en_attente', 'enattente', 'brouillon')
+               )`,
+            [BL_STATUT.ANNULEE, blId, BL_STATUT.EN_ATTENTE]
         );
         if (!result?.affectedRows) {
             return res.status(404).json({ message: "Bon de livraison non trouvé ou déjà traité" });
         }
-        res.json({ message: "Bon de livraison rejeté" });
+        res.json({ message: "Bon de livraison refusé (annulé)" });
     } catch (error) {
         console.error("Error rejecting bon de livraison:", error);
         res.status(500).json({ message: "Server error" });
@@ -391,10 +512,7 @@ exports.updateBonLivraison = async (req, res) => {
 
         await connection.beginTransaction();
 
-        const [existing] = await connection.query(
-            "SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1",
-            [blId]
-        );
+        const [existing] = await connection.query("SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1", [blId]);
         if (!Array.isArray(existing) || existing.length === 0) {
             await connection.rollback();
             return res.status(404).json({ message: "Bon de livraison introuvable" });
@@ -428,8 +546,15 @@ exports.updateBonLivraison = async (req, res) => {
         }
 
         if (statut != null && String(statut).trim()) {
+            const canon = normalizeBonLivraisonStatutForDb(String(statut).trim());
+            if (!canon) {
+                await connection.rollback();
+                return res.status(400).json({
+                    message: "Statut invalide : en_attente, livree (livré) ou annulee (annulé) uniquement",
+                });
+            }
             fields.push("statut = ?");
-            values.push(String(statut).trim());
+            values.push(canon);
         }
 
         if (montant_ht != null) {
@@ -470,10 +595,7 @@ exports.updateBonLivraison = async (req, res) => {
 
         if (fields.length > 0) {
             values.push(blId);
-            await connection.query(
-                `UPDATE bon_de_livraison SET ${fields.join(", ")} WHERE id = ?`,
-                values
-            );
+            await connection.query(`UPDATE bon_de_livraison SET ${fields.join(", ")} WHERE id = ?`, values);
         }
 
         await connection.commit();
@@ -494,10 +616,7 @@ exports.deleteBonLivraison = async (req, res) => {
         const { id } = req.params;
         await connection.beginTransaction();
 
-        const [existing] = await connection.query(
-            "SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1",
-            [id]
-        );
+        const [existing] = await connection.query("SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1", [id]);
         if (!Array.isArray(existing) || existing.length === 0) {
             await connection.rollback();
             return res.status(404).json({ message: "Bon de livraison introuvable" });
@@ -527,20 +646,11 @@ const blPdfConfig = {
     footerLeft: "Merci pour votre confiance.",
 };
 
-exports.sendBonLivraisonEmail = async (req, res) => {
-    const { id } = req.params;
-    const { to, subject, message } = req.body || {};
-
-    if (!to) {
-        return res.status(400).json({ message: "Le destinataire est requis" });
-    }
-
-    try {
-        const [rows] = await db.query(
-            `
+const blPdfSelect = `
             SELECT bl.*,
                    COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
                    COALESCE(bl.date_bon_livraison, bl.date_livraison) AS date_bon_livraison,
+                   c.numero_commande,
                    COALESCE(
                         (
                             SELECT p.id_point_de_vente
@@ -567,6 +677,7 @@ exports.sendBonLivraisonEmail = async (req, res) => {
                         pv.logo
                    ) AS point_de_vente_logo,
                    cl.nom_complet AS client_nom,
+                   cl.email AS client_email,
                    cl.type AS client_type,
                    cl.ice AS client_ice,
                    cl.telephone AS client_telephone,
@@ -598,11 +709,19 @@ exports.sendBonLivraisonEmail = async (req, res) => {
             LEFT JOIN clients cl ON cl.id = bl.client_id
             LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
             LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
-            WHERE bl.id = ?
-            LIMIT 1
-            `,
-            [id]
-        );
+`;
+
+exports.sendBonLivraisonEmail = async (req, res) => {
+    const { id } = req.params;
+    const { to, subject, message } = req.body || {};
+
+    if (!to) {
+        return res.status(400).json({ message: "Le destinataire est requis" });
+    }
+
+    try {
+        await ensureBonLivraisonSchema();
+        const [rows] = await db.query(`${blPdfSelect} WHERE bl.id = ? LIMIT 1`, [id]);
 
         if (!Array.isArray(rows) || rows.length === 0) {
             return res.status(404).json({ message: "Bon de livraison introuvable" });
@@ -635,73 +754,8 @@ exports.sendBonLivraisonEmail = async (req, res) => {
 exports.downloadBonLivraisonPdf = async (req, res) => {
     const { id } = req.params;
     try {
-        const [rows] = await db.query(
-            `
-            SELECT bl.*,
-                   COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
-                   COALESCE(bl.date_bon_livraison, bl.date_livraison) AS date_bon_livraison,
-                   COALESCE(
-                        (
-                            SELECT p.id_point_de_vente
-                            FROM bon_de_livraison_items bi
-                            INNER JOIN products p ON p.id = bi.produit_id
-                            WHERE bi.bon_livraison_id = bl.id
-                              AND p.id_point_de_vente IS NOT NULL
-                            ORDER BY bi.id
-                            LIMIT 1
-                        ),
-                        c.point_de_vente_id
-                   ) AS point_de_vente_id,
-                   COALESCE(
-                        (
-                            SELECT pv_items.logo
-                            FROM bon_de_livraison_items bi
-                            INNER JOIN products p ON p.id = bi.produit_id
-                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
-                            WHERE bi.bon_livraison_id = bl.id
-                              AND p.id_point_de_vente IS NOT NULL
-                            ORDER BY bi.id
-                            LIMIT 1
-                        ),
-                        pv.logo
-                   ) AS point_de_vente_logo,
-                   cl.nom_complet AS client_nom,
-                   cl.type AS client_type,
-                   cl.ice AS client_ice,
-                   cl.telephone AS client_telephone,
-                   cl.email AS client_email,
-                   cl.adresse AS client_adresse,
-                   COALESCE(
-                        (
-                            SELECT ss_items.NOM_SOUS_SOCIETE
-                            FROM bon_de_livraison_items bi
-                            INNER JOIN products p ON p.id = bi.produit_id
-                            INNER JOIN point_de_vente pv_items ON pv_items.id = p.id_point_de_vente
-                            LEFT JOIN sous_societe ss_items ON ss_items.ID = pv_items.id_sous_gestionnaire
-                            WHERE bi.bon_livraison_id = bl.id
-                              AND p.id_point_de_vente IS NOT NULL
-                            ORDER BY bi.id
-                            LIMIT 1
-                        ),
-                        ss.NOM_SOUS_SOCIETE,
-                        (
-                            SELECT ssn.NOM_SOUS_SOCIETE
-                            FROM sous_societe ssn
-                            WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
-                            ORDER BY ssn.ID
-                            LIMIT 1
-                        )
-                   ) AS sous_societe_nom
-            FROM bon_de_livraison bl
-            LEFT JOIN commandes c ON c.id = bl.commande_id
-            LEFT JOIN clients cl ON cl.id = bl.client_id
-            LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
-            LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
-            WHERE bl.id = ?
-            LIMIT 1
-            `,
-            [id]
-        );
+        await ensureBonLivraisonSchema();
+        const [rows] = await db.query(`${blPdfSelect} WHERE bl.id = ? LIMIT 1`, [id]);
 
         if (!Array.isArray(rows) || rows.length === 0) {
             return res.status(404).json({ message: "Bon de livraison introuvable" });

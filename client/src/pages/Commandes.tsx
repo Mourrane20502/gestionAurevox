@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo,  useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
@@ -108,6 +108,8 @@ interface Commande {
     banque_id?: number | null;
     mode_paiement?: string | null;
     sous_societe_nom?: string | null;
+    bon_livraison_id?: number | null;
+    numero_bon_livraison_linked?: string | null;
 }
 
 interface Devis {
@@ -194,6 +196,27 @@ function getFactureLinkedDevisIds(factures: any[]): Set<number> {
     return set;
 }
 
+const toLocalDateInputValue = (value?: string | null) => {
+    if (!value) return "";
+    const raw = String(value).trim();
+    const direct = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
+    if (direct) return direct[1];
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw.split("T")[0] || "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+};
+
+const getTodayLocalDateInput = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+};
+
 /** Aligné sur l'API : sans remboursement, sans avoir, pas déjà liée à une facture. */
 function commandePeutEtreConvertieEnFacture(
     commande: Commande,
@@ -240,8 +263,6 @@ function Commandes() {
     const [showFactureDialog, setShowFactureDialog] = useState(false);
     const [showReglementDialog, setShowReglementDialog] = useState(false);
     const [createdCommandeId, setCreatedCommandeId] = useState<number | null>(null);
-    /** Banque choisie sur le formulaire avant reset (dialog « Générer la facture »). */
-    const createdCommandeBanqueIdRef = useRef<string | null>(null);
     const [devisSearch, setDevisSearch] = useState("");
     const [showDevisDropdown, setShowDevisDropdown] = useState(false);
     const [users, setUsers] = useState<any[]>([]);
@@ -251,24 +272,21 @@ function Commandes() {
     const [filterPointDeVente, setFilterPointDeVente] = useState<string>("all");
     const [filterModePaiement, setFilterModePaiement] = useState<string>("all");
     const [allSousSocieteNames, setAllSousSocieteNames] = useState<string[]>([]);
-    const [banques, setBanques] = useState<any[]>([]);
     const [paymentModes, setPaymentModes] = useState<any[]>([]);
     const [remboursementMap, setRemboursementMap] = useState<Record<number, number>>({});
-    const [commandesAvecBl, setCommandesAvecBl] = useState<Set<number>>(new Set());
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
     const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
     const [formData, setFormData] = useState({
         numero_commande: "",
-        date_commande: new Date().toISOString().split('T')[0],
+        date_commande: getTodayLocalDateInput(),
         statut: "en_attente",
         devis_id: null as number | null,
         reduction: "0",
         montant_ht: "0",
         a_facture: false,
         mode_paiement: "virement",
-        banque_id: "none",
         paiement_espece_type: "total"
     });
 
@@ -361,15 +379,6 @@ function Commandes() {
         } catch (error) { console.error("Error fetching users:", error); }
     };
 
-    const fetchBanques = async () => {
-        try {
-            const response = await fetch("/api/banque", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (response.ok) setBanques(await response.json());
-        } catch (error) { console.error("Error fetching banques:", error); }
-    };
-
     const fetchPaymentModes = async () => {
         try {
             const response = await fetch("/api/settings/payment-modes", {
@@ -389,23 +398,6 @@ function Commandes() {
             }
         } catch (e) { console.error(e); }
     };
-    const fetchBonsLivraisonLinks = async () => {
-        try {
-            const res = await fetch("/api/bons-livraison", {
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) return;
-            const rows = await res.json();
-            const ids = new Set<number>();
-            (Array.isArray(rows) ? rows : []).forEach((bl: any) => {
-                const cmdId = Number(bl?.commande_id);
-                if (Number.isFinite(cmdId) && cmdId > 0) ids.add(cmdId);
-            });
-            setCommandesAvecBl(ids);
-        } catch (e) {
-            console.error("Error fetching BL links:", e);
-        }
-    };
 
     useEffect(() => {
         fetchCommandes();
@@ -414,10 +406,8 @@ function Commandes() {
         fetchDevis();
         fetchFactures();
         fetchUsers();
-        fetchBanques();
         fetchPaymentModes();
         fetchRemboursements();
-        fetchBonsLivraisonLinks();
     }, []);
 
     useEffect(() => {
@@ -488,7 +478,6 @@ function Commandes() {
                             montant_ht: (fullCmd.montant_ht || 0).toString(),
                             a_facture: Boolean(fullCmd.a_facture),
                             mode_paiement: fullCmd.mode_paiement || "virement",
-                            banque_id: (fullCmd.banque_id != null && fullCmd.banque_id !== 0) ? String(fullCmd.banque_id) : "none",
                             paiement_espece_type: "total"
                         });
 
@@ -623,6 +612,13 @@ function Commandes() {
             });
             if (response.ok) {
                 const fullDevis = await response.json();
+                const importedDevisDate =
+                    typeof fullDevis?.date_devis === "string" && fullDevis.date_devis.trim() !== ""
+                        ? toLocalDateInputValue(String(fullDevis.date_devis))
+                        : null;
+                if (importedDevisDate) {
+                    setFormData((prev) => ({ ...prev, date_commande: importedDevisDate }));
+                }
 
                 // Set client
                 const client = clients.find(c => c.id === fullDevis.client_id);
@@ -730,8 +726,6 @@ function Commandes() {
                     const newId = result.id;
                     // Mémoriser l'id de la nouvelle commande pour le règlement / facturation
                     setCreatedCommandeId(newId);
-                    createdCommandeBanqueIdRef.current =
-                        formData.banque_id && formData.banque_id !== "none" ? formData.banque_id : null;
                     // Après création d'une nouvelle commande, revenir systématiquement à la liste
                     resetForm();
                     setActiveTab("list");
@@ -753,7 +747,7 @@ function Commandes() {
                         setActiveTab("list");
                         fetchCommandes();
                         navigate("/dashboard/factures", {
-                            state: { commandeId, banqueId: formData.banque_id, skipReglement: true },
+                            state: { commandeId, skipReglement: true },
                         });
                     } else {
                         // Sinon, simple retour à la liste
@@ -776,14 +770,13 @@ function Commandes() {
     const resetForm = () => {
         setFormData({
             numero_commande: "",
-            date_commande: new Date().toISOString().split('T')[0],
+            date_commande: getTodayLocalDateInput(),
             statut: "en_attente",
             devis_id: null,
             reduction: "0",
             montant_ht: "0",
             a_facture: false,
             mode_paiement: "virement",
-            banque_id: "none",
             paiement_espece_type: "total"
         });
         setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
@@ -1746,10 +1739,12 @@ function Commandes() {
                                                                 </span>
                                                             );
                                                         })()}
-                                                        {commandesAvecBl.has(commande.id) && (
+                                                        {Number(commande.bon_livraison_id) > 0 && (
                                                             <span
-                                                                className="text-[9px] text-violet-600 dark:text-violet-400 flex items-center gap-0.5 font-bold uppercase tracking-tighter bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20"
-                                                                title="Cette commande est liée à un bon de livraison"
+                                                                className="text-[9px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-bold uppercase tracking-tighter bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 cursor-pointer hover:opacity-90 transition-opacity"
+                                                                onClick={() =>
+                                                                    navigate(`/dashboard/bons-livraison/${commande.bon_livraison_id}`)
+                                                                }
                                                             >
                                                                 <CheckCircle2 className="h-2.5 w-2.5" /> BL
                                                             </span>
@@ -1915,23 +1910,9 @@ function Commandes() {
                                                             );
                                                             const canConvert = commande.statut === "validee" || commande.statut === "validée" || commande.statut === "livree";
                                                             const isReglee = isCommandeReglee(commande, factures);
-                                                            const hasBonLivraison = commandesAvecBl.has(commande.id);
                                                             
                                                             return (
                                                                 <>
-                                                                    {!hasBonLivraison && (
-                                                                        <DropdownMenuItem
-                                                                            className="cursor-pointer text-indigo-600 focus:text-indigo-600"
-                                                                            onClick={() => {
-                                                                                navigate("/dashboard/bons-livraison", {
-                                                                                    state: { commandeId: commande.id },
-                                                                                });
-                                                                            }}
-                                                                        >
-                                                                            <FileText className="h-4 w-4" />
-                                                                            Générer bon de livraison
-                                                                        </DropdownMenuItem>
-                                                                    )}
                                                                     {linkedFacture ? (
                                                                         <DropdownMenuItem className="cursor-pointer" onClick={() => navigate(`/dashboard/factures/${linkedFacture.id}`)}>
                                                                             <ArrowUpRight className="h-4 w-4" />
@@ -1960,24 +1941,10 @@ function Commandes() {
                                                                                     const regleeByStatut =
                                                                                         st === "paye" || st === "payee" || st === "reglee";
                                                                                     const skipReglement = paidByAmounts || regleeByStatut;
-                                                                                    const editingThisRow = editingCommande?.id === commande.id;
-                                                                                    const banqueFromForm =
-                                                                                        editingThisRow &&
-                                                                                        formData.banque_id &&
-                                                                                        formData.banque_id !== "none"
-                                                                                            ? formData.banque_id
-                                                                                            : null;
-                                                                                    const banqueFromCommande =
-                                                                                        commande.banque_id != null &&
-                                                                                        commande.banque_id !== 0
-                                                                                            ? String(commande.banque_id)
-                                                                                            : null;
-                                                                                    const banquePourFacture =
-                                                                                        banqueFromForm || banqueFromCommande;
                                                                                     navigate("/dashboard/factures", {
                                                                                         state: {
                                                                                             commandeId: commande.id,
-                                                                                            banqueId: banquePourFacture || undefined,
+                                                                                            modePaiement: commande.mode_paiement || undefined,
                                                                                             skipReglement,
                                                                                         },
                                                                                     });
@@ -2082,16 +2049,8 @@ function Commandes() {
                                             Total Complet (Filtré)
                                         </TableCell>
                                         <TableCell className="px-4 py-4 font-black text-indigo-700 dark:text-indigo-300 text-base">
-                                            {filteredCommandes
-                                                .reduce(
-                                                    (acc, c) =>
-                                                        acc +
-                                                        (Number(c.montant_ttc) ||
-                                                            (Number(c.montant_ht) + Number(c.montant_tva))),
-                                                    0
-                                                )
-                                                .toLocaleString()}{" "}
-                                            DH
+                                     {commandes.reduce((acc, c) => acc + (Number(c.total_regle) || 0), 0).toLocaleString()} DH
+
                                         </TableCell>
                                         <TableCell colSpan={5} />
                                     </TableRow>
@@ -2275,13 +2234,7 @@ function Commandes() {
                                             <button
                                                 type="button"
                                                 onClick={() =>
-                                                    setFormData(prev => {
-                                                        const nextAFacture = !prev.a_facture;
-                                                        if (!nextAFacture && prev.mode_paiement !== "espece") {
-                                                            toast.warning("Votre commande est non facturée, de préférence merci de changer le mode de paiement vers ESPECE.");
-                                                        }
-                                                        return { ...prev, a_facture: nextAFacture };
-                                                    })
+                                                    setFormData(prev => ({ ...prev, a_facture: !prev.a_facture }))
                                                 }
                                                 className={cn(
                                                     "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
@@ -2303,60 +2256,7 @@ function Commandes() {
                                         </div>
                                     </div>
 
-                                    <>
-                                        <div className="space-y-1.5">
-                                            <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Mode de Paiement</Label>
-                                            <Select
-                                                value={formData.mode_paiement}
-                                                onValueChange={(v) =>
-                                                    setFormData(prev => {
-                                                        if (!prev.a_facture && v !== "espece") {
-                                                            toast.warning("Votre commande est non facturée, de préférence merci de changer le mode de paiement vers ESPECE.");
-                                                        }
-                                                        return { ...prev, mode_paiement: v };
-                                                    })
-                                                }
-                                            >
-                                                <SelectTrigger className="h-11 border-border">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {paymentModes.length > 0 ? (
-                                                        paymentModes.map((m: any) => (
-                                                            <SelectItem key={m.value} value={m.value}>
-                                                                {m.label}
-                                                            </SelectItem>
-                                                        ))
-                                                    ) : (
-                                                        <>
-                                                            <SelectItem value="espece">Espèce</SelectItem>
-                                                            <SelectItem value="cheque">Chèque</SelectItem>
-                                                            <SelectItem value="virement">Virement</SelectItem>
-                                                            <SelectItem value="carte">Carte Bancaire</SelectItem>
-                                                            <SelectItem value="effet">Effet</SelectItem>
-                                                        </>
-                                                    )}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-
-                                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2">
-                                            <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest text-indigo-600">Banque</Label>
-                                            <Select value={formData.banque_id || "none"} onValueChange={(v) => setFormData(prev => ({ ...prev, banque_id: v }))}>
-                                                <SelectTrigger className="h-11 border-indigo-200 bg-indigo-50/10">
-                                                    <SelectValue placeholder="Sélectionner une banque" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="none">Aucune</SelectItem>
-                                                    {banques.map(b => (
-                                                        <SelectItem key={b.id} value={b.id.toString()}>{b.nom_banque} {b.nom_compte ? `- ${b.nom_compte}` : ""}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-
-                                        {/* plus de champ spécifique pour paiement espèces ici */}
-                                    </>
+                                    {/* plus de champ spécifique pour paiement espèces ici */}
 
                                     {/* Réduction Globale supprimée */}
                                     <div className="space-y-1.5 relative">
@@ -2673,10 +2573,7 @@ function Commandes() {
                                 className="flex-1 h-10 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white"
                                 onClick={() => {
                                     navigate("/dashboard/factures", {
-                                        state: {
-                                            commandeId: createdCommandeId,
-                                            banqueId: createdCommandeBanqueIdRef.current || undefined,
-                                        },
+                                        state: { commandeId: createdCommandeId },
                                     });
                                 }}
                             >

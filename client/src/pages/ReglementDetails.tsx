@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
 import { Button } from "@/components/common/ui/button";
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/common/ui/input";
 import { Label } from "@/components/common/ui/label";
 import { Textarea } from "@/components/common/ui/textarea";
-import { ArrowLeft, Banknote, Check, CheckCircle2, Clock, FileText, Link as LinkIcon, Mail, Printer, RefreshCcw, Send, User, Truck } from "lucide-react";
+import { ArrowLeft, Banknote, Check, CheckCircle2, Clock, Eye, FileText, Link as LinkIcon, Mail, RefreshCcw, Send, Upload, User, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { buildReglementCode, type ReglementCodeType } from "@/lib/reglementCode";
 import { generateRecuPaiementPdf, type RecuPaiementData } from "@/components/pdf/RecuPaiementPdf";
@@ -37,6 +37,7 @@ type ReglementDetailsData = {
     facture_gros_id?: number | null;
     commande_gros_id?: number | null;
     achat_designation?: string | null;
+    pdf_path?: string | null;
 };
 
 type SituationReglement = {
@@ -63,8 +64,10 @@ export default function ReglementDetails() {
     const [emailData, setEmailData] = useState({ to: "", subject: "", message: "" });
     const [isSendingEmail, setIsSendingEmail] = useState(false);
     const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null);
+    const [uploadedPdfUrl, setUploadedPdfUrl] = useState<string | null>(null);
     const [linkedFactureFromCommande, setLinkedFactureFromCommande] = useState<LinkedFactureInfo | null>(null);
     const [situation, setSituation] = useState<SituationReglement | null>(null);
+    const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
     const normalizedType: ReglementCodeType | null = useMemo(() => {
         if (type === "client" || type === "client_gros" || type === "fournisseur") return type;
@@ -96,6 +99,13 @@ export default function ReglementDetails() {
                 }
                 const payload = await res.json();
                 setData(payload);
+                const p = String(payload?.pdf_path || "").trim();
+                if (p) {
+                    const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+                    setUploadedPdfUrl(/^https?:\/\//i.test(p) ? p : `${base}/uploads/${encodeURIComponent(p)}`);
+                } else {
+                    setUploadedPdfUrl(null);
+                }
             } catch (e) {
                 console.error(e);
                 toast.error("Erreur lors du chargement du règlement");
@@ -333,6 +343,17 @@ export default function ReglementDetails() {
             : topRightMotifSource === "Impayé"
                 ? "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
                 : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+    const userComment = useMemo(() => {
+        const raw = String(data?.commentaire || "");
+        if (!raw.trim()) return "";
+        return raw
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .filter((line) => !/^\[(IMPAYÉ|IMPAYE|PAYÉ|PAYE)\]\b/i.test(line))
+            .join("\n")
+            .trim();
+    }, [data?.commentaire]);
 
     const movements = useMemo(() => {
         if (!data) return [];
@@ -461,6 +482,7 @@ export default function ReglementDetails() {
     }, [data]);
 
     const canPrintAndEmail = (normalizedType === "client" || normalizedType === "client_gros") && data?.statut === "approuve";
+    const hasDocumentPdf = Boolean(uploadedPdfUrl);
 
     // Revoke old object URL to avoid memory leaks.
     useEffect(() => {
@@ -599,44 +621,59 @@ export default function ReglementDetails() {
         }
     };
 
-    const handlePrintPdf = async () => {
-        if (!canPrintAndEmail || !data) return;
-        setIsProcessingPdf(true);
-        try {
-            const blob = await generateReceiptBlob();
-            if (!blob) {
-                toast.error("Impossible de générer le reçu");
+    const handleUploadPdfChange = (event: ChangeEvent<HTMLInputElement>) => {
+        const input = event.target;
+        const run = async () => {
+            const file = input.files?.[0];
+            if (!file || !data?.id || !token || (normalizedType !== "client" && normalizedType !== "client_gros")) return;
+            if (file.type !== "application/pdf") {
+                toast.error("Veuillez sélectionner un fichier PDF");
                 return;
             }
-            const url = URL.createObjectURL(blob);
-            if (pdfObjectUrl) URL.revokeObjectURL(pdfObjectUrl);
-            setPdfObjectUrl(url);
-            window.open(url, "_blank", "noopener,noreferrer");
-        } catch {
-            toast.error("Erreur lors de l'impression");
-        } finally {
-            setIsProcessingPdf(false);
-        }
+            setIsProcessingPdf(true);
+            try {
+                const formData = new FormData();
+                formData.append("pdf", file);
+                const endpoint =
+                    normalizedType === "client_gros"
+                        ? `/api/reglements-clients-gros/${data.id}/pdf/upload`
+                        : `/api/reglements-clients/${data.id}/pdf/upload`;
+                const res = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` },
+                    body: formData,
+                });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    toast.error(body?.message || "Erreur lors du téléversement du PDF");
+                    return;
+                }
+                const nextPath = String(body?.pdf_path || "").trim();
+                const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+                const nextUrl = nextPath
+                    ? /^https?:\/\//i.test(nextPath)
+                        ? nextPath
+                        : `${base}/uploads/${encodeURIComponent(nextPath)}`
+                    : null;
+                setUploadedPdfUrl(nextUrl);
+                setData((prev) => (prev ? { ...prev, pdf_path: nextPath || null } : prev));
+                toast.success("PDF téléversé");
+            } catch {
+                toast.error("Erreur lors du téléversement du PDF");
+            } finally {
+                input.value = "";
+                setIsProcessingPdf(false);
+            }
+        };
+        run();
     };
 
-    const handlePrintGiftPdf = async () => {
-        if (!canPrintAndEmail || !data) return;
-        setIsProcessingPdf(true);
-        try {
-            const blob = await generateReceiptBlob(true);
-            if (!blob) {
-                toast.error("Impossible de générer le reçu cadeau");
-                return;
-            }
-            const url = URL.createObjectURL(blob);
-            if (pdfObjectUrl) URL.revokeObjectURL(pdfObjectUrl);
-            setPdfObjectUrl(url);
-            window.open(url, "_blank", "noopener,noreferrer");
-        } catch {
-            toast.error("Erreur lors de l'impression du PDF cadeau");
-        } finally {
-            setIsProcessingPdf(false);
+    const handleViewPdf = async () => {
+        if (uploadedPdfUrl) {
+            window.open(uploadedPdfUrl, "_blank", "noopener,noreferrer");
+            return;
         }
+        toast.error("Aucun PDF disponible");
     };
 
     const handleSendEmail = async () => {
@@ -722,27 +759,6 @@ export default function ReglementDetails() {
                             {isLinkCopied ? "Lien copié!" : "Générer lien"}
                         </Button>
 
-                        <Button
-                            variant="outline"
-                            onClick={handlePrintPdf}
-                            disabled={!canPrintAndEmail || isProcessingPdf}
-                            className="gap-2 h-11 px-5 font-bold rounded-xl shadow-sm transition-all active:scale-95"
-                            title={!canPrintAndEmail ? "Impression disponible après approbation" : undefined}
-                        >
-                            {isProcessingPdf ? <RefreshCcw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                            Imprimer PDF
-                        </Button>
-                        <Button
-                            variant="outline"
-                            onClick={handlePrintGiftPdf}
-                            disabled={!canPrintAndEmail || isProcessingPdf}
-                            className="gap-2 h-11 px-5 font-bold rounded-xl shadow-sm transition-all active:scale-95"
-                            title={!canPrintAndEmail ? "Impression disponible après approbation" : undefined}
-                        >
-                            {isProcessingPdf ? <RefreshCcw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                            Imprimer PDF cadeau
-                        </Button>
-
                         {normalizedType === "client" && (
                             <Button
                                 variant="outline"
@@ -817,6 +833,14 @@ export default function ReglementDetails() {
                                         {data.statut}
                                     </Badge>
                                 </div>
+                                {userComment && (
+                                    <div className="space-y-1">
+                                        <span className="text-muted-foreground">Commentaire saisi</span>
+                                        <p className="text-sm font-medium whitespace-pre-wrap break-words">
+                                            {userComment}
+                                        </p>
+                                    </div>
+                                )}
                                 {situation && (
                                     <div className="mt-3 rounded-lg border border-border bg-muted/20 p-3 space-y-2">
                                         <div className="flex justify-between gap-3 text-xs">
@@ -888,6 +912,32 @@ export default function ReglementDetails() {
                                                 <FileText className="h-4 w-4 mr-2" />
                                                 {data.numero_commande}
                                             </Button>
+                                        )}
+                                        {hasDocumentPdf ? (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="w-full justify-start"
+                                                onClick={handleViewPdf}
+                                                disabled={isProcessingPdf}
+                                            >
+                                                <Eye className="h-4 w-4 mr-2" />
+                                                Voir le reçu original
+                                            </Button>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                <div className="flex items-center gap-2 text-muted-foreground">
+                                                    <Upload className="h-4 w-4" />
+                                                    <span>Téléverser le reçu original</span>
+                                                </div>
+                                                <Input
+                                                    ref={uploadInputRef}
+                                                    type="file"
+                                                    accept="application/pdf"
+                                                    onChange={handleUploadPdfChange}
+                                                    disabled={isProcessingPdf}
+                                                />
+                                            </div>
                                         )}
                                     </>
                                 ) : (

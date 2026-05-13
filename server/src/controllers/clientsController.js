@@ -115,19 +115,7 @@ exports.sendNewsletterCampaign = async (req, res) => {
 
 
 exports.createClient = async (req, res) => {
-    const {
-        nom_complet,
-        type,
-        ice,
-        numero_tva,
-        rc,
-        if_number,
-        cnss,
-        patente,
-        telephone,
-        email,
-        adresse,
-    } = req.body;
+    const { nom_complet, type, ice, telephone, email, adresse } = req.body;
     try {
         if (!nom_complet) {
             return res.status(400).json({
@@ -135,21 +123,9 @@ exports.createClient = async (req, res) => {
             })
         }
         const [result] = await db.execute(
-            "INSERT INTO clients (nom_complet, `type`, ice, numero_tva, rc, if_number, cnss, patente, telephone, email, adresse) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                nom_complet,
-                type || "particulier",
-                ice || null,
-                numero_tva || null,
-                rc || null,
-                if_number || null,
-                cnss || null,
-                patente || null,
-                telephone || null,
-                email || null,
-                adresse || null,
-            ]
-        );
+            "INSERT INTO clients (nom_complet, `type`, ice, telephone, email, adresse) VALUES (?, ?, ?, ?, ?, ?)",
+            [nom_complet, type || 'particulier', ice || null, telephone || null, email || null, adresse || null]
+        )
         res.status(201).json({
             message: "Client created successfully",
             id: result.insertId
@@ -198,19 +174,7 @@ exports.deleteClient = async (req, res) => {
 
 exports.updateClient = async (req, res) => {
     const { id } = req.params;
-    const {
-        nom_complet,
-        type,
-        ice,
-        numero_tva,
-        rc,
-        if_number,
-        cnss,
-        patente,
-        telephone,
-        email,
-        adresse,
-    } = req.body;
+    const { nom_complet, type, ice, telephone, email, adresse } = req.body;
     try {
         if (!nom_complet) {
             return res.status(400).json({
@@ -218,21 +182,8 @@ exports.updateClient = async (req, res) => {
             });
         }
         const [result] = await db.execute(
-            "UPDATE clients SET nom_complet = ?, `type` = ?, ice = ?, numero_tva = ?, rc = ?, if_number = ?, cnss = ?, patente = ?, telephone = ?, email = ?, adresse = ? WHERE id = ?",
-            [
-                nom_complet,
-                type || "particulier",
-                ice || null,
-                numero_tva || null,
-                rc || null,
-                if_number || null,
-                cnss || null,
-                patente || null,
-                telephone || null,
-                email || null,
-                adresse || null,
-                id,
-            ]
+            "UPDATE clients SET nom_complet = ?, `type` = ?, ice = ?, telephone = ?, email = ?, adresse = ? WHERE id = ?",
+            [nom_complet, type || 'particulier', ice || null, telephone || null, email || null, adresse || null, id]
         );
         if (result.affectedRows === 0) {
             return res.status(404).json({
@@ -382,11 +333,6 @@ exports.importClients = async (req, res) => {
                 nom_complet: nomComplet,
                 type: toNullableString(row.type) || "particulier",
                 ice: toNullableString(row.ice),
-                numero_tva: toNullableString(row.numero_tva),
-                rc: toNullableString(row.rc),
-                if_number: toNullableString(row.if_number ?? row.if),
-                cnss: toNullableString(row.cnss),
-                patente: toNullableString(row.patente),
                 telephone: toNullableString(row.telephone),
                 email: toNullableString(row.email),
                 adresse: toNullableString(row.adresse),

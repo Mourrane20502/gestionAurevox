@@ -13,6 +13,36 @@ const { getFacebookSettingsFromDb, updateFacebookSettingsInDb } = require("../ut
 const { getMetalPricing, mergeMetalPricing } = require("../utils/metalPricingSettings");
 const { getProductActionConfig, saveProductActionConfig } = require("../utils/productActionSettings");
 const db = require("../config/db").promise();
+const normalizeClientTypeValue = (value) =>
+    String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "_");
+const clientTypeLabelFromValue = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    return raw
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+const parseEnumValuesFromColumnType = (columnType) => {
+    const raw = String(columnType || "");
+    const match = raw.match(/^enum\((.*)\)$/i);
+    if (!match) return [];
+    const inside = match[1];
+    return inside
+        .split(",")
+        .map((p) => p.trim())
+        .map((p) => p.replace(/^'(.*)'$/, "$1"))
+        .map((p) => p.replace(/\\'/g, "'"))
+        .map((p) => normalizeClientTypeValue(p))
+        .filter(Boolean);
+};
+const sqlQuote = (value) => `'${String(value || "").replace(/'/g, "''")}'`;
+const getClientsTypeColumnMeta = async () => {
+    const [rows] = await db.execute("SHOW COLUMNS FROM clients LIKE 'type'");
+    return rows[0] || null;
+};
 
 exports.getNumberingSettings = async (req, res) => {
     try {
@@ -121,6 +151,117 @@ exports.deletePaymentMode = async (req, res) => {
     } catch (err) {
         console.error("Error deleting payment mode:", err);
         res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+exports.getClientTypes = async (_req, res) => {
+    try {
+        const colMeta = await getClientsTypeColumnMeta();
+        const enumValues = parseEnumValuesFromColumnType(colMeta?.Type);
+        const [rows] = await db.execute(
+            "SELECT DISTINCT TRIM(`type`) AS value FROM clients WHERE `type` IS NOT NULL AND TRIM(`type`) <> ''"
+        );
+        const defaults = ["particulier", "revendeur", "societe"];
+        const fromClients = rows
+            .map((r) => normalizeClientTypeValue(r.value))
+            .filter(Boolean);
+        const merged = Array.from(new Set([...defaults, ...enumValues, ...fromClients])).sort((a, b) =>
+            a.localeCompare(b, "fr", { sensitivity: "base" })
+        );
+        const payload = merged.map((value, idx) => ({
+            id: idx + 1,
+            value,
+            label: clientTypeLabelFromValue(value),
+        }));
+        return res.json(payload);
+    } catch (err) {
+        console.error("Error fetching client types:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+exports.addClientType = async (req, res) => {
+    try {
+        const value = normalizeClientTypeValue(req.body?.value || req.body?.label);
+        if (!value) return res.status(400).json({ message: "Type client requis" });
+
+        const colMeta = await getClientsTypeColumnMeta();
+        const enumValues = parseEnumValuesFromColumnType(colMeta?.Type);
+        const [exists] = await db.execute(
+            "SELECT 1 FROM clients WHERE LOWER(TRIM(`type`)) = ? LIMIT 1",
+            [value]
+        );
+        if (exists.length > 0 || enumValues.includes(value)) {
+            return res.status(200).json({ message: "Type déjà existant" });
+        }
+
+        if (enumValues.length > 0) {
+            const nextEnum = [...enumValues, value];
+            const enumSql = nextEnum.map(sqlQuote).join(", ");
+            const nullableSql = String(colMeta?.Null || "").toUpperCase() === "YES" ? "NULL" : "NOT NULL";
+            const defaultSql =
+                colMeta?.Default == null
+                    ? ""
+                    : ` DEFAULT ${sqlQuote(normalizeClientTypeValue(colMeta.Default))}`;
+            await db.execute(
+                `ALTER TABLE clients MODIFY COLUMN \`type\` ENUM(${enumSql}) ${nullableSql}${defaultSql}`
+            );
+        }
+
+        return res.status(201).json({ message: "Type client ajouté" });
+    } catch (err) {
+        console.error("Error adding client type:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+exports.updateClientType = async (req, res) => {
+    try {
+        const fromValue = normalizeClientTypeValue(req.params?.value);
+        const toValue = normalizeClientTypeValue(req.body?.value || req.body?.label);
+        if (!fromValue || !toValue) {
+            return res.status(400).json({ message: "Type source et destination requis" });
+        }
+        const colMeta = await getClientsTypeColumnMeta();
+        const enumValues = parseEnumValuesFromColumnType(colMeta?.Type);
+        if (enumValues.length > 0 && !enumValues.includes(toValue)) {
+            const nextEnum = [...enumValues, toValue];
+            const enumSql = nextEnum.map(sqlQuote).join(", ");
+            const nullableSql = String(colMeta?.Null || "").toUpperCase() === "YES" ? "NULL" : "NOT NULL";
+            const defaultSql =
+                colMeta?.Default == null
+                    ? ""
+                    : ` DEFAULT ${sqlQuote(normalizeClientTypeValue(colMeta.Default))}`;
+            await db.execute(
+                `ALTER TABLE clients MODIFY COLUMN \`type\` ENUM(${enumSql}) ${nullableSql}${defaultSql}`
+            );
+        }
+        const [result] = await db.execute(
+            "UPDATE clients SET `type` = ? WHERE LOWER(TRIM(`type`)) = ?",
+            [toValue, fromValue]
+        );
+        return res.json({ message: "Type client mis à jour", affectedRows: result.affectedRows || 0 });
+    } catch (err) {
+        console.error("Error updating client type:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+exports.deleteClientType = async (req, res) => {
+    try {
+        const value = normalizeClientTypeValue(req.params?.value);
+        if (!value) return res.status(400).json({ message: "Type client requis" });
+        if (value === "particulier") {
+            return res.status(400).json({ message: "Le type 'particulier' ne peut pas être supprimé" });
+        }
+        const [result] = await db.execute(
+            "UPDATE clients SET `type` = 'particulier' WHERE LOWER(TRIM(`type`)) = ?",
+            [value]
+        );
+        return res.json({ message: "Type client supprimé", affectedRows: result.affectedRows || 0 });
+    } catch (err) {
+        console.error("Error deleting client type:", err);
+        return res.status(500).json({ message: "Internal server error" });
     }
 };
 
@@ -434,108 +575,6 @@ exports.deleteSousSociete = async (req, res) => {
         res.json({ message: "Sous-société supprimée" });
     } catch (err) {
         console.error("Error deleting sous societe:", err);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
-exports.getMarques = async (_req, res) => {
-    try {
-        const [rows] = await db.query(
-            `
-            SELECT
-                id,
-                nom,
-                COALESCE(etat, 1) AS etat
-            FROM marques
-            ORDER BY id DESC
-            `
-        );
-        res.json(Array.isArray(rows) ? rows : []);
-    } catch (err) {
-        console.error("Error fetching marques:", err);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
-exports.addMarque = async (req, res) => {
-    try {
-        const nom = String(req.body?.nom || "").trim();
-        const etatInput = req.body?.etat;
-        const etat = etatInput === undefined || etatInput === null ? 1 : Number(etatInput) ? 1 : 0;
-
-        if (!nom) {
-            return res.status(400).json({ message: "Le nom de la marque est requis" });
-        }
-
-        const [exists] = await db.query(
-            "SELECT id FROM marques WHERE UPPER(TRIM(nom)) = UPPER(TRIM(?)) LIMIT 1",
-            [nom]
-        );
-        if (Array.isArray(exists) && exists.length > 0) {
-            return res.status(409).json({ message: "Cette marque existe déjà" });
-        }
-
-        const [result] = await db.query(
-            "INSERT INTO marques (nom, etat) VALUES (?, ?)",
-            [nom, etat]
-        );
-        res.status(201).json({ message: "Marque ajoutée", id: result.insertId });
-    } catch (err) {
-        console.error("Error adding marque:", err);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
-exports.updateMarque = async (req, res) => {
-    try {
-        const id = Number(req.params?.id);
-        const nom = String(req.body?.nom || "").trim();
-        const etatInput = req.body?.etat;
-        const etat = etatInput === undefined || etatInput === null ? 1 : Number(etatInput) ? 1 : 0;
-
-        if (!Number.isFinite(id) || id <= 0) {
-            return res.status(400).json({ message: "Marque invalide" });
-        }
-        if (!nom) {
-            return res.status(400).json({ message: "Le nom de la marque est requis" });
-        }
-
-        const [existing] = await db.query("SELECT id FROM marques WHERE id = ? LIMIT 1", [id]);
-        if (!Array.isArray(existing) || existing.length === 0) {
-            return res.status(404).json({ message: "Marque introuvable" });
-        }
-
-        const [dup] = await db.query(
-            "SELECT id FROM marques WHERE id <> ? AND UPPER(TRIM(nom)) = UPPER(TRIM(?)) LIMIT 1",
-            [id, nom]
-        );
-        if (Array.isArray(dup) && dup.length > 0) {
-            return res.status(409).json({ message: "Cette marque existe déjà" });
-        }
-
-        await db.query("UPDATE marques SET nom = ?, etat = ? WHERE id = ?", [nom, etat, id]);
-        res.json({ message: "Marque mise à jour" });
-    } catch (err) {
-        console.error("Error updating marque:", err);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
-exports.deleteMarque = async (req, res) => {
-    try {
-        const id = Number(req.params?.id);
-        if (!Number.isFinite(id) || id <= 0) {
-            return res.status(400).json({ message: "Marque invalide" });
-        }
-
-        const [result] = await db.query("DELETE FROM marques WHERE id = ? LIMIT 1", [id]);
-        if (!result?.affectedRows) {
-            return res.status(404).json({ message: "Marque introuvable" });
-        }
-
-        res.json({ message: "Marque supprimée" });
-    } catch (err) {
-        console.error("Error deleting marque:", err);
         res.status(500).json({ message: "Internal server error" });
     }
 };

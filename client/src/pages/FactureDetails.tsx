@@ -29,7 +29,8 @@ import {
     Send,
     Link as LinkIcon,
     Check,
-    RotateCcw
+    RotateCcw,
+    Truck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { generateFacturePdf } from "@/components/pdf/FacturePdf";
@@ -51,11 +52,17 @@ interface FactureItem {
 
 function formatDesignationWithReference(
   designation?: string | null,
-  reference?: string | null
+  reference?: string | null,
+  grammage?: number | string | null
 ): string {
   const label = String(designation || "").trim() || "—";
   const ref = String(reference || "").trim();
-  return ref ? `${label} (${ref})` : label;
+  const g = Number(grammage);
+  const gTxt = Number.isFinite(g) && g > 0 ? `${g.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} g` : "";
+  if (ref && gTxt) return `${label} (${ref} - ${gTxt})`;
+  if (ref) return `${label} (${ref})`;
+  if (gTxt) return `${label} (${gTxt})`;
+  return label;
 }
 
 interface FactureDetails {
@@ -76,16 +83,8 @@ interface FactureDetails {
   devis_id?: number | null;
   total_regle?: number;
   reste_a_payer?: number;
-}
-
-interface ComparableDocument {
-  id: number;
-  numero?: string | null;
-  montant_ht?: number;
-  montant_tva?: number;
-  montant_ttc?: number;
-  reduction?: number;
-  items?: FactureItem[];
+  bon_livraison_id?: number | null;
+  numero_bon_livraison_linked?: string | null;
 }
 
 export default function FactureDetailsPage() {
@@ -97,6 +96,7 @@ export default function FactureDetailsPage() {
   const [linkedCommandeNumero, setLinkedCommandeNumero] = useState<string | null>(null);
   const [linkedDevisNumero, setLinkedDevisNumero] = useState<string | null>(null);
   const [linkedAvoir, setLinkedAvoir] = useState<{ id: number; numero_avoir?: string } | null>(null);
+  const [linkedFactures, setLinkedFactures] = useState<{ id: number; numero_facture?: string }[]>([]);
 
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [emailData, setEmailData] = useState({ to: '', subject: '', message: '' });
@@ -105,14 +105,15 @@ export default function FactureDetailsPage() {
   const [reglements, setReglements] = useState<any[]>([]);
   const [isReglementsModalOpen, setIsReglementsModalOpen] = useState(false);
   const [linkedRemboursement, setLinkedRemboursement] = useState<{ id: number; created_at: string } | null>(null);
-  const [linkedCommandeDoc, setLinkedCommandeDoc] = useState<ComparableDocument | null>(null);
-  const [linkedDevisDoc, setLinkedDevisDoc] = useState<ComparableDocument | null>(null);
 
   const token = localStorage.getItem("token");
-  const linkedReglement =
-    (reglements || []).find((r: any) => String(r?.statut || "").toLowerCase() === "valide") ||
-    (reglements || [])[0] ||
-    null;
+  const getProductPhotoUrl = (photo?: string | null) => {
+    const p = String(photo || "").trim();
+    if (!p) return null;
+    if (/^https?:\/\//i.test(p)) return p;
+    const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+    return `${base}/uploads/${encodeURIComponent(p)}`;
+  };
   const mergeReglements = (rowsA: any[], rowsB: any[]) => {
     const merged = [...(Array.isArray(rowsA) ? rowsA : []), ...(Array.isArray(rowsB) ? rowsB : [])];
     const seen = new Set<number>();
@@ -145,6 +146,17 @@ export default function FactureDetailsPage() {
           
           // Fetch linked commande / devis numbers if any
           if (data.commande_id) {
+            fetch("/api/factures", {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+              .then(r => r.ok ? r.json() : [])
+              .then((facts: any[]) => {
+                const list = (Array.isArray(facts) ? facts : [])
+                  .filter((f: any) => Number(f?.commande_id) === Number(data.commande_id))
+                  .map((f: any) => ({ id: Number(f.id), numero_facture: f.numero_facture }));
+                setLinkedFactures(list);
+              })
+              .catch(() => { /* ignore */ });
             fetch(`/api/commandes/${data.commande_id}`, {
               headers: { Authorization: `Bearer ${token}` },
             })
@@ -152,15 +164,6 @@ export default function FactureDetailsPage() {
               .then(cmd => {
                 if (cmd && cmd.numero_commande) setLinkedCommandeNumero(cmd.numero_commande);
                 if (cmd) {
-                  setLinkedCommandeDoc({
-                    id: Number(cmd.id) || Number(data.commande_id),
-                    numero: cmd.numero_commande || null,
-                    montant_ht: Number(cmd.montant_ht) || 0,
-                    montant_tva: Number(cmd.montant_tva) || 0,
-                    montant_ttc: Number(cmd.montant_ttc) || 0,
-                    reduction: Number(cmd.reduction) || 0,
-                    items: Array.isArray(cmd.items) ? cmd.items : [],
-                  });
                   if (!data.devis_id && cmd.devis_id) {
                     fetch(`/api/devis/${cmd.devis_id}`, {
                       headers: { Authorization: `Bearer ${token}` },
@@ -168,22 +171,9 @@ export default function FactureDetailsPage() {
                       .then(rd => rd.ok ? rd.json() : null)
                       .then(dv => {
                         if (dv && dv.numero_devis) setLinkedDevisNumero(dv.numero_devis);
-                        if (dv) {
-                          setLinkedDevisDoc({
-                            id: Number(dv.id) || Number(cmd.devis_id),
-                            numero: dv.numero_devis || null,
-                            montant_ht: Number(dv.montant_ht) || 0,
-                            montant_tva: Number(dv.montant_tva) || 0,
-                            montant_ttc: Number(dv.montant_ttc) || 0,
-                            reduction: Number(dv.reduction) || 0,
-                            items: Array.isArray(dv.items) ? dv.items : [],
-                          });
-                        }
                       })
                       .catch(() => { /* ignore */ });
                   }
-                } else {
-                  setLinkedCommandeDoc(null);
                 }
               })
               .catch(() => { /* ignore */ });
@@ -203,9 +193,7 @@ export default function FactureDetailsPage() {
               })
               .catch(() => { /* ignore */ });
           }
-          if (!data.commande_id) {
-            setLinkedCommandeDoc(null);
-          }
+          if (!data.commande_id) setLinkedFactures([]);
           if (data.devis_id) {
             fetch(`/api/devis/${data.devis_id}`, {
               headers: { Authorization: `Bearer ${token}` },
@@ -213,24 +201,9 @@ export default function FactureDetailsPage() {
               .then(r => r.ok ? r.json() : null)
               .then(d => {
                 if (d && d.numero_devis) setLinkedDevisNumero(d.numero_devis);
-                if (d) {
-                  setLinkedDevisDoc({
-                    id: Number(d.id) || Number(data.devis_id),
-                    numero: d.numero_devis || null,
-                    montant_ht: Number(d.montant_ht) || 0,
-                    montant_tva: Number(d.montant_tva) || 0,
-                    montant_ttc: Number(d.montant_ttc) || 0,
-                    reduction: Number(d.reduction) || 0,
-                    items: Array.isArray(d.items) ? d.items : [],
-                  });
-                } else {
-                  setLinkedDevisDoc(null);
-                }
+                // no-op
               })
               .catch(() => { /* ignore */ });
-          }
-          if (!data.devis_id) {
-            setLinkedDevisDoc(null);
           }
 
           fetch("/api/avoirs", { headers: { Authorization: `Bearer ${token}` } })
@@ -317,92 +290,119 @@ export default function FactureDetailsPage() {
   };
 
   const items = facture?.items || [];
+  const isSplitFactureView = linkedFactures.length > 1;
+  const currentFactureId = Number(facture?.id || 0);
   const totalRegleFromReglements = reglements
-    .filter(r => r.statut === 'approuve')
+    .filter((r: any) => {
+      if (r.statut !== "approuve") return false;
+      const regFactureId = Number(r?.facture_id || 0);
+      return currentFactureId > 0 ? regFactureId === currentFactureId : true;
+    })
     .reduce((sum, r) => sum + (Number(r.montant) || 0), 0);
   const totalRegleComputed = Math.max(Number(facture?.total_regle) || 0, totalRegleFromReglements);
 
-  const anomalyMessages = useMemo(() => {
-    if (!facture) return [] as string[];
 
-    const epsilon = 0.01;
-    const formatDh = (v: number) =>
-      `${Number(v || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
-    const formatPct = (v: number) =>
-      `${Number(v || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
-    const normalize = (s: string) => (s || "").trim().toLowerCase();
-    const keyOf = (it: FactureItem) =>
-      [
-        normalize(it.designation || ""),
-        Number(it.prix_unitaire || 0).toFixed(2),
-        Number(it.tva || 0).toFixed(2),
-        Number(it.reduction || 0).toFixed(2),
-      ].join("|");
-    const quantityByKey = (list: FactureItem[]) => {
-      const map = new Map<string, number>();
-      for (const it of list || []) {
-        const k = keyOf(it);
-        map.set(k, (map.get(k) || 0) + Number(it.quantite || 0));
-      }
-      return map;
+  const totalsView = useMemo(() => {
+    const round2 = (v: unknown) => Math.round((Number(v) || 0) * 100) / 100;
+    const normalizeDisplayAmount = (v: unknown) => {
+      const r = round2(v);
+      const nearInt = Math.round(r);
+      // Neutralise les micro écarts visuels (ex: 19999.98 / 20000.02)
+      return Math.abs(r - nearInt) <= 0.02 ? nearInt : r;
     };
+    if (!facture) {
+      return {
+        reductionAmountDh: 0,
+        displayMontantTtc: 0,
+        displayMontantHt: 0,
+        displayMontantTva: 0,
+        displayLineTotals: [] as number[],
+      };
+    }
 
-    const messages: string[] = [];
-    const facItems = Array.isArray(facture.items) ? facture.items : [];
-    const refs: Array<{ label: string; doc: ComparableDocument | null }> = [
-      { label: "Commande", doc: linkedCommandeDoc },
-      { label: "Devis", doc: linkedDevisDoc },
-    ];
+    const reductionAmountDh = (facture.items || []).reduce((acc, it) => {
+      const bruteHT = (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0);
+      const redPct = Number(it.reduction) || 0;
+      return acc + (bruteHT * redPct) / 100;
+    }, 0);
 
-    for (const { label, doc } of refs) {
-      if (!doc) continue;
+    const allItemsTvaZero = items.length > 0
+      ? items.every((it) => Math.abs(Number(it?.tva) || 0) < 0.005)
+      : Math.abs(Number(facture.montant_tva) || 0) < 0.005;
 
-      const refReduction = Number(doc.reduction || 0);
-      const facReduction = Number(facture.reduction || 0);
-      if (Math.abs(refReduction - facReduction) > epsilon) {
-        messages.push(
-          `${label}: écart de réduction (${formatPct(refReduction)} vs facture ${formatPct(facReduction)}).`
+    const displayMontantTtc = normalizeDisplayAmount(facture.montant_ttc);
+    let displayMontantHt = normalizeDisplayAmount(facture.montant_ht);
+    let displayMontantTva = round2(facture.montant_tva);
+
+    if (allItemsTvaZero) {
+      displayMontantTva = 0;
+      displayMontantHt = displayMontantTtc;
+    } else if (Math.abs(displayMontantHt + displayMontantTva - displayMontantTtc) <= 0.05) {
+      displayMontantTva = round2(displayMontantTtc - displayMontantHt);
+    }
+
+    const base = items.map((it) => round2(it.montant_ht));
+    let displayLineTotals = base;
+    if (base.length > 0) {
+      const sumBase = round2(base.reduce((acc, n) => acc + n, 0));
+      const delta = round2(displayMontantHt - sumBase);
+      if (Math.abs(delta) > 0.009) {
+        displayLineTotals = [...base];
+        displayLineTotals[displayLineTotals.length - 1] = round2(
+          displayLineTotals[displayLineTotals.length - 1] + delta
         );
-      }
-
-      const refHt = Number(doc.montant_ht || 0);
-      const refTva = Number(doc.montant_tva || 0);
-      const refTtc = Number(doc.montant_ttc || 0);
-      const facHt = Number(facture.montant_ht || 0);
-      const facTva = Number(facture.montant_tva || 0);
-      const facTtc = Number(facture.montant_ttc || 0);
-      if (Math.abs(refHt - facHt) > epsilon) {
-        messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs facture ${formatDh(facHt)}).`);
-      }
-      if (Math.abs(refTva - facTva) > epsilon) {
-        messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs facture ${formatDh(facTva)}).`);
-      }
-      if (Math.abs(refTtc - facTtc) > epsilon) {
-        messages.push(`${label}: écart montant TTC (${formatDh(refTtc)} vs facture ${formatDh(facTtc)}).`);
-      }
-
-      const refItems = Array.isArray(doc.items) ? doc.items : [];
-      if (refItems.length !== facItems.length) {
-        messages.push(`${label}: nombre de lignes différent (${refItems.length} vs facture ${facItems.length}).`);
-      }
-
-      const refMap = quantityByKey(refItems);
-      const facMap = quantityByKey(facItems);
-      const allKeys = new Set<string>([...refMap.keys(), ...facMap.keys()]);
-      for (const k of allKeys) {
-        const rq = Number(refMap.get(k) || 0);
-        const fq = Number(facMap.get(k) || 0);
-        if (Math.abs(rq - fq) > epsilon) {
-          const [designation, pu, tva, red] = k.split("|");
-          messages.push(
-            `${label}: ligne "${designation || "article"}" (PU ${pu}, TVA ${tva}%, Red ${red}%) quantité ${rq} vs facture ${fq}.`
-          );
-        }
       }
     }
 
-    return messages;
-  }, [facture, linkedCommandeDoc, linkedDevisDoc]);
+    return {
+      reductionAmountDh,
+      displayMontantTtc,
+      displayMontantHt,
+      displayMontantTva,
+      displayLineTotals,
+    };
+  }, [facture, items]);
+
+  const detailRows = useMemo(() => {
+    const round2 = (v: unknown) => Math.round((Number(v) || 0) * 100) / 100;
+    const baseRows = items.map((item, idx) => {
+      const total = round2(
+        totalsView.displayLineTotals[idx] ??
+          Math.round((Number(item.montant_ht) || 0) * 100) / 100
+      );
+      const qty = Number(item.quantite) || 0;
+      return { item, total, qty };
+    });
+
+    if (!isSplitFactureView) {
+      return baseRows.map((r) => ({
+        item: r.item,
+        displayQty: r.qty,
+        displayUnit: Number(r.item.prix_unitaire) || 0,
+        displayTotal: r.total,
+      }));
+    }
+
+    // In split context, show a single recap line:
+    // - PU equals invoice total (business expectation)
+    // - Quantity equals entered quantities sum
+    const firstItem = baseRows[0]?.item;
+    const qtySum = round2(baseRows.reduce((sum, r) => sum + (Number(r.item.quantite) || 0), 0));
+    const fallbackQty = baseRows.length;
+    const displayQty = qtySum > 0 ? qtySum : fallbackQty;
+    const invoiceTotal = round2(totalsView.displayMontantTtc);
+
+    return firstItem
+      ? [
+          {
+            item: firstItem,
+            displayQty,
+            displayUnit: invoiceTotal,
+            displayTotal: invoiceTotal,
+          },
+        ]
+      : [];
+  }, [items, totalsView.displayLineTotals, totalsView.displayMontantTtc, isSplitFactureView]);
 
   if (isLoading) {
     return (
@@ -431,11 +431,6 @@ export default function FactureDetailsPage() {
     );
   }
 
-  const reductionAmountDh = (facture.items || []).reduce((acc, it) => {
-    const bruteHT = (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0);
-    const redPct = Number(it.reduction) || 0;
-    return acc + (bruteHT * redPct) / 100;
-  }, 0);
 
   return (
     <div className="space-y-8 pb-20 animate-in fade-in duration-500">
@@ -553,12 +548,6 @@ export default function FactureDetailsPage() {
                     <span className="text-sm font-black text-foreground">{reste.toLocaleString()} DH</span>
                   </div>
                 )}
-                {totalRegle > 0 && (
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Déjà réglé</span>
-                    <span className="text-sm font-bold text-indigo-600">{totalRegle.toLocaleString()} DH <span className="text-muted-foreground font-normal">/ {montantTtc.toLocaleString()} DH</span></span>
-                  </div>
-                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -657,34 +646,6 @@ export default function FactureDetailsPage() {
         );
       })()}
 
-      {anomalyMessages.length > 0 && (
-        <Card className="border-l-4 border-l-red-500 border-red-200 bg-red-50/40 dark:bg-red-900/10 overflow-hidden shadow-none rounded-xl">
-          <CardContent className="py-4 px-6 space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="h-10 w-10 shrink-0 rounded-full bg-red-100 flex items-center justify-center text-red-600 shadow-sm">
-                <AlertTriangle className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-black uppercase tracking-wider text-red-700">
-                  Anomalies détectées entre devis / commande / facture
-                </p>
-                <p className="text-xs text-red-700/80 font-medium">
-                  Vérifiez ces écarts avant validation finale ({anomalyMessages.length} écart{anomalyMessages.length > 1 ? "s" : ""}).
-                </p>
-              </div>
-            </div>
-            <ul className="space-y-1 pl-2">
-              {anomalyMessages.map((msg, idx) => (
-                <li key={`${idx}-${msg}`} className="text-xs text-red-800 dark:text-red-300 flex items-start gap-2">
-                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
-                  <span>{msg}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Information Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card className="border border-border shadow-sm bg-card hover:shadow-md transition-shadow duration-300">
@@ -776,6 +737,37 @@ export default function FactureDetailsPage() {
                 ) : (
                     <p className="text-[10px] text-muted-foreground italic mt-2">Aucune commande liée</p>
                 )}
+                {Number(facture.bon_livraison_id) > 0 ? (
+                    <button
+                        type="button"
+                        className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-100 transition-colors"
+                        onClick={() => navigate(`/dashboard/bons-livraison/${facture.bon_livraison_id}`)}
+                    >
+                        <div className="flex items-center gap-1.5">
+                            <Truck className="h-3 w-3" />
+                            <span>
+                                Bon de livraison {facture.numero_bon_livraison_linked || `#${facture.bon_livraison_id}`}
+                            </span>
+                        </div>
+                        <ArrowUpRight className="h-3 w-3" />
+                    </button>
+                ) : null}
+                {linkedFactures
+                  .filter((f) => Number(f.id) !== Number(facture.id))
+                  .map((f) => (
+                    <button
+                        key={`linked-fac-${f.id}`}
+                        type="button"
+                        className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100 transition-colors"
+                        onClick={() => navigate(`/dashboard/factures/${f.id}`)}
+                    >
+                        <div className="flex items-center gap-1.5">
+                            <Receipt className="h-3 w-3" />
+                            <span>Facture associée {f.numero_facture || f.id}</span>
+                        </div>
+                        <ArrowUpRight className="h-3 w-3" />
+                    </button>
+                ))}
                 {linkedAvoir ? (
                     <button
                         type="button"
@@ -789,21 +781,22 @@ export default function FactureDetailsPage() {
                         <ArrowUpRight className="h-3 w-3" />
                     </button>
                 ) : null}
-                {linkedReglement ? (
+                {(reglements || []).map((r: any) => (
                     <button
+                        key={`linked-reg-${r.id}`}
                         type="button"
                         className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-100 transition-colors"
-                        onClick={() => navigate(`/dashboard/reglements/details/client/${linkedReglement.id}`)}
+                        onClick={() => navigate(`/dashboard/reglements/details/client/${r.id}`)}
                     >
                         <div className="flex items-center gap-1.5">
                             <Receipt className="h-3 w-3" />
                             <span>
-                                Règlement {buildReglementCode("client", Number(linkedReglement.id), String(linkedReglement.date_reglement || linkedReglement.created_at || ""), Number(linkedReglement.numero_recu || 0) || null, linkedReglement.sous_societe_nom, linkedReglement.numero_facture || linkedReglement.numero_commande)}
+                                Règlement {buildReglementCode("client", Number(r.id), String(r.date_reglement || r.created_at || ""), Number(r.numero_recu || 0) || null, r.sous_societe_nom, r.numero_facture || r.numero_commande)}
                             </span>
                         </div>
                         <ArrowUpRight className="h-3 w-3" />
                     </button>
-                ) : null}
+                ))}
                 {linkedRemboursement && (
                     <button
                         type="button"
@@ -831,7 +824,7 @@ export default function FactureDetailsPage() {
                 <p className="text-[10px] text-muted-foreground font-semibold">Récapitulatif des prestations et articles</p>
             </div>
             <span className="text-[11px] font-black bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full border border-indigo-200">
-                {items.length} Article(s)
+                {detailRows.length} Article(s)
             </span>
         </CardHeader>
         <CardContent className="p-0">
@@ -848,30 +841,54 @@ export default function FactureDetailsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item, idx) => (
+                {detailRows.map((row, idx) => {
+                  const item = row.item;
+                  return (
                   <TableRow key={idx} className="border-b border-border/50 hover:bg-muted/5 transition-all">
                     <TableCell className="pl-8 py-4">
-                        <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-400">
-                                <Tag className="h-4 w-4" />
+                        <div className="flex items-center gap-3 group/img">
+                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-100 text-slate-400 overflow-hidden">
+                                {getProductPhotoUrl((item as any).photo) ? (
+                                  <>
+                                    <img src={getProductPhotoUrl((item as any).photo) || ""} alt={item.designation || "Produit"} className="h-full w-full object-cover cursor-zoom-in transition-opacity hover:opacity-80" />
+                                    <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden group-hover/img:flex z-[9999] pointer-events-none items-center justify-center">
+                                      <div className="w-80 h-80 bg-white dark:bg-slate-900 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.4)] border-8 border-white dark:border-slate-800 p-1 animate-in fade-in zoom-in duration-300">
+                                        <img src={getProductPhotoUrl((item as any).photo) || ""} alt={item.designation || "Produit"} className="w-full h-full object-cover rounded-xl" />
+                                        <div className="absolute -bottom-10 left-0 right-0 py-2 text-white text-sm font-bold uppercase tracking-widest text-center bg-indigo-600/90 backdrop-blur-sm rounded-lg shadow-xl">
+                                          {item.designation || "Produit"}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <Tag className="h-4 w-4" />
+                                )}
                             </div>
                             <span className="font-bold text-slate-800 dark:text-slate-200">
                               {formatDesignationWithReference(
                                 item.designation,
-                                item.reference || item.produit_reference || item.product_reference || null
+                                item.reference || item.produit_reference || item.product_reference || null,
+                                (item as any).grammage
                               )}
                             </span>
                         </div>
                     </TableCell>
                     <TableCell className="text-center font-black text-slate-700 dark:text-slate-300">
-                      {Number(item.quantite).toLocaleString("fr-FR")}
+                      {Number(row.displayQty).toLocaleString("fr-FR", {
+                        minimumFractionDigits:
+                          Number.isInteger(Number(row.displayQty)) ? 0 : 2,
+                        maximumFractionDigits: 6,
+                      })}
                     </TableCell>
                     <TableCell className="text-center font-medium text-slate-600 dark:text-slate-400">
-                      {Number(item.prix_unitaire).toLocaleString("fr-FR")} DH
+                      {`${Number(row.displayUnit).toLocaleString("fr-FR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })} DH`}
                     </TableCell>
                     <TableCell className="text-center">
                       <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded text-[10px] font-bold text-slate-500">
-                        {Number(item.tva).toFixed(0)}%
+                        {(Math.abs(Number(item.tva) || 0) < 0.005 ? 0 : Number(item.tva)).toFixed(0)}%
                       </span>
                     </TableCell>
                     <TableCell className="text-center">
@@ -883,15 +900,16 @@ export default function FactureDetailsPage() {
                         </span>
                     </TableCell>
                     <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200">
-                      {(
-                        (Number(item.montant_ht) || 0) *
-                        (1 + (Number(item.tva) || 0) / 100)
-                      ).toLocaleString("fr-FR")}{" "}
+                      {Number(row.displayTotal).toLocaleString("fr-FR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{" "}
                       DH
                     </TableCell>
                   </TableRow>
-                ))}
-                {items.length === 0 && (
+                );
+                })}
+                {detailRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-16">
                         <div className="flex flex-col items-center gap-2 opacity-30">
@@ -915,17 +933,17 @@ export default function FactureDetailsPage() {
                 <div className="space-y-3">
                     <div className="flex justify-between items-center group text-sm">
                         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">TOTAL</span>
-                        <span className="font-bold text-foreground">{Number(facture.montant_ht).toLocaleString("fr-FR")} DH</span>
+                        <span className="font-bold text-foreground">{totalsView.displayMontantHt.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH</span>
                     </div>
                     <div className="flex justify-between items-center group text-sm">
                         <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">TVA Appliquée</span>
-                        <span className="font-bold text-amber-500">+{Number(facture.montant_tva).toLocaleString("fr-FR")} DH</span>
+                        <span className="font-bold text-amber-500">+{totalsView.displayMontantTva.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH</span>
                     </div>
                     {facture.reduction && Number(facture.reduction) > 0 && (
                       <div className="flex justify-between items-center group text-sm">
                           <span className="text-[10px] font-black uppercase tracking-widest text-red-500">Remise Global</span>
                           <span className="font-bold text-red-500">
-                            -{facture.reduction}% ({reductionAmountDh.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH)
+                            -{facture.reduction}% ({totalsView.reductionAmountDh.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH)
                           </span>
                       </div>
                     )}
@@ -937,7 +955,7 @@ export default function FactureDetailsPage() {
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500 mb-1">Montant Net à Payer</span>
                     <div className="flex items-baseline gap-1.5">
                         <span className="text-3xl font-black text-indigo-700 tracking-tight">
-                            {Number(facture.montant_ttc).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {totalsView.displayMontantTtc.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                         <span className="text-sm font-black text-indigo-600/60 uppercase">DH</span>
                     </div>
@@ -1052,7 +1070,6 @@ export default function FactureDetailsPage() {
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-foreground">Référence</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-foreground">Date</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-foreground">Mode</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-foreground">Banque</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right text-foreground">Montant</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center text-foreground">Statut</TableHead>
                 </TableRow>
@@ -1060,7 +1077,7 @@ export default function FactureDetailsPage() {
               <TableBody>
                 {reglements.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground font-medium">
+                    <TableCell colSpan={5} className="text-center py-12 text-muted-foreground font-medium">
                       <div className="flex flex-col items-center gap-2 opacity-40">
                         <Receipt className="h-8 w-8" />
                         <span>Aucun règlement saisi pour cette facture.</span>
@@ -1083,7 +1100,6 @@ export default function FactureDetailsPage() {
                         {new Date(r.date_reglement).toLocaleDateString("fr-FR")}
                       </TableCell>
                       <TableCell className="text-xs font-bold capitalize text-indigo-600">{r.mode_paiement}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground font-medium">{r.banque_nom || "—"}</TableCell>
                       <TableCell className="text-right font-black text-sm">
                         {Number(r.montant).toLocaleString()} DH
                       </TableCell>

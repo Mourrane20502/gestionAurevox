@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/common/ui/card";
 import {
     Table,
@@ -216,6 +216,7 @@ function exportClientSituationToPdf(client: Client, products: ClientProduct[]) {
 
 export default function ClientSituation() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const role = localStorage.getItem("role");
     const permissions = JSON.parse(localStorage.getItem("permissions") || "[]");
     const roleLower = (role || "").toLowerCase();
@@ -234,6 +235,10 @@ export default function ClientSituation() {
     const [clientDocuments, setClientDocuments] = useState<ClientDocument[]>([]);
     const [productsPage, setProductsPage] = useState(1);
     const [documentsPage, setDocumentsPage] = useState(1);
+    const [productSearchQuery, setProductSearchQuery] = useState("");
+    const [productNameFilter, setProductNameFilter] = useState("");
+    const [productReferenceFilter, setProductReferenceFilter] = useState("");
+    const [productCategoryFilter, setProductCategoryFilter] = useState("");
     const token = localStorage.getItem("token");
     const pageSize = 10;
 
@@ -257,9 +262,35 @@ export default function ClientSituation() {
     const selectedClient = selectedClientId
         ? clients.find((c) => String(c.id) === selectedClientId) ?? null
         : null;
-    const productsTotalPages = Math.max(1, Math.ceil(clientProducts.length / pageSize));
+    const normalize = (v: unknown) => String(v || "").toLowerCase().trim();
+    const filteredClientProducts = clientProducts.filter((p) => {
+        const productName = normalize(p.product_name);
+        const reference = normalize(p.reference);
+        const category = normalize(p.category_name);
+        const pointDeVente = normalize(p.point_de_vente_name);
+        const global = normalize(productSearchQuery);
+        const nameFilter = normalize(productNameFilter);
+        const refFilter = normalize(productReferenceFilter);
+        const catFilter = normalize(productCategoryFilter);
+
+        if (nameFilter && !productName.includes(nameFilter)) return false;
+        if (refFilter && !reference.includes(refFilter)) return false;
+        if (catFilter && !category.includes(catFilter)) return false;
+        if (
+            global &&
+            !productName.includes(global) &&
+            !reference.includes(global) &&
+            !category.includes(global) &&
+            !pointDeVente.includes(global)
+        ) {
+            return false;
+        }
+        return true;
+    });
+
+    const productsTotalPages = Math.max(1, Math.ceil(filteredClientProducts.length / pageSize));
     const documentsTotalPages = Math.max(1, Math.ceil(clientDocuments.length / pageSize));
-    const paginatedProducts = clientProducts.slice(
+    const paginatedProducts = filteredClientProducts.slice(
         (productsPage - 1) * pageSize,
         productsPage * pageSize
     );
@@ -287,9 +318,23 @@ export default function ClientSituation() {
     }, [token]);
 
     useEffect(() => {
+        const clientIdFromUrl = searchParams.get("clientId");
+        if (!clientIdFromUrl || clients.length === 0 || selectedClientId) return;
+        const found = clients.find((c) => String(c.id) === String(clientIdFromUrl));
+        if (!found) return;
+        setSelectedClientId(String(found.id));
+        setClientSearchQuery(found.nom_complet);
+        setClientDropdownOpen(false);
+    }, [searchParams, clients, selectedClientId]);
+
+    useEffect(() => {
         setProductsPage(1);
         setDocumentsPage(1);
     }, [selectedClientId]);
+
+    useEffect(() => {
+        setProductsPage(1);
+    }, [productSearchQuery, productNameFilter, productReferenceFilter, productCategoryFilter]);
 
     useEffect(() => {
         setProductsPage((prev) => Math.min(prev, productsTotalPages));
@@ -478,7 +523,7 @@ export default function ClientSituation() {
                                     size="sm"
                                     variant="outline"
                                     className="h-8 px-3 text-xs gap-1"
-                                    onClick={() => exportClientSituationToPdf(selectedClient, clientProducts)}
+                                    onClick={() => exportClientSituationToPdf(selectedClient, filteredClientProducts)}
                                 >
                                     <FileText className="h-3.5 w-3.5" />
                                     PDF
@@ -488,7 +533,7 @@ export default function ClientSituation() {
                                     size="sm"
                                     variant="outline"
                                     className="h-8 px-3 text-xs gap-1"
-                                    onClick={() => exportClientSituationToXls(selectedClient, clientProducts)}
+                                    onClick={() => exportClientSituationToXls(selectedClient, filteredClientProducts)}
                                 >
                                     <FileSpreadsheet className="h-3.5 w-3.5" />
                                     XLS
@@ -629,6 +674,35 @@ export default function ClientSituation() {
                             </div>
                         )}
 
+                        {!isLoadingProducts && clientProducts.length > 0 && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
+                                <Input
+                                    value={productSearchQuery}
+                                    onChange={(e) => setProductSearchQuery(e.target.value)}
+                                    placeholder="Filtre global (produit, réf, catégorie...)"
+                                    className="h-9"
+                                />
+                                <Input
+                                    value={productNameFilter}
+                                    onChange={(e) => setProductNameFilter(e.target.value)}
+                                    placeholder="Nom produit"
+                                    className="h-9"
+                                />
+                                <Input
+                                    value={productReferenceFilter}
+                                    onChange={(e) => setProductReferenceFilter(e.target.value)}
+                                    placeholder="Référence"
+                                    className="h-9"
+                                />
+                                <Input
+                                    value={productCategoryFilter}
+                                    onChange={(e) => setProductCategoryFilter(e.target.value)}
+                                    placeholder="Catégorie"
+                                    className="h-9"
+                                />
+                            </div>
+                        )}
+
                         <div className="rounded-xl border border-border overflow-hidden">
                             <Table>
                                 <TableHeader>
@@ -689,7 +763,7 @@ export default function ClientSituation() {
                                                 </TableCell>
                                             </TableRow>
                                         ))
-                                    ) : clientProducts.length === 0 ? (
+                                    ) : filteredClientProducts.length === 0 ? (
                                         <TableRow>
                                             <TableCell
                                                 colSpan={7}
@@ -698,10 +772,10 @@ export default function ClientSituation() {
                                                 <div className="flex flex-col items-center text-muted">
                                                     <ShoppingBag className="h-10 w-10 mb-3 stroke-1" />
                                                     <p className="font-medium text-muted-foreground">
-                                                        Aucun produit acheté
+                                                        Aucun résultat
                                                     </p>
                                                     <p className="text-sm text-muted">
-                                                        Ce client n'a encore acheté aucun produit
+                                                        Ajustez les filtres pour afficher des produits
                                                     </p>
                                                 </div>
                                             </TableCell>
@@ -843,11 +917,11 @@ export default function ClientSituation() {
                                 </TableBody>
                             </Table>
                         </div>
-                        {!isLoadingProducts && clientProducts.length > pageSize && (
+                        {!isLoadingProducts && filteredClientProducts.length > pageSize && (
                             <div className="flex items-center justify-between gap-3 pt-1">
                                 <p className="text-xs text-muted-foreground">
                                     Affichage {(productsPage - 1) * pageSize + 1}-
-                                    {Math.min(productsPage * pageSize, clientProducts.length)} sur {clientProducts.length}
+                                    {Math.min(productsPage * pageSize, filteredClientProducts.length)} sur {filteredClientProducts.length}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button
@@ -894,7 +968,7 @@ export default function ClientSituation() {
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 pl-4">N° Document</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3">Date</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3">Type</TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">Montant TTC</TableHead>
+                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">Montant</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">Réglé</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">Reste</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-center">Règlement</TableHead>

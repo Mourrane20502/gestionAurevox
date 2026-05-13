@@ -4,6 +4,20 @@ const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
 const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
 
+const parseDateOnlySafe = (value) => {
+    const raw = String(value || "").trim();
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
+        if (!Number.isNaN(dt.getTime())) return dt;
+    }
+    const fallback = new Date(raw);
+    return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+};
+
 async function resolveSousSocieteFromPdv(connection, pointDeVenteId) {
     const pdvId = Number(pointDeVenteId);
     if (!Number.isFinite(pdvId) || pdvId <= 0) return { id: null, nom: null };
@@ -93,6 +107,27 @@ exports.getCommandeById = async (req, res) => {
                        LIMIT 1
                    ) AS point_de_vente_logo,
                    (
+                       SELECT pv2.nom
+                       FROM commande_items ci
+                       INNER JOIN products p ON ci.produit_id = p.id
+                       INNER JOIN point_de_vente pv2 ON pv2.id = p.id_point_de_vente
+                       WHERE ci.commande_id = c.id AND p.id_point_de_vente IS NOT NULL
+                       ORDER BY ci.id
+                       LIMIT 1
+                   ) AS point_de_vente_nom_from_items,
+                   (
+                       SELECT COUNT(DISTINCT p.id_point_de_vente)
+                       FROM commande_items ci
+                       INNER JOIN products p ON ci.produit_id = p.id
+                       WHERE ci.commande_id = c.id AND p.id_point_de_vente IS NOT NULL
+                   ) AS pdv_count_from_items,
+                   (
+                       SELECT pv_cmd.nom
+                       FROM point_de_vente pv_cmd
+                       WHERE pv_cmd.id = c.point_de_vente_id
+                       LIMIT 1
+                   ) AS point_de_vente_nom_commande,
+                   (
                        SELECT ssn.NOM_SOUS_SOCIETE
                        FROM sous_societe ssn
                        WHERE UPPER(LEFT(TRIM(ssn.NOM_SOUS_SOCIETE), 1)) = UPPER(SUBSTRING_INDEX(SUBSTRING_INDEX(c.numero_commande, '-', 2), '-', -1))
@@ -102,14 +137,16 @@ exports.getCommandeById = async (req, res) => {
                    (SELECT numero_facture FROM factures WHERE commande_id = c.id LIMIT 1) as facture_numero,
                    (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) as facture_id,
                    (SELECT 1 FROM avoirs WHERE commande_id = c.id LIMIT 1) as has_avoir,
-                   (SELECT 1 FROM avoirs WHERE facture_id = (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) LIMIT 1) as has_avoir_facture
+                   (SELECT 1 FROM avoirs WHERE facture_id = (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) LIMIT 1) as has_avoir_facture,
+                   (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
+                   (SELECT bl.numero_bon_livraison FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS numero_bon_livraison_linked
             FROM commandes c
             LEFT JOIN clients cl ON c.client_id = cl.id
             WHERE c.id = ?
         `;
         const params = [id];
 
-        if (req.user.role !== 'admin') {
+        if (req.user.role !== 'admin' && req.user.role !== 'directeur' && req.user.role !== 'responsable') {
             query += " AND c.user_id = ?";
             params.push(req.user.id);
         }
@@ -119,9 +156,24 @@ exports.getCommandeById = async (req, res) => {
             return res.status(404).json({ message: "Commande not found" });
         }
 
+        const r0 = rows[0];
+        const pdvCount = Number(r0.pdv_count_from_items) || 0;
+        const point_de_vente_nom =
+            pdvCount > 1
+                ? "Plusieurs points de vente"
+                : (r0.point_de_vente_nom_from_items || r0.point_de_vente_nom_commande || null);
+
+        const {
+            point_de_vente_nom_from_items: _pdvNomItems,
+            point_de_vente_nom_commande: _pdvNomCmd,
+            pdv_count_from_items: _pdvCnt,
+            ...r0rest
+        } = r0;
+
         const row = {
-            ...rows[0],
-            sous_societe_nom: rows[0].sous_societe_nom_from_numero || null,
+            ...r0rest,
+            point_de_vente_nom,
+            sous_societe_nom: r0.sous_societe_nom_from_numero || null,
         };
         const factureId = row.facture_id != null ? row.facture_id : null;
 
@@ -156,7 +208,7 @@ exports.getCommandeById = async (req, res) => {
         const resteAPayer = Math.max(montantRef - totalRegle, 0);
 
         const [items] = await db.execute(`
-            SELECT ci.*, p.photo, p.poids AS grammage, p.reference, COALESCE(p.nom, ci.designation) as designation,
+            SELECT ci.*, p.photo, p.grammage, p.reference, COALESCE(p.nom, ci.designation) as designation,
                    pt.name AS product_type_name
             FROM commande_items ci
             LEFT JOIN products p ON ci.produit_id = p.id
@@ -181,7 +233,6 @@ exports.createCommande = async (req, res) => {
         point_de_vente_id,
         items,
         devis_id,
-        banque_id,
         reduction,
         montant_ttc,
         statut,
@@ -239,12 +290,11 @@ exports.createCommande = async (req, res) => {
         // CRITICAL: If autoApprove is true, we FORCE 'validee' even if the frontend sends 'en_attente'
         const final_statut = autoApprove ? 'validee' : (allowedToApprove ? (statut || status || defaultStatut) : 'en_attente');
         let final_devis_id = devis_id || null;
-        let final_banque_id = (banque_id === "" || banque_id === "none" || !banque_id) ? null : banque_id;
 
         const insertCommandeQuery = `
             INSERT INTO commandes 
-            (numero_commande, date_commande, client_id, user_id, point_de_vente_id, devis_id, banque_id, statut, reduction, montant_ttc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (numero_commande, date_commande, client_id, user_id, point_de_vente_id, devis_id, statut, reduction, montant_ttc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const [result] = await connection.execute(insertCommandeQuery, [
@@ -254,7 +304,6 @@ exports.createCommande = async (req, res) => {
             user_id,
             pdv_id,
             null,
-            final_banque_id,
             final_statut,
             reduction || 0,
             montant_ttc || 0
@@ -267,7 +316,8 @@ exports.createCommande = async (req, res) => {
         const coNumber = await getNextNumber("CO", commandeId, connection, {
             sousSocieteId: sousSociete.id,
         });
-        const final_commande_numero = formatDocumentNumber('CO', coNumber, new Date(), { sousSocieteNom: sousSociete.nom });
+        const numeroDate = parseDateOnlySafe(date_commande || new Date().toISOString().split("T")[0]);
+        const final_commande_numero = formatDocumentNumber('CO', coNumber, numeroDate, { sousSocieteNom: sousSociete.nom });
 
         // Traceability: Create Devis if not provided (totals with item reduction)
         if (!final_devis_id) {
@@ -327,7 +377,7 @@ exports.createCommande = async (req, res) => {
                 const deNumber = await getNextNumber("DE", final_devis_id, connection, {
                     sousSocieteId: sousSociete.id,
                 });
-                const final_devis_numero = formatDocumentNumber('DE', deNumber, new Date(), { sousSocieteNom: sousSociete.nom });
+                const final_devis_numero = formatDocumentNumber('DE', deNumber, numeroDate, { sousSocieteNom: sousSociete.nom });
                 await connection.execute(
                     "UPDATE devis SET numero_devis = ? WHERE id = ?",
                     [final_devis_numero, final_devis_id]
@@ -542,11 +592,19 @@ exports.getAllCommandes = async (req, res) => {
                     FROM reglements_clients rc2
                     WHERE rc2.statut = 'approuve'
                       AND (
-                        rc2.commande_id = c.id
-                        OR rc2.facture_id IN (SELECT f2.id FROM factures f2 WHERE f2.commande_id = c.id)
+                        (
+                          (rc2.facture_id IS NULL OR rc2.facture_id = 0)
+                          AND rc2.commande_id = c.id
+                        )
+                        OR (
+                          rc2.facture_id IS NOT NULL
+                          AND rc2.facture_id <> 0
+                          AND rc2.facture_id IN (SELECT f2.id FROM factures f2 WHERE f2.commande_id = c.id)
+                        )
                       )
                 ) AS total_regle_combined,
-                (SELECT f3.montant_ttc FROM factures f3 WHERE f3.commande_id = c.id LIMIT 1) AS facture_montant_ttc
+                (SELECT f3.montant_ttc FROM factures f3 WHERE f3.commande_id = c.id LIMIT 1) AS facture_montant_ttc,
+                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id
             FROM commandes c
             LEFT JOIN clients cl ON c.client_id = cl.id
             LEFT JOIN users u ON c.user_id = u.id
@@ -625,7 +683,6 @@ exports.updateCommande = async (req, res) => {
         statut,
         status,
         devis_id,
-        banque_id,
         reduction,
         montant_ttc: prop_montant_ttc
     } = req.body;
@@ -641,7 +698,12 @@ exports.updateCommande = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ message: "Commande not found" });
         }
-        if (req.user.role !== 'admin' && rows[0].user_id !== req.user.id) {
+        if (
+            req.user.role !== 'admin' &&
+            req.user.role !== 'directeur' &&
+            req.user.role !== 'responsable' &&
+            rows[0].user_id !== req.user.id
+        ) {
             await connection.rollback();
             return res.status(403).json({ message: "Unauthorized" });
         }
@@ -672,7 +734,7 @@ exports.updateCommande = async (req, res) => {
 
         await connection.execute(`
             UPDATE commandes
-            SET numero_commande = ?, date_commande = ?, client_id = ?, devis_id = ?, banque_id = ?, statut = ?, 
+            SET numero_commande = ?, date_commande = ?, client_id = ?, devis_id = ?, statut = ?, 
                 montant_ht = ?, montant_tva = ?, montant_ttc = ?, reduction = ?, total_reduction = ?
             WHERE id = ?
         `, [
@@ -680,7 +742,6 @@ exports.updateCommande = async (req, res) => {
             date_commande,
             client_id,
             devis_id || null,
-            (banque_id === "" || banque_id === "none" || !banque_id) ? null : banque_id,
             final_statut,
             totalHT,
             totalTVA,
@@ -1002,7 +1063,7 @@ exports.sendCommandeEmail = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT ci.*, p.photo, p.poids AS grammage, COALESCE(p.nom, ci.designation) as designation,
+            SELECT ci.*, p.photo, p.grammage, COALESCE(p.nom, ci.designation) as designation,
                    pt.name AS product_type_name
             FROM commande_items ci
             LEFT JOIN products p ON ci.produit_id = p.id
@@ -1052,7 +1113,7 @@ exports.downloadCommandePdf = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT ci.*, p.photo, p.poids AS grammage, COALESCE(p.nom, ci.designation) as designation,
+            SELECT ci.*, p.photo, p.grammage, COALESCE(p.nom, ci.designation) as designation,
                    pt.name AS product_type_name
             FROM commande_items ci
             LEFT JOIN products p ON ci.produit_id = p.id

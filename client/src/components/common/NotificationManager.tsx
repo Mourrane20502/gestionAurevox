@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Bell, FileText, ShoppingCart, Receipt, X } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
 const resolveSocketUrl = () => {
     const envUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
@@ -27,10 +28,21 @@ interface NotificationData {
 export default function NotificationManager() {
     const [notifications, setNotifications] = useState<NotificationData[]>([]);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const location = useLocation();
 
     useEffect(() => {
+        const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+        const isAuthRoute = location.pathname === "/signin";
+        const isDashboardRoute = location.pathname.startsWith("/dashboard");
+        if (!token || isAuthRoute || !isDashboardRoute) {
+            // Empêche d'afficher des notifications en dehors de la session connectée.
+            setNotifications([]);
+            return;
+        }
+
         const socket = io(SOCKET_URL, {
             withCredentials: true,
+            auth: { token },
         });
 
         const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
@@ -57,7 +69,7 @@ export default function NotificationManager() {
         return () => {
             socket.disconnect();
         };
-    }, []);
+    }, [location.pathname]);
 
     const removeNotification = (id: string) => {
         setNotifications(prev => prev.filter(n => n.id !== id));

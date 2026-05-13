@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
@@ -73,6 +73,42 @@ import { generateFacturePdf } from "@/components/pdf/FacturePdf";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+const toLocalDateInputValue = (value?: string | null) => {
+    if (!value) return "";
+    const raw = String(value).trim();
+    const direct = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
+    if (direct) return direct[1];
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw.split("T")[0] || "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+};
+
+const getTodayLocalDateInput = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+};
+
+const addDaysToDateInput = (dateInput: string, days: number) => {
+    const m = String(dateInput || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return "";
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const base = new Date(y, mo - 1, d, 12, 0, 0, 0);
+    if (Number.isNaN(base.getTime())) return "";
+    base.setDate(base.getDate() + days);
+    const yy = base.getFullYear();
+    const mm = String(base.getMonth() + 1).padStart(2, "0");
+    const dd = String(base.getDate()).padStart(2, "0");
+    return `${yy}-${mm}-${dd}`;
+};
+
 interface Client {
     id: number;
     nom_complet: string;
@@ -133,6 +169,7 @@ interface Facture {
     total_regle?: number;
     reste_a_payer?: number;
     sous_societe_nom?: string | null;
+    bon_livraison_id?: number | null;
 }
 type SousSocieteOption = { id: number; nom_sous_societe: string };
 
@@ -234,7 +271,6 @@ function factureMatchesStatusFilter(
 
 function Factures() {
     const role = localStorage.getItem("role");
-    const isCommercial = role === "user" || role === "commercial";
     const isAdmin = role === "admin" || role === "responsable";
     const nav = useNavigate();
     const location = useLocation();
@@ -276,31 +312,33 @@ function Factures() {
     const [filterSousSociete, setFilterSousSociete] = useState<string>("all");
     const [filterPointDeVente, setFilterPointDeVente] = useState<string>("all");
     const [allSousSocieteNames, setAllSousSocieteNames] = useState<string[]>([]);
-    const [banques, setBanques] = useState<any[]>([]);
-    const [paymentModes, setPaymentModes] = useState<any[]>([]);
     const itemsPerPage = 10;
     const [factureIdsWithAvoir, setFactureIdsWithAvoir] = useState<number[]>([]);
     const [factureAvoirMap, setFactureAvoirMap] = useState<Record<number, number>>({});
     const [remboursementMap, setRemboursementMap] = useState<Record<number, number>>({});
     const [showReglementDialog, setShowReglementDialog] = useState(false);
     const [createdFactureIdForReglement, setCreatedFactureIdForReglement] = useState<number | null>(null);
+    const [pendingAutoSubmitAfterReglement, setPendingAutoSubmitAfterReglement] = useState(false);
+    const [showReglementRequiredDialog, setShowReglementRequiredDialog] = useState(false);
+    const [pendingCommandeIdForReglement, setPendingCommandeIdForReglement] = useState<number | null>(null);
+    const isCreateMode = !editingFacture;
+    const isArticleSectionLocked = isCreateMode;
 
     const [formData, setFormData] = useState({
         numero_facture: "",
-        date_facture: new Date().toISOString().split('T')[0],
-        date_echeance: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        date_facture: getTodayLocalDateInput(),
+        date_echeance: addDaysToDateInput(getTodayLocalDateInput(), 30),
         mode_paiement: "virement",
         statut: "en_attente",
         commande_id: "none",
         devis_id: "none",
         reduction: "0",
-        banque_id: "none",
         paiement_espece_type: "total",
         montant_paye: ""
     });
 
     const [items, setItems] = useState<FactureItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }
+        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }
     ]);
 
     const token = localStorage.getItem("token");
@@ -362,15 +400,6 @@ function Factures() {
         } catch (error) { console.error("Error fetching users:", error); }
     };
 
-    const fetchBanques = async () => {
-        try {
-            const response = await fetch("/api/banque", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (response.ok) setBanques(await response.json());
-        } catch (error) { console.error("Error fetching banques:", error); }
-    };
-
     const fetchAvoirsForFactures = async () => {
         try {
             const response = await fetch("/api/avoirs", {
@@ -423,15 +452,6 @@ function Factures() {
         } catch (error) { toast.error("Erreur serveur"); }
     };
 
-    const fetchPaymentModes = async () => {
-        try {
-            const response = await fetch("/api/settings/payment-modes", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (response.ok) setPaymentModes(await response.json());
-        } catch (error) { console.error("Error fetching payment modes:", error); }
-    };
-
     const fetchRemboursements = async () => {
         try {
             const res = await fetch("/api/remboursements", { headers: { Authorization: `Bearer ${token}` } });
@@ -454,9 +474,7 @@ function Factures() {
         fetchProducts();
         fetchCommandes();
         fetchUsers();
-        fetchBanques();
         fetchAvoirsForFactures();
-        fetchPaymentModes();
         fetchRemboursements();
     }, []);
 
@@ -501,11 +519,14 @@ function Factures() {
             lastNavCommandeImportRef.current = cid;
             const cameFromPaidCommande = state.skipReglement;
             void (async () => {
-                await handleCommandeSelect(String(cid), { banqueIdFromNav: state.banqueId });
+                await handleCommandeSelect(String(cid));
                 setFormData((prev) => ({
                     ...prev,
                     ...(cameFromPaidCommande ? { statut: "paye" as const } : {}),
                 }));
+                if (state?.autoSubmitAfterReglement) {
+                    setPendingAutoSubmitAfterReglement(true);
+                }
                 setActiveTab("form");
                 window.history.replaceState({}, document.title);
             })();
@@ -538,12 +559,11 @@ function Factures() {
                             numero_facture: fullFacture.numero_facture,
                             date_facture: fullFacture.date_facture.split('T')[0],
                             date_echeance: fullFacture.date_echeance.split('T')[0],
-                            mode_paiement: fullFacture.mode_paiement,
+                            mode_paiement: "virement",
                             statut: fullFacture.statut || "non_payee",
                             commande_id: fullFacture.commande_id?.toString() || "none",
                             devis_id: fullFacture.devis_id?.toString() || "none",
                             reduction: (fullFacture.reduction || 0).toString(),
-                            banque_id: (fullFacture.banque_id != null && fullFacture.banque_id !== 0) ? String(fullFacture.banque_id) : "none",
                             paiement_espece_type: "total",
                             montant_paye: ""
                         });
@@ -621,17 +641,10 @@ function Factures() {
         }));
     };
 
-    const handleSelectChange = (name: string, value: string) => {
-        setFormData(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleCommandeSelect = async (
-        commandeIdStr: string,
-        opts?: { banqueIdFromNav?: string | number | null }
-    ) => {
+    const handleCommandeSelect = async (commandeIdStr: string) => {
         if (commandeIdStr === "none") {
             setFormData(prev => ({ ...prev, commande_id: "none", devis_id: "none" }));
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
             setSelectedClient(null);
             setClientSearch("");
             return;
@@ -675,31 +688,29 @@ function Factures() {
                         : montantTtcCommande
                     : undefined;
 
-                const fromNav = opts?.banqueIdFromNav;
-                const banqueFromNav =
-                    fromNav != null &&
-                    String(fromNav).trim() !== "" &&
-                    String(fromNav) !== "none"
-                        ? String(fromNav)
-                        : null;
-                const banqueFromCmd =
-                    cmdData.banque_id != null &&
-                    cmdData.banque_id !== 0 &&
-                    String(cmdData.banque_id).trim() !== ""
-                        ? String(cmdData.banque_id)
+                const modeFromCmd =
+                    cmdData.mode_paiement != null && String(cmdData.mode_paiement).trim() !== ""
+                        ? String(cmdData.mode_paiement).trim().toLowerCase()
                         : null;
 
-                // Auto-fill client, devis_id, banque et, si commande déjà réglée,
+                // Auto-fill client/devis et, si commande déjà réglée,
                 // forcer le statut et mémoriser l'état de règlement pour la facture créée.
                 setFormData((prev) => {
                     const { total_regle: _tr, reste_a_payer: _ra, ...rest } = prev as any;
-                    const banqueFallback =
-                        prev.banque_id && prev.banque_id !== "none" ? prev.banque_id : null;
-                    const banque_id = banqueFromNav || banqueFromCmd || banqueFallback || "none";
+                    const importedCommandeDate =
+                        typeof cmdData?.date_commande === "string" && cmdData.date_commande.trim() !== ""
+                            ? toLocalDateInputValue(String(cmdData.date_commande))
+                            : null;
+                    let importedEcheanceDate: string | null = null;
+                    if (importedCommandeDate) {
+                        importedEcheanceDate = addDaysToDateInput(importedCommandeDate, 30);
+                    }
                     return {
                         ...rest,
+                        ...(importedCommandeDate ? { date_facture: importedCommandeDate } : {}),
+                        ...(importedEcheanceDate ? { date_echeance: importedEcheanceDate } : {}),
                         devis_id: cmdData.devis_id?.toString() || "none",
-                        banque_id,
+                        mode_paiement: modeFromCmd || prev.mode_paiement || "virement",
                         statut: isReglee ? "paye" : prev.statut === "paye" ? "en_attente" : prev.statut,
                         ...(isReglee
                             ? {
@@ -745,6 +756,7 @@ function Factures() {
     };
 
     const handleItemChange = (index: number, field: keyof FactureItem, value: any) => {
+        if (isArticleSectionLocked) return;
         const newItems = [...items];
         const safeValue = typeof value === "number" && isNaN(value) ? 0 : value;
         newItems[index] = { ...newItems[index], [field]: safeValue };
@@ -764,6 +776,7 @@ function Factures() {
     };
 
     const handleProductSelect = (index: number, product: Product) => {
+        if (isArticleSectionLocked) return;
         const newItems = [...items];
         newItems[index] = {
             ...newItems[index],
@@ -779,10 +792,12 @@ function Factures() {
     };
 
     const addItem = () => {
-        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+        if (isArticleSectionLocked) return;
+        setItems([...items, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
     };
 
     const removeItem = (index: number) => {
+        if (isArticleSectionLocked) return;
         if (items.length <= 1) return;
         const newItems = items.filter((_, i) => i !== index);
         setItems(newItems);
@@ -798,6 +813,10 @@ function Factures() {
         }
         if (!selectedClient) {
             toast.error("Veuillez sélectionner un client");
+            return;
+        }
+        if (!editingFacture && (!formData.commande_id || formData.commande_id === "none")) {
+            toast.error("Veuillez d'abord sélectionner une commande. La facture doit être liée à une commande.");
             return;
         }
         if (items.some(it => !it.designation)) {
@@ -867,6 +886,31 @@ function Factures() {
                 }
             }
 
+            // Pré-contrôle UX demandé:
+            // En création de facture depuis commande, si total > 20k et aucun règlement encore saisi,
+            // forcer passage par le dialog de règlements d'abord.
+            if (!editingFacture && data.commande_id && data.commande_id !== "none") {
+                const cmdIdNum = Number(data.commande_id);
+                const factureTotal = Number(data.montant_ttc) || 0;
+                if (Number.isFinite(cmdIdNum) && cmdIdNum > 0 && factureTotal > 20000) {
+                    try {
+                        const regsRes = await fetch(`/api/reglements-clients?commandeId=${cmdIdNum}`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                        });
+                        const regs = regsRes.ok ? await regsRes.json() : [];
+                        const hasAnyReglement = Array.isArray(regs) && regs.some((r: any) => Number(r?.montant || 0) > 0);
+                        if (!hasAnyReglement) {
+                            setPendingCommandeIdForReglement(cmdIdNum);
+                            setShowReglementRequiredDialog(true);
+                            setIsSubmitting(false);
+                            return;
+                        }
+                    } catch {
+                        // fallback: continue backend validation
+                    }
+                }
+            }
+
             const url = editingFacture ? `/api/factures/${editingFacture.id}` : "/api/factures";
             const method = editingFacture ? "PUT" : "POST";
 
@@ -890,7 +934,11 @@ function Factures() {
                     fetchFactures();
                 } else {
                     const responseBody = await response.json().catch(() => ({}));
-                    const newId = responseBody?.id ?? null;
+                    const createdIds = Array.isArray(responseBody?.ids)
+                        ? responseBody.ids.map((x: any) => Number(x)).filter((x: number) => Number.isFinite(x))
+                        : [];
+                    const isSplitCreation = createdIds.length > 1 || responseBody?.split === true;
+                    const newId = responseBody?.id ?? (createdIds.length ? createdIds[0] : null);
 
                     // Considérer la facture comme payée soit si le backend renvoie statut "paye",
                     // soit si le formulaire avait déjà le statut "paye" (cas commande déjà réglée).
@@ -905,7 +953,11 @@ function Factures() {
                     setActiveTab("list");
                     nav("/dashboard/factures");
 
-                    if (!isFacturePaid) {
+                    if (isSplitCreation) {
+                        toast.success(
+                            `Conversion effectuée: ${createdIds.length || 1} factures créées (max 20 000 DH / facture en espèces).`
+                        );
+                    } else if (!isFacturePaid) {
                         setCreatedFactureIdForReglement(newId);
                         setShowReglementDialog(true);
                     }
@@ -917,6 +969,26 @@ function Factures() {
                     if (body?.message && typeof body.message === "string") msg = body.message;
                 } catch {
                     /* ignore */
+                }
+                const msgNorm = String(msg || "")
+                    .trim()
+                    .toLowerCase()
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "");
+                const mustCaptureReglementBeforeFacture =
+                    !editingFacture &&
+                    data.commande_id &&
+                    data.commande_id !== "none" &&
+                    (msgNorm.includes("commande > 20000 dh") ||
+                        msgNorm.includes("saisissez d'abord le reglement") ||
+                        msgNorm.includes("saisissez d abord le reglement"));
+                if (mustCaptureReglementBeforeFacture) {
+                    const cmdIdNum = Number(data.commande_id);
+                    if (Number.isFinite(cmdIdNum) && cmdIdNum > 0) {
+                        setPendingCommandeIdForReglement(cmdIdNum);
+                        setShowReglementRequiredDialog(true);
+                        return;
+                    }
                 }
                 toast.error(msg);
             }
@@ -931,18 +1003,17 @@ function Factures() {
     const resetForm = () => {
         setFormData({
             numero_facture: "",
-            date_facture: new Date().toISOString().split('T')[0],
-            date_echeance: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            date_facture: getTodayLocalDateInput(),
+            date_echeance: addDaysToDateInput(getTodayLocalDateInput(), 30),
             mode_paiement: "virement",
             statut: "en_attente",
             commande_id: "none",
             devis_id: "none",
             reduction: "0",
-            banque_id: "none",
             paiement_espece_type: "total",
             montant_paye: ""
         });
-        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 20, reduction: 0, montant_ht: 0 }]);
+        setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0, reduction: 0, montant_ht: 0 }]);
         setSelectedClient(null);
         setClientSearch("");
         setCommandeSearch("");
@@ -950,6 +1021,23 @@ function Factures() {
         setCalculatedValues({ montantTVA: 0, montantTTC: 0 });
         setShowClientDropdown(false);
     };
+
+    useEffect(() => {
+        if (!pendingAutoSubmitAfterReglement) return;
+        if (isSubmitting) return;
+        if (activeTab !== "form") return;
+        if (!selectedClient) return;
+        if (!formData.commande_id || formData.commande_id === "none") return;
+        setPendingAutoSubmitAfterReglement(false);
+        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+        void handleSubmit(fakeEvent);
+    }, [
+        pendingAutoSubmitAfterReglement,
+        isSubmitting,
+        activeTab,
+        selectedClient,
+        formData.commande_id,
+    ]);
 
     const handleQuickAddClient = async () => {
         if (!pendingClientName.trim()) return;
@@ -1277,6 +1365,21 @@ function Factures() {
     const availableCommandes = commandes.filter(c =>
         isCommandeEligibleForFactureLink(c, factures, remboursementMap, editingFacture?.id)
     );
+    const splitCommandeMeta = useMemo(() => {
+        const counts = new Map<number, number>();
+        factures.forEach((f: any) => {
+            const cmdId = Number(f?.commande_id);
+            if (!Number.isFinite(cmdId) || cmdId <= 0) return;
+            counts.set(cmdId, (counts.get(cmdId) || 0) + 1);
+        });
+        const cmdLabels = new Map<number, string>();
+        commandes.forEach((c) => {
+            const cmdId = Number(c.id);
+            if (!Number.isFinite(cmdId) || cmdId <= 0) return;
+            cmdLabels.set(cmdId, c.numero_commande || `#${cmdId}`);
+        });
+        return { counts, cmdLabels };
+    }, [factures, commandes]);
 
     const handleGeneratePdf = async (facture: Facture) => {
         try {
@@ -1578,6 +1681,31 @@ function Factures() {
                                                                 onClick={() => nav(`/dashboard/commandes/${facture.commande_id}`)}
                                                             >
                                                                 <CheckCircle2 className="h-2.5 w-2.5" /> Commande
+                                                            </span>
+                                                        )}
+                                                        {(() => {
+                                                            const cmdId = Number(facture.commande_id);
+                                                            const count = splitCommandeMeta.counts.get(cmdId) || 0;
+                                                            if (!Number.isFinite(cmdId) || count <= 1) return null;
+                                                            const cmdLabel = splitCommandeMeta.cmdLabels.get(cmdId) || `#${cmdId}`;
+                                                            return (
+                                                                <span
+                                                                    className="text-[9px] text-violet-700 dark:text-violet-300 flex items-center gap-0.5 font-bold uppercase tracking-tight bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20 cursor-pointer hover:opacity-90 transition-opacity"
+                                                                    onClick={() => nav(`/dashboard/commandes/${cmdId}`)}
+                                                                    title="Plusieurs factures liées à la même commande"
+                                                                >
+                                                                    Même commande: {cmdLabel} ({count})
+                                                                </span>
+                                                            );
+                                                        })()}
+                                                        {Number(facture.bon_livraison_id) > 0 && (
+                                                            <span
+                                                                className="text-[9px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-bold uppercase tracking-tighter bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 cursor-pointer hover:opacity-90 transition-opacity"
+                                                                onClick={() =>
+                                                                    nav(`/dashboard/bons-livraison/${facture.bon_livraison_id}`)
+                                                                }
+                                                            >
+                                                                <CheckCircle2 className="h-2.5 w-2.5" /> BL
                                                             </span>
                                                         )}
                                                     </div>
@@ -2018,56 +2146,28 @@ function Factures() {
                                             </div>
                                         )}
                                     </div>
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Mode de Paiement</Label>
-                                        <Select value={formData.mode_paiement} onValueChange={(v) => handleSelectChange("mode_paiement", v)}>
-                                            <SelectTrigger className="h-11 border-border">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {paymentModes.length > 0 ? (
-                                                    paymentModes.map((m: any) => (
-                                                        <SelectItem key={m.value} value={m.value}>
-                                                            {m.label}
-                                                        </SelectItem>
-                                                    ))
-                                                ) : (
-                                                    <>
-                                                        <SelectItem value="espece">Espèce</SelectItem>
-                                                        <SelectItem value="cheque">Chèque</SelectItem>
-                                                        <SelectItem value="virement">Virement</SelectItem>
-                                                        <SelectItem value="carte">Carte Bancaire</SelectItem>
-                                                        <SelectItem value="effet">Effet</SelectItem>
-                                                    </>
-                                                )}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2">
-                                        <Label className="text-xs font-bold text-muted-foreground uppercase tracking-widest text-indigo-600">Banque</Label>
-                                        <Select value={formData.banque_id || "none"} onValueChange={(v) => handleSelectChange('banque_id', v)}>
-                                            <SelectTrigger className="h-11 border-indigo-200 bg-indigo-50/10">
-                                                <SelectValue placeholder="Sélectionner une banque" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="none">Aucune</SelectItem>
-                                                {banques.map(b => (
-                                                    <SelectItem key={b.id} value={b.id.toString()}>{b.nom_banque} {b.nom_compte ? `- ${b.nom_compte}` : ""}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
                                 </div>
 
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
                                         <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Articles de la facture</h3>
-                                        <Button type="button" onClick={addItem} size="sm" className="bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-900/20 dark:text-indigo-400">
+                                        <Button
+                                            type="button"
+                                            onClick={addItem}
+                                            size="sm"
+                                            disabled={isArticleSectionLocked}
+                                            className="bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-900/20 dark:text-indigo-400"
+                                        >
                                             <Plus className="h-4 w-4 mr-2" /> Ajouter un article
                                         </Button>
                                     </div>
+                                    {isArticleSectionLocked && (
+                                        <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                                            {formData.commande_id && formData.commande_id !== "none"
+                                                ? "Commande importée. Les lignes proviennent automatiquement de la commande sélectionnée."
+                                                : "En création, l'ajout manuel d'articles est désactivé. Sélectionnez une commande pour importer automatiquement les lignes dans Désignation."}
+                                        </div>
+                                    )}
 
                                     <div className="border border-border rounded-xl overflow-visible bg-card">
                                         <Table containerClassName="overflow-visible">
@@ -2091,8 +2191,12 @@ function Factures() {
                                                                     placeholder="Chercher ou décrire l'article..."
                                                                     value={item.designation || ""}
                                                                     onChange={(e) => handleItemChange(index, 'designation', e.target.value)}
-                                                                    onFocus={() => setActiveProductSearchIndex(index)}
+                                                                    onFocus={() => {
+                                                                        if (isArticleSectionLocked) return;
+                                                                        setActiveProductSearchIndex(index);
+                                                                    }}
                                                                     onBlur={() => setTimeout(() => setActiveProductSearchIndex(null), 200)}
+                                                                    disabled={isArticleSectionLocked}
                                                                     className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-10 text-sm font-medium w-full"
                                                                 />
                                                                 {activeProductSearchIndex === index &&
@@ -2140,6 +2244,7 @@ function Factures() {
                                                                 type="number"
                                                                 value={item.quantite}
                                                                 onChange={(e) => handleItemChange(index, 'quantite', parseFloat(e.target.value))}
+                                                                disabled={isArticleSectionLocked}
                                                                 className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-9 text-sm text-center"
                                                             />
                                                         </TableCell>
@@ -2148,7 +2253,7 @@ function Factures() {
                                                                 type="number"
                                                                 value={item.prix_unitaire}
                                                                 onChange={(e) => handleItemChange(index, 'prix_unitaire', parseFloat(e.target.value))}
-                                                                disabled={isCommercial && Boolean(item.produit_id)}
+                                                                disabled={isArticleSectionLocked}
                                                                 className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-9 text-sm text-center disabled:opacity-70 disabled:cursor-not-allowed"
                                                             />
                                                         </TableCell>
@@ -2157,6 +2262,7 @@ function Factures() {
                                                                 type="number"
                                                                 value={item.reduction}
                                                                 onChange={(e) => handleItemChange(index, 'reduction', parseFloat(e.target.value) || 0)}
+                                                                disabled={isArticleSectionLocked}
                                                                 className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-9 text-sm text-center font-bold text-red-500"
                                                             />
                                                         </TableCell>
@@ -2164,6 +2270,7 @@ function Factures() {
                                                             <Select
                                                                 value={item.tva.toString()}
                                                                 onValueChange={(v) => handleItemChange(index, 'tva', parseFloat(v))}
+                                                                disabled={isArticleSectionLocked}
                                                             >
                                                                 <SelectTrigger className="border-transparent bg-transparent h-9 text-sm">
                                                                     <SelectValue />
@@ -2185,6 +2292,7 @@ function Factures() {
                                                                 variant="ghost"
                                                                 size="icon"
                                                                 onClick={() => removeItem(index)}
+                                                                disabled={isArticleSectionLocked}
                                                                 className="h-8 w-8 text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                                                             >
                                                                 <DeleteSvgIcon className="h-4 w-4" />
@@ -2309,6 +2417,59 @@ function Factures() {
                             </Button>
                         </div>
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={showReglementRequiredDialog}
+                onOpenChange={(open) => {
+                    setShowReglementRequiredDialog(open);
+                    if (!open) setPendingCommandeIdForReglement(null);
+                }}
+            >
+                <DialogContent className="sm:max-w-[460px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-amber-600">
+                            <Banknote className="h-5 w-5" />
+                            Règlement requis avant création
+                        </DialogTitle>
+                        <DialogDescription className="pt-2">
+                            Cette facture dépasse 20 000 DH. Merci de saisir d'abord le règlement (modes et montants).
+                            Si le mode choisi est <span className="font-semibold text-foreground">espèce</span>, la facture sera splittée automatiquement; sinon elle sera créée normalement.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2">
+                        <Button
+                            variant="ghost"
+                            onClick={() => {
+                                setShowReglementRequiredDialog(false);
+                                setPendingCommandeIdForReglement(null);
+                            }}
+                        >
+                            Annuler
+                        </Button>
+                        <Button
+                            className="bg-amber-600 hover:bg-amber-700 text-white"
+                            onClick={() => {
+                                const cmdId = pendingCommandeIdForReglement;
+                                if (!cmdId) {
+                                    setShowReglementRequiredDialog(false);
+                                    return;
+                                }
+                                setShowReglementRequiredDialog(false);
+                                nav("/dashboard/reglements", {
+                                    state: {
+                                        commandeId: cmdId,
+                                        openDialog: true,
+                                        autoCreateFactureAfterReglement: true,
+                                    },
+                                });
+                                setPendingCommandeIdForReglement(null);
+                            }}
+                        >
+                            Ouvrir le règlement
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

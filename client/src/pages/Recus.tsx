@@ -24,9 +24,16 @@ type ReglementClient = {
 
 type SousSocieteOption = { id: number; nom_sous_societe: string };
 type PdvOption = { id: number; nom: string };
+type CommandeMeta = {
+    numero: string;
+    montant_ttc: number;
+    statut: string;
+};
 
 const toNumber = (value: unknown) => Number(value || 0);
 const getModeValue = (row: ReglementClient) => String(row.mode_paiement || row.mode || "").trim();
+const getCommandeCode = (row: ReglementClient) =>
+    String((row as any).numero_commande || (row as any).commande_gros_numero || "").trim();
 const formatMode = (mode: string) => {
     const m = mode.toLowerCase();
     if (m === "espece" || m === "especes") return "Espèces";
@@ -50,6 +57,7 @@ export default function Recus() {
     const [reglements, setReglements] = useState<ReglementClient[]>([]);
     const [allSousSocieteNames, setAllSousSocieteNames] = useState<string[]>([]);
     const [pdvOptions, setPdvOptions] = useState<PdvOption[]>([]);
+    const [commandeMetaByNumero, setCommandeMetaByNumero] = useState<Record<string, CommandeMeta>>({});
 
     useEffect(() => {
         const fetchReglements = async () => {
@@ -65,16 +73,13 @@ export default function Recus() {
                 ]);
                 if (!resClassic.ok || !resGros.ok) throw new Error("Impossible de charger les reçus.");
 
-                const [classicData, grosData] = await Promise.all([resClassic.json(), resGros.json()]);
+                const [classicData] = await Promise.all([resClassic.json(), resGros.json()]);
                 const classicRows = (Array.isArray(classicData) ? classicData : []).map((r) => ({
                     ...r,
                     reglement_type: "client" as const,
                 }));
-                const grosRows = (Array.isArray(grosData) ? grosData : []).map((r) => ({
-                    ...r,
-                    reglement_type: "client_gros" as const,
-                }));
-                const rows = [...classicRows, ...grosRows];
+                // Exclure les règlements "client_gros" de cette page.
+                const rows = classicRows;
                 rows.sort((a, b) => {
                     const aMs = new Date(a.date_reglement || "").getTime();
                     const bMs = new Date(b.date_reglement || "").getTime();
@@ -112,6 +117,35 @@ export default function Recus() {
             }
         };
         fetchPdvs();
+    }, [token]);
+
+    useEffect(() => {
+        const fetchCommandesMeta = async () => {
+            if (!token) return;
+            try {
+                const [resClassic, resGros] = await Promise.all([
+                    fetch("/api/commandes", { headers: { Authorization: `Bearer ${token}` } }),
+                    fetch("/api/commandes-gros", { headers: { Authorization: `Bearer ${token}` } }),
+                ]);
+                const classicData = resClassic.ok ? await resClassic.json() : [];
+                const grosData = resGros.ok ? await resGros.json() : [];
+                const rows = [...(Array.isArray(classicData) ? classicData : []), ...(Array.isArray(grosData) ? grosData : [])];
+                const map: Record<string, CommandeMeta> = {};
+                rows.forEach((c: any) => {
+                    const numero = String(c?.numero_commande || "").trim();
+                    if (!numero) return;
+                    map[numero] = {
+                        numero,
+                        montant_ttc: Number(c?.montant_ttc) || 0,
+                        statut: String(c?.statut || ""),
+                    };
+                });
+                setCommandeMetaByNumero(map);
+            } catch {
+                // silencieux
+            }
+        };
+        fetchCommandesMeta();
     }, [token]);
 
     useEffect(() => {
@@ -191,6 +225,26 @@ export default function Recus() {
         });
     }, [search, reglements, statutFilter, modeFilter, pdvFilter, sousSocieteFilter, dateFrom, dateTo]);
 
+    const groupedFiltered = useMemo(() => {
+        const map = new Map<string, { commandeCode: string; representative: ReglementClient; reglements: ReglementClient[] }>();
+        filtered.forEach((r) => {
+            const commandeCode = getCommandeCode(r);
+            const key = commandeCode || `__no_cmd__${r.reglement_type || "client"}_${r.id}`;
+            const existing = map.get(key);
+            if (!existing) {
+                map.set(key, { commandeCode, representative: r, reglements: [r] });
+                return;
+            }
+            existing.reglements.push(r);
+            const currentMs = new Date(existing.representative.date_reglement || "").getTime();
+            const nextMs = new Date(r.date_reglement || "").getTime();
+            if ((Number.isNaN(currentMs) ? 0 : currentMs) < (Number.isNaN(nextMs) ? 0 : nextMs)) {
+                existing.representative = r;
+            }
+        });
+        return Array.from(map.values());
+    }, [filtered]);
+
     const stats = useMemo(() => {
         const total = filtered.length;
         let approuves = 0;
@@ -244,12 +298,13 @@ export default function Recus() {
         return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
     };
 
-    const formatStatut = (statut?: string | null) => {
-        if (!statut) return "-";
-        if (statut === "en_attente") return "En attente";
-        if (statut === "approuve") return "Approuvé";
-        if (statut === "impaye") return "Impayé";
-        return statut;
+    const formatCommandeStatut = (statut?: string) => {
+        const s = String(statut || "").toLowerCase();
+        if (s === "en_attente") return "En attente";
+        if (s === "validee" || s === "validée") return "Validée";
+        if (s === "refusee" || s === "refusée") return "Refusée";
+        if (s === "reglee" || s === "reglee" || s === "payee" || s === "paye") return "Réglée";
+        return statut || "-";
     };
 
     return (
@@ -365,7 +420,7 @@ export default function Recus() {
                             <table className="w-full text-sm">
                                 <thead className="bg-muted sticky top-0 z-10">
                                     <tr>
-                                        <th className="px-3 py-2 text-left">Code reçu</th>
+                                        <th className="px-3 py-2 text-left">Code commande</th>
                                         <th className="px-3 py-2 text-left">Client</th>
                                         <th className="px-3 py-2 text-left">Date</th>
                                         <th className="px-3 py-2 text-right">Montant</th>
@@ -382,24 +437,61 @@ export default function Recus() {
                                                 Chargement...
                                             </td>
                                         </tr>
-                                    ) : filtered.length === 0 ? (
+                                    ) : groupedFiltered.length === 0 ? (
                                         <tr>
                                             <td className="px-3 py-4 text-muted-foreground" colSpan={8}>
                                                 Aucun reçu trouvé.
                                             </td>
                                         </tr>
                                     ) : (
-                                        filtered.map((r) => (
-                                            <tr key={r.id} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
+                                        groupedFiltered.map((group) => {
+                                            const r = group.representative;
+                                            const groupModes = Array.from(
+                                                new Set(
+                                                    group.reglements
+                                                        .map((reg) => getModeValue(reg))
+                                                        .filter((m) => String(m).trim().length > 0)
+                                                )
+                                            );
+                                            return (
+                                            <tr key={`${group.commandeCode || "nocode"}-${r.id}`} className="border-t border-border/60 hover:bg-muted/40 transition-colors">
                                                 <td className="px-3 py-2 font-medium">
-                                                    {buildReglementCode(
-                                                        r.reglement_type || "client",
-                                                        r.id,
-                                                        r.date_reglement,
-                                                        r.numero_recu,
-                                                        (r as any).sous_societe_nom,
-                                                        (r as any).numero_facture || (r as any).numero_commande
-                                                    )}
+                                                    <div className="flex flex-col gap-1">
+                                                        <span>{group.commandeCode || "-"}</span>
+                                                        {group.commandeCode
+                                                            ? group.reglements
+                                                                  .slice()
+                                                                  .sort((a, b) => {
+                                                                      const aMs = new Date(a.date_reglement || "").getTime();
+                                                                      const bMs = new Date(b.date_reglement || "").getTime();
+                                                                      return (Number.isNaN(bMs) ? 0 : bMs) - (Number.isNaN(aMs) ? 0 : aMs);
+                                                                  })
+                                                                  .map((reg) => {
+                                                                      const regCode = buildReglementCode(
+                                                                          reg.reglement_type || "client",
+                                                                          reg.id,
+                                                                          reg.date_reglement,
+                                                                          reg.numero_recu,
+                                                                          (reg as any).sous_societe_nom,
+                                                                          (reg as any).numero_facture || (reg as any).numero_commande
+                                                                      );
+                                                                      return (
+                                                                          <button
+                                                                              key={reg.id}
+                                                                              type="button"
+                                                                              className="text-[11px] text-indigo-600 hover:underline text-left"
+                                                                              onClick={() =>
+                                                                                  navigate(
+                                                                                      `/dashboard/reglements/details/${reg.reglement_type || "client"}/${reg.id}`
+                                                                                  )
+                                                                              }
+                                                                          >
+                                                                              {regCode}
+                                                                          </button>
+                                                                      );
+                                                                  })
+                                                            : null}
+                                                    </div>
                                                 </td>
                                                 <td className="px-3 py-2">{r.client_nom || "-"}</td>
                                                 <td className="px-3 py-2">
@@ -408,30 +500,63 @@ export default function Recus() {
                                                         : "-"}
                                                 </td>
                                                 <td className="px-3 py-2 text-right">
-                                                    {Math.round(toNumber(r.montant))} DH
+                                                    {Math.round(
+                                                        Number(
+                                                            commandeMetaByNumero[group.commandeCode]?.montant_ttc ??
+                                                                (r as any).commande_montant_ttc ??
+                                                                0
+                                                        )
+                                                    )}{" "}
+                                                    DH
                                                 </td>
-                                                <td className="px-3 py-2">{formatMode(getModeValue(r))}</td>
+                                                <td className="px-3 py-2">
+                                                    {groupModes.length > 0
+                                                        ? groupModes.map((m) => formatMode(m)).join(", ")
+                                                        : "-"}
+                                                </td>
                                                 <td className="px-3 py-2">{r.point_de_vente_nom || "-"}</td>
                                                 <td className="px-3 py-2">
+                                                    {(() => {
+                                                        const commandeStatut =
+                                                            commandeMetaByNumero[group.commandeCode]?.statut ||
+                                                            String((r as any).commande_statut || "");
+                                                        return (
                                                     <span
-                                                        className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${getStatutBadgeClass(r.statut)}`}
+                                                        className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${getStatutBadgeClass(commandeStatut)}`}
                                                     >
-                                                        {formatStatut(r.statut)}
+                                                        {formatCommandeStatut(
+                                                            commandeStatut
+                                                        )}
                                                     </span>
+                                                        );
+                                                    })()}
                                                 </td>
                                                 <td className="px-3 py-2 text-right">
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        onClick={() =>
-                                                            navigate(`/dashboard/reglements/details/${r.reglement_type || "client"}/${r.id}`)
-                                                        }
+                                                        onClick={() => {
+                                                            if (group.reglements.length > 1 && group.commandeCode) {
+                                                                const cmdId =
+                                                                    r.reglement_type === "client_gros"
+                                                                        ? (r as any).commande_gros_id
+                                                                        : (r as any).commande_id;
+                                                                if (cmdId) {
+                                                                    navigate(
+                                                                        `/dashboard/reglements/group/${r.reglement_type || "client"}/${cmdId}`
+                                                                    );
+                                                                    return;
+                                                                }
+                                                            }
+                                                            navigate(`/dashboard/reglements/details/${r.reglement_type || "client"}/${r.id}`);
+                                                        }}
                                                     >
                                                         Voir détail
                                                     </Button>
                                                 </td>
                                             </tr>
-                                        ))
+                                            );
+                                        })
                                     )}
                                 </tbody>
                             </table>

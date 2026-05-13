@@ -50,10 +50,12 @@ const factureGrosRoutes = require("./routes/factureGrosRoutes");
 const clientsRoutes = require("./routes/clientsRoutes");
 const employeesRoutes = require("./routes/employeesRoutes");
 const congeRoutes = require("./routes/congeRoutes");
+const pointageRoutes = require("./routes/pointageRoutes");
+const contratRoutes = require("./routes/contratRoutes");
 const salaryRoutes = require("./routes/salaryRoutes");
 const paieRoutes = require("./routes/paieRoutes");
-const pointageRoutes = require("./routes/pointageRoutes");
 const commandeRoutes = require("./routes/commandeRoutes");
+const bonLivraisonRoutes = require("./routes/bonLivraisonRoutes");
 const factureRoutes = require("./routes/factureRoutes");
 const aiRoutes = require("./routes/aiRoutes");
 const fournisseursRoutes = require("./routes/fournisseursRoutes");
@@ -78,13 +80,9 @@ const promotionsRoutes = require("./routes/promotionsRoutes");
 const remboursementRoutes = require("./routes/remboursementRoutes");
 const productTypesRoutes = require("./routes/productTypesRoutes");
 const autopostRoutes = require("./routes/autopostRoutes");
-const bonLivraisonRoutes = require("./routes/bonLivraisonRoutes");
-const margeRoutes = require("./routes/margeRoutes");
-const contratRoutes = require("./routes/contratRoutes");
 const { ensurePromotionsTable } = require("./utils/promotionUtils");
 const { ensureAutopostsTable } = require("./utils/autopostUtils");
 const { bootstrapScheduledAutoposts } = require("./services/autopostQueue");
-const { bootstrapFournisseurFiscalReminders } = require("./services/fournisseurFiscalReminderService");
 
 const PORT = process.env.PORT || 3000;
 
@@ -104,10 +102,12 @@ app.use("/api/factures-gros", factureGrosRoutes);
 app.use("/api/clients", clientsRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/conges", congeRoutes);
+app.use("/api/pointage", pointageRoutes);
+app.use("/api/contrats", contratRoutes);
 app.use("/api/salaries", salaryRoutes);
 app.use("/api/paie", paieRoutes);
-app.use("/api/pointage", pointageRoutes);
 app.use("/api/commandes", commandeRoutes);
+app.use("/api/bons-livraison", bonLivraisonRoutes);
 app.use("/api/factures", factureRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/fournisseurs", fournisseursRoutes);
@@ -132,9 +132,6 @@ app.use("/api/login-logs", loginLogRoutes);
 app.use("/api/promotions", promotionsRoutes);
 app.use("/api/product-types", productTypesRoutes);
 app.use("/api/autoposts", autopostRoutes);
-app.use("/api/bons-livraison", bonLivraisonRoutes);
-app.use("/api/marge", margeRoutes);
-app.use("/api/contrats", contratRoutes);
 
 app.get("/profile", authenticate, authorize("user"), (req, res) => {
     res.json({ message: "profile" })
@@ -165,7 +162,6 @@ db.promise().getConnection()
 ensurePromotionsTable();
 ensureAutopostsTable();
 bootstrapScheduledAutoposts();
-bootstrapFournisseurFiscalReminders();
 
 
 server.listen(PORT, () => {

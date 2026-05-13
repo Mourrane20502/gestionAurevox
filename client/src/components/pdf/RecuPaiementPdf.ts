@@ -47,14 +47,23 @@ export interface RecuPaiementData {
     image_base64?: string | null;
     prix_total?: number;
     reste_a_payer?: number;
-    /** Mode cadeau: masque nom client et totaux */
+    /** Mode cadeau: masque le nom client (mais garde le total document) */
     is_cadeau?: boolean;
 }
 
+const normalizeMoneyForDisplay = (raw: number): number => {
+    const rounded = Math.round((Number(raw) || 0) * 100) / 100;
+    const nearestInt = Math.round(rounded);
+    // Neutralise les micro-arrondis visuels (ex: 19999.98 / 20000.02).
+    if (Math.abs(rounded - nearestInt) <= 0.02) return nearestInt;
+    return rounded;
+};
+
 const formatPrice = (val: number | undefined): string => {
     if (val === undefined || val === null) return "—";
+    const safeVal = normalizeMoneyForDisplay(val);
     // Using a standard space (ASCII 32) instead of non-breaking space to avoid "5 / 000" rendering issues
-    return val.toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, " ") + " Dhs";
+    return safeVal.toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, " ") + " Dhs";
 };
 
 /** Charge une image (CORS) et la compresse pour intégration PDF */
@@ -64,26 +73,32 @@ const loadImageAsDataUrl = (url: string): Promise<{ dataUrl: string; w: number; 
         img.crossOrigin = "Anonymous";
         img.onload = () => {
             try {
-                const maxSide = 420;
-                let w = img.naturalWidth;
-                let h = img.naturalHeight;
-                if (w <= 0 || h <= 0) {
+                const srcW = img.naturalWidth;
+                const srcH = img.naturalHeight;
+                if (srcW <= 0 || srcH <= 0) {
                     res(null);
                     return;
                 }
-                const scale = Math.min(1, maxSide / Math.max(w, h));
-                w = Math.round(w * scale);
-                h = Math.round(h * scale);
+
+                // Uniform square thumbnail (cover + center crop) so all photos
+                // render with identical visual size in the receipt table.
+                const thumbSide = 220;
+                const scale = Math.max(thumbSide / srcW, thumbSide / srcH);
+                const drawW = srcW * scale;
+                const drawH = srcH * scale;
+                const dx = (thumbSide - drawW) / 2;
+                const dy = (thumbSide - drawH) / 2;
+
                 const canvas = document.createElement("canvas");
-                canvas.width = w;
-                canvas.height = h;
+                canvas.width = thumbSide;
+                canvas.height = thumbSide;
                 const ctx = canvas.getContext("2d");
                 if (!ctx) {
                     res(null);
                     return;
                 }
-                ctx.drawImage(img, 0, 0, w, h);
-                res({ dataUrl: canvas.toDataURL("image/jpeg", 0.72), w, h });
+                ctx.drawImage(img, dx, dy, drawW, drawH);
+                res({ dataUrl: canvas.toDataURL("image/jpeg", 0.72), w: thumbSide, h: thumbSide });
             } catch {
                 res(null);
             }
@@ -102,9 +117,6 @@ const drawThumbInCell = (
     boxW: number,
     boxH: number
 ) => {
-    doc.setDrawColor(220, 220, 220);
-    doc.setLineWidth(0.15);
-    doc.rect(x, y, boxW, boxH);
     if (!dataUrl) {
         doc.setFontSize(6);
         doc.setFont("helvetica", "normal");
@@ -187,156 +199,6 @@ const resolveSousSocieteNameFromNumero = async (numero?: string | null): Promise
     }
 };
 
-/** Espace réservé en bas : récap + CGV sur la même page A4. */
-const RESERVE_RECAP_AND_CGV_MM = 90;
-
-const CGV_SECTIONS: { title: string; body: string }[] = [
-    {
-        title: "Retours et échanges",
-        body: "Les retours d’articles sont acceptés à titre exceptionnel, dans un délai strict de 48 heures maximum après l’achat. Au-delà de ce délai, aucun retour, échange ou remboursement ne pourra être accepté.",
-    },
-    {
-        title: "Acomptes et commandes",
-        body: "Toute commande nécessite un acompte d’au moins 50 % et un délai de préparation d’au moins 15 jours ouvrables. Les acomptes versés ne sont pas remboursables en cas d’annulation du client.",
-    },
-    {
-        title: "Commandes d’articles en or",
-        body: "Pour les commandes spéciales d’articles en or, le client s’engage à régler l’intégralité du prix lors de la livraison. Le prix final sera calculé sur la base du poids et du cours de l’or en vigueur le jour de la livraison.",
-    },
-    {
-        title: "Pierres et Swarovski",
-        body: "Les pierres Swarovski et les pierres serties sur un bijou ne peuvent pas être échangées après livraison. Toute réclamation doit être formulée lors de la réception de l’article.",
-    },
-    {
-        title: "Réservations d’articles",
-        body: "Un article peut être réservé pour une durée maximale d’un mois. Passé ce délai, sans règlement complet, la bijouterie se réserve le droit de remettre l’article en vente.",
-    },
-    {
-        title: "Réparations",
-        body: "Toute réparation doit être accompagnée de son bon de dépôt. Toute réparation impliquant un ajout de matière précieuse fera l’objet d’une facturation supplémentaire calculée au cours en vigueur le jour de la réparation.",
-    },
-];
-
-/** Conditions générales compactes (2 colonnes), même page que le reçu. */
-export const drawConditionsGeneralesCompactInline = (doc: jsPDF, startY: number) => {
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const marginX = 10;
-    const gap = 2;
-    const colW = (pageWidth - marginX * 2 - gap) / 2;
-    const leftX = marginX;
-    const rightX = marginX + colW + gap;
-    const bottomLimit = pageHeight - 2;
-
-    let y = startY + 1.5;
-    if (y > bottomLimit - 8) y = Math.max(120, startY);
-
-    doc.setDrawColor(170, 160, 140);
-    doc.setLineWidth(0.2);
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 2.8;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(45, 45, 45);
-    doc.text("CONDITIONS GÉNÉRALES DE VENTE", pageWidth / 2, y, { align: "center" });
-    y += 3.2;
-
-    const titleFs = 5;
-    const bodyFs = 4.5;
-    const lineGap = 1.48;
-    const afterSection = 1.35;
-
-    const drawColumn = (x: number, startColY: number, indices: number[]): number => {
-        let cy = startColY;
-        for (const idx of indices) {
-            const s = CGV_SECTIONS[idx];
-            if (!s || cy > bottomLimit - 4) break;
-            doc.setFont("helvetica", "bold");
-            doc.setFontSize(titleFs);
-            doc.setTextColor(35, 35, 35);
-            doc.text(s.title, x, cy);
-            cy += 1.85;
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(bodyFs);
-            doc.setTextColor(55, 55, 55);
-            const lines = doc.splitTextToSize(s.body, colW - 0.5);
-            const arr = lines as string[];
-            for (let li = 0; li < arr.length; li++) {
-                if (cy > bottomLimit) return cy;
-                doc.text(arr[li], x, cy);
-                cy += lineGap;
-            }
-            cy += afterSection;
-        }
-        return cy;
-    };
-
-    // Répartition gauche / droite pour limiter la hauteur
-    drawColumn(leftX, y, [0, 2, 4]);
-    drawColumn(rightX, y, [1, 3, 5]);
-    doc.setTextColor(40, 40, 40);
-};
-
-const drawMiniConditionsInBlock = (
-    doc: jsPDF,
-    startY: number,
-    bottomY: number
-) => {
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const marginX = 14;
-    const gap = 5;
-    const colW = (pageWidth - marginX * 2 - gap) / 2;
-    const leftX = marginX;
-    const rightX = leftX + colW + gap;
-
-    let y = startY;
-    if (y >= bottomY - 2) return;
-
-    doc.setDrawColor(190, 190, 190);
-    doc.setLineWidth(0.15);
-    doc.line(marginX, y, pageWidth - marginX, y);
-    // Add a little top padding between the separator line and the heading.
-    y += 3.1;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(40, 40, 40);
-    doc.text("CONDITIONS GÉNÉRALES DE VENTE", pageWidth / 2, y, { align: "center" });
-    y += 2.1;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(5.6);
-    doc.setTextColor(70, 70, 70);
-    y += 2.1;
-
-    const drawColumn = (x: number, indices: number[]) => {
-        let cy = y;
-        for (const idx of indices) {
-            if (cy > bottomY - 1.5) break;
-            const s = CGV_SECTIONS[idx];
-            if (!s) continue;
-            doc.setFont("helvetica", "bold");
-            doc.setFontSize(7);
-            doc.text(s.title, x, cy);
-            cy += 2.15;
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(6);
-            doc.setTextColor(45, 45, 45);
-            const lines = doc.splitTextToSize(s.body, colW - 0.4) as string[];
-            for (const line of lines) {
-                if (cy > bottomY - 0.8) break;
-                doc.text(line, x, cy);
-                cy += 1.55;
-            }
-            // Clearer separation between sections.
-            cy += 1.25;
-        }
-    };
-
-    drawColumn(leftX, [0, 2, 4]);
-    drawColumn(rightX, [1, 3, 5]);
-    doc.setTextColor(40, 40, 40);
-};
 
 const drawCompactDuplicateReceiptBlock = (
     doc: jsPDF,
@@ -410,13 +272,30 @@ const drawCompactDuplicateReceiptBlock = (
     const items = (data.items && data.items.length > 0)
         ? data.items
         : [{ designation: data.designation || "—", type_or_silver: null, quantite: undefined, poids: data.poids, montant_ht: undefined }];
-    // Show more product lines in compact receipt (better usage of vertical space)
-    const maxLines = 7;
-    const shown = items.slice(0, maxLines);
+    const shown = items;
+    const displayedLineAmounts: Array<number | null> = shown.map((it) =>
+        it.montant_ht != null ? normalizeMoneyForDisplay(Number(it.montant_ht) || 0) : null
+    );
+    if (!isCadeau && displayedLineAmounts.length > 0 && data.prix_total != null) {
+        const knownIndices = displayedLineAmounts
+            .map((v, idx) => ({ v, idx }))
+            .filter((x) => x.v != null) as Array<{ v: number; idx: number }>;
+        if (knownIndices.length > 0) {
+            const sumDisplayed = normalizeMoneyForDisplay(
+                knownIndices.reduce((acc, x) => acc + x.v, 0)
+            );
+            const expectedTotal = normalizeMoneyForDisplay(Number(data.prix_total) || 0);
+            const delta = normalizeMoneyForDisplay(expectedTotal - sumDisplayed);
+            if (Math.abs(delta) > 0.0001 && Math.abs(delta) <= 0.05) {
+                const last = knownIndices[knownIndices.length - 1];
+                displayedLineAmounts[last.idx] = normalizeMoneyForDisplay(last.v + delta);
+            }
+        }
+    }
     const tableTop = startY + 33;
     const xPhoto = left + 5.2;
-    const photoW = 14;
-    const photoH = 9.2;
+    const photoW = 18;
+    const photoH = 11.5;
     const xDes = left + 28;
     const xType = left + 72;
     const xQte = left + 86;
@@ -439,7 +318,8 @@ const drawCompactDuplicateReceiptBlock = (
     let y = tableTop + 5.6;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    for (const it of shown) {
+    for (let rowIndex = 0; rowIndex < shown.length; rowIndex++) {
+        const it = shown[rowIndex];
         drawThumbInCell(
             doc,
             it.image_base64,
@@ -454,7 +334,10 @@ const drawCompactDuplicateReceiptBlock = (
         doc.text((it.type_or_silver === "Or" || it.type_or_silver === "Silver") ? it.type_or_silver : "—", xType, y, { align: "center" });
         doc.text(Number.isFinite(Number(it.quantite)) ? String(Number(it.quantite)) : "—", xQte, y, { align: "center" });
         if (!isCadeau) doc.text(it.poids ? String(it.poids) : "—", xPoids, y, { align: "center" });
-        if (!isCadeau) doc.text(it.montant_ht != null ? formatPrice(Number(it.montant_ht)) : "—", xMontant, y, { align: "right" });
+        if (!isCadeau) {
+            const displayed = displayedLineAmounts[rowIndex];
+            doc.text(displayed != null ? formatPrice(displayed) : "—", xMontant, y, { align: "right" });
+        }
         y += rowStep;
     }
 
@@ -464,18 +347,17 @@ const drawCompactDuplicateReceiptBlock = (
         doc.line(left + 4, recapY - 3, right - 4, recapY - 3);
         doc.setFont("helvetica", "bold");
         doc.setFontSize(7.5);
-        doc.text("ACOMPTE :", left + 6, recapY);
-        doc.text(formatPrice(data.montant), right - 6, recapY, { align: "right" });
+        const totalDocument = Number(data.prix_total ?? data.montant ?? 0);
+        doc.text("TOTAL :", left + 6, recapY);
+        doc.text(formatPrice(totalDocument), right - 6, recapY, { align: "right" });
+        doc.text("ACOMPTE :", left + 6, recapY + 4.5);
+        doc.text(formatPrice(data.montant), right - 6, recapY + 4.5, { align: "right" });
         if (data.reste_a_payer !== undefined) {
-            doc.text("RESTE :", left + 6, recapY + 4.5);
-            doc.text(formatPrice(data.reste_a_payer), right - 6, recapY + 4.5, { align: "right" });
+            doc.text("RESTE :", left + 6, recapY + 9);
+            doc.text(formatPrice(data.reste_a_payer), right - 6, recapY + 9, { align: "right" });
         }
     }
 
-    const condBottom = bottom - 2;
-    // Keep conditions low while allowing a larger product section above.
-    const condStart = Math.max(recapY + 6, condBottom - 28);
-    drawMiniConditionsInBlock(doc, condStart, condBottom);
 };
 
 export const drawSingleReceipt = (
@@ -579,7 +461,7 @@ export const drawSingleReceipt = (
     const pageH = doc.internal.pageSize.getHeight();
     const marginX = 18;
     const marginRight = 18;
-    const photoColW = 14;
+    const photoColW = 18;
     const photoX = marginX;
     const descX = photoX + photoColW + 3;
     const descMaxW = 50;
@@ -628,8 +510,8 @@ export const drawSingleReceipt = (
     currentY += 6;
 
     const pageBreakReserve = 12;
-    /** Toujours garder le bas de page pour récap + CGV sur la même feuille que la fin du tableau. */
-    const getMaxYBeforeBreak = () => pageH - pageBreakReserve - RESERVE_RECAP_AND_CGV_MM;
+    /** Bas de page réservé uniquement au récapitulatif. */
+    const getMaxYBeforeBreak = () => pageH - pageBreakReserve - 48;
 
     for (let i = 0; i < lignes.length; i++) {
         const ligne = lignes[i];

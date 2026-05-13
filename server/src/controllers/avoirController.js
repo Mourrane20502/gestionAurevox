@@ -4,6 +4,20 @@ const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
 const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
 
+const parseDateOnlySafe = (value) => {
+    const raw = String(value || "").trim();
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
+        if (!Number.isNaN(dt.getTime())) return dt;
+    }
+    const fallback = new Date(raw);
+    return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+};
+
 async function resolveSousSocieteForAvoir(connection, factureId, commandeId) {
     const fId = Number(factureId);
     if (Number.isFinite(fId) && fId > 0) {
@@ -136,7 +150,8 @@ exports.createAvoir = async (req, res) => {
         const avoirId = result.insertId;
         const sousSociete = await resolveSousSocieteForAvoir(connection, final_facture_id, final_commande_id);
         const avNumber = await getNextNumber("AV", avoirId, connection, { sousSocieteId: sousSociete.id });
-        const final_avoir_numero = formatDocumentNumber('AV', avNumber, new Date(), { sousSocieteNom: sousSociete.nom });
+        const numeroDate = parseDateOnlySafe(date_avoir || new Date().toISOString().split("T")[0]);
+        const final_avoir_numero = formatDocumentNumber('AV', avNumber, numeroDate, { sousSocieteNom: sousSociete.nom });
 
         await connection.execute(`
             UPDATE avoirs 
@@ -259,8 +274,9 @@ exports.getAllAvoirs = async (req, res) => {
                 a.*, 
                 cl.nom_complet AS client_nom, 
                 cl.\`type\` as client_type, 
-            f.numero_facture, f.mode_paiement as facture_mode_paiement,
-            COALESCE(bf.nom_banque, bc.nom_banque) as banque_nom,
+            f.numero_facture,
+            NULL as facture_mode_paiement,
+            NULL as banque_nom,
             CONCAT(u.prenom, ' ', u.nom) as user_nom,
             COALESCE(pvf.nom, pvc.nom) AS point_de_vente_nom,
             (
@@ -281,9 +297,7 @@ exports.getAllAvoirs = async (req, res) => {
             FROM avoirs a
             LEFT JOIN clients cl ON a.client_id = cl.id
             LEFT JOIN factures f ON a.facture_id = f.id
-            LEFT JOIN banques bf ON f.banque_id = bf.id
             LEFT JOIN commandes co ON a.commande_id = co.id
-            LEFT JOIN banques bc ON co.banque_id = bc.id
             LEFT JOIN users u ON a.user_id = u.id
             LEFT JOIN point_de_vente pvf ON f.point_de_vente_id = pvf.id
             LEFT JOIN point_de_vente pvc ON co.point_de_vente_id = pvc.id
@@ -399,7 +413,7 @@ exports.getAvoirById = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT ai.*, p.reference, COALESCE(p.nom, ai.designation) as designation 
+            SELECT ai.*, p.photo, p.grammage, p.reference, COALESCE(p.nom, ai.designation) as designation 
             FROM avoir_items ai
             LEFT JOIN products p ON ai.produit_id = p.id
             WHERE ai.avoir_id = ?
@@ -436,7 +450,12 @@ exports.updateAvoir = async (req, res) => {
             await connection.rollback();
             return res.status(404).json({ message: "Avoir non trouvé" });
         }
-        if (req.user.role !== 'admin' && rows[0].user_id !== req.user.id) {
+        if (
+            req.user.role !== 'admin' &&
+            req.user.role !== 'directeur' &&
+            req.user.role !== 'responsable' &&
+            rows[0].user_id !== req.user.id
+        ) {
             await connection.rollback();
             return res.status(403).json({ message: "Non autorisé" });
         }

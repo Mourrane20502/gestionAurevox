@@ -11,8 +11,6 @@ const IMPORT_EXCLUDED_COLUMNS = new Set([
     "etat",
     "disponible",
     "code_barre",
-    "marge",
-    "date_creation",
 ]);
 
 const toNullableNumber = (value) => {
@@ -40,6 +38,13 @@ const toBooleanTinyInt = (value) => {
     return null;
 };
 
+/** ENUM côté base : Detail | Gros (accepte encore Gro en entrée pour compatibilité) */
+const normalizeNatureProduit = (value) => {
+    const v = String(value ?? "Detail").trim();
+    if (v === "Gro" || v === "Gros") return "Gros";
+    return "Detail";
+};
+
 const parseDisponibleBody = (value) => {
     if (value === undefined || value === null || value === "") return 1;
     const n = toBooleanTinyInt(value);
@@ -49,6 +54,32 @@ const parseDisponibleBody = (value) => {
 const getProductsTableColumnsMeta = async () => {
     const [rows] = await db.execute("SHOW COLUMNS FROM products");
     return rows;
+};
+
+let ensuredProductPricingColumns = false;
+const ensureProductPricingColumns = async () => {
+    if (ensuredProductPricingColumns) return;
+    const [metalCols] = await db.execute("SHOW COLUMNS FROM products LIKE 'pricing_metal'");
+    if (!Array.isArray(metalCols) || metalCols.length === 0) {
+        await db.execute("ALTER TABLE products ADD COLUMN pricing_metal VARCHAR(16) NULL");
+    }
+    const [variantCols] = await db.execute("SHOW COLUMNS FROM products LIKE 'pricing_variant'");
+    if (!Array.isArray(variantCols) || variantCols.length === 0) {
+        await db.execute("ALTER TABLE products ADD COLUMN pricing_variant VARCHAR(24) NULL");
+    }
+    ensuredProductPricingColumns = true;
+};
+
+let ensuredNatureProduitColumn = false;
+const ensureNatureProduitColumn = async () => {
+    if (ensuredNatureProduitColumn) return;
+    const [cols] = await db.execute("SHOW COLUMNS FROM products LIKE 'nature_produit'");
+    if (!Array.isArray(cols) || cols.length === 0) {
+        await db.execute(
+            "ALTER TABLE products ADD COLUMN nature_produit ENUM('Detail','Gros') NOT NULL DEFAULT 'Detail'"
+        );
+    }
+    ensuredNatureProduitColumn = true;
 };
 
 exports.getProductsImportTemplateColumns = async (_req, res) => {
@@ -67,6 +98,7 @@ exports.getProductsImportTemplateColumns = async (_req, res) => {
 exports.createProduct = async (req, res) => {
     const {
         id_point_de_vente,
+        fournisseur_id,
         nom,
         id_categorie,
         description,
@@ -78,55 +110,49 @@ exports.createProduct = async (req, res) => {
         etat,
         disponible,
         grammage,
-        poids,
         product_type_id,
-        prix_achat,
-        fournisseur_id,
-        num_serie,
-        date_expiration,
-        marque_id,
-        date_fabrication
+        pricing_metal,
+        pricing_variant,
+        nature_produit: natureProduitRaw
     } = req.body;
-    const photo = req.file ? req.file.filename : null;
+
+    const nature_produit = normalizeNatureProduit(natureProduitRaw);
+    const isGro = nature_produit === "Gros";
+    const photo = !isGro && req.file ? req.file.filename : null;
 
     const prixMissing =
         prix === undefined || prix === null || String(prix).trim() === "";
-    if (!nom || prixMissing) {
+    if (!nom || (!isGro && prixMissing)) {
         return res.status(400).json({ message: "Name and price are required" });
     }
 
     try {
-        const stockVal = stock ? Number(stock) : 0;
-        const stockAlertVal = stock_alert ? Number(stock_alert) : 1;
-        const disponibleVal = disponible !== undefined
+        await ensureProductPricingColumns();
+        await ensureNatureProduitColumn();
+
+        const stockVal = isGro ? 0 : stock ? Number(stock) : 0;
+        const stockAlertVal = isGro ? 0 : stock_alert ? Number(stock_alert) : 1;
+        const disponibleVal = isGro
             ? parseDisponibleBody(disponible)
-            : Number(stockVal || 0) > 0 ? 1 : 0;
+            : Number(stock || 0) > 0 ? 1 : 0;
         const parsedPrix = toNullableNumber(prix);
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
 
-        const poidsValue = poids ?? grammage;
-        const parsedPrixAchat = toNullableNumber(prix_achat);
-        const fournisseurIdVal = toNullableNumber(fournisseur_id);
-        const marqueIdVal = toNullableNumber(marque_id);
-        const numSerieVal = toNullableString(num_serie);
-        const dateExpirationVal = toNullableString(date_expiration);
-        const dateFabricationVal = toNullableString(date_fabrication);
         const query = `
             INSERT INTO products
-            (id_point_de_vente, nom, id_categorie, photo, description, prix, prix_achat, fournisseur_id, poids, stock, code_barre, stock_alert, reference, etat, disponible, user_id, product_type_id, num_serie, date_expiration, date_fabrication, marque_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id_point_de_vente, fournisseur_id, nom, id_categorie, photo, description, prix, grammage, stock, code_barre, stock_alert, reference, etat, disponible, user_id, product_type_id, pricing_metal, pricing_variant, nature_produit)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const [result] = await db.execute(query, [
             id_point_de_vente || null,
+            fournisseur_id || null,
             nom,
             id_categorie || null,
             photo,
             description || null,
             prixVal,
-            parsedPrixAchat,
-            fournisseurIdVal,
-            poidsValue ? Number(poidsValue) : 0,
+            grammage ? Number(grammage) : 0,
             stockVal,
             code_barre || null,
             stockAlertVal,
@@ -135,10 +161,9 @@ exports.createProduct = async (req, res) => {
             disponibleVal,
             req.user.id,
             product_type_id || null,
-            numSerieVal,
-            dateExpirationVal,
-            dateFabricationVal,
-            marqueIdVal
+            toNullableString(pricing_metal),
+            toNullableString(pricing_variant),
+            nature_produit
         ]);
 
         // Log mouvement creation
@@ -175,17 +200,16 @@ exports.getAllProducts = async (req, res) => {
     try {
 
         const query = `
-            SELECT p.*, p.poids AS grammage, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom, m.nom AS marque_nom,
+            SELECT p.*, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom,
                    EXISTS(SELECT 1 FROM devis_items di WHERE di.produit_id = p.id LIMIT 1) AS has_devis_link,
                    EXISTS(SELECT 1 FROM commande_items ci WHERE ci.produit_id = p.id LIMIT 1) AS has_commande_link,
                    EXISTS(SELECT 1 FROM facture_items fi WHERE fi.produit_id = p.id LIMIT 1) AS has_facture_link
             FROM products p
             LEFT JOIN category c ON p.id_categorie = c.id
             LEFT JOIN point_de_vente pdv ON p.id_point_de_vente = pdv.id
+            LEFT JOIN fournisseur f ON p.fournisseur_id = f.id
             LEFT JOIN users u ON p.user_id = u.id
             LEFT JOIN product_types pt ON p.product_type_id = pt.id
-            LEFT JOIN fournisseur f ON p.fournisseur_id = f.id
-            LEFT JOIN marques m ON p.marque_id = m.id
         `;
 
         const [rows] = await db.execute(query);
@@ -205,14 +229,13 @@ exports.getProductById = async (req, res) => {
     try {
 
         const [rows] = await db.execute(`
-            SELECT p.*, p.poids AS grammage, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom, m.nom AS marque_nom
+            SELECT p.*, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom
             FROM products p
             LEFT JOIN category c ON p.id_categorie = c.id
             LEFT JOIN point_de_vente pdv ON p.id_point_de_vente = pdv.id
+            LEFT JOIN fournisseur f ON p.fournisseur_id = f.id
             LEFT JOIN users u ON p.user_id = u.id
             LEFT JOIN product_types pt ON p.product_type_id = pt.id
-            LEFT JOIN fournisseur f ON p.fournisseur_id = f.id
-            LEFT JOIN marques m ON p.marque_id = m.id
             WHERE p.id = ?
         `, [id]);
 
@@ -235,6 +258,7 @@ exports.updateProduct = async (req, res) => {
 
     const {
         id_point_de_vente,
+        fournisseur_id,
         nom,
         id_categorie,
         description,
@@ -246,22 +270,21 @@ exports.updateProduct = async (req, res) => {
         etat,
         disponible,
         grammage,
-        poids,
         product_type_id,
-        prix_achat,
-        fournisseur_id,
-        num_serie,
-        date_expiration,
-        marque_id,
-        date_fabrication
+        pricing_metal,
+        pricing_variant,
+        nature_produit: natureProduitRaw
     } = req.body;
 
     const newPhoto = req.file ? req.file.filename : null;
 
     try {
+        await ensureProductPricingColumns();
+        await ensureNatureProduitColumn();
+
         // Check if exists
         const [existing] = await db.execute(
-            "SELECT photo, stock FROM products WHERE id = ?",
+            "SELECT photo, stock, nature_produit FROM products WHERE id = ?",
             [id]
         );
 
@@ -269,8 +292,21 @@ exports.updateProduct = async (req, res) => {
             return res.status(404).json({ message: "Product not found" });
         }
 
+        const nature_produit = normalizeNatureProduit(
+            natureProduitRaw !== undefined ? natureProduitRaw : existing[0].nature_produit
+        );
+        const isGro = nature_produit === "Gros";
+
         let finalPhoto = existing[0].photo;
-        if (newPhoto) {
+        if (isGro) {
+            if (existing[0].photo) {
+                const oldPath = path.join("uploads", existing[0].photo);
+                if (fs.existsSync(oldPath)) {
+                    fs.unlinkSync(oldPath);
+                }
+            }
+            finalPhoto = null;
+        } else if (newPhoto) {
             if (existing[0].photo) {
                 const oldPath = path.join("uploads", existing[0].photo);
                 if (fs.existsSync(oldPath)) {
@@ -280,32 +316,24 @@ exports.updateProduct = async (req, res) => {
             finalPhoto = newPhoto;
         }
 
-        const stockVal = stock ? Number(stock) : 0;
-        const stockAlertVal = stock_alert ? Number(stock_alert) : 1;
-        const disponibleVal = disponible !== undefined
+        const stockVal = isGro ? 0 : stock ? Number(stock) : 0;
+        const stockAlertVal = isGro ? 0 : stock_alert ? Number(stock_alert) : 1;
+        const disponibleVal = isGro
             ? parseDisponibleBody(disponible)
-            : Number(stockVal || 0) > 0 ? 1 : 0;
+            : Number(stock || 0) > 0 ? 1 : 0;
         const parsedPrix = toNullableNumber(prix);
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
 
-        const poidsValue = poids ?? grammage;
-        const parsedPrixAchat = toNullableNumber(prix_achat);
-        const fournisseurIdVal = toNullableNumber(fournisseur_id);
-        const marqueIdVal = toNullableNumber(marque_id);
-        const numSerieVal = toNullableString(num_serie);
-        const dateExpirationVal = toNullableString(date_expiration);
-        const dateFabricationVal = toNullableString(date_fabrication);
         const query = `
             UPDATE products SET
             id_point_de_vente = ?,
+            fournisseur_id = ?,
             nom = ?,
             id_categorie = ?,
             photo = ?,
             description = ?,
             prix = ?,
-            prix_achat = ?,
-            fournisseur_id = ?,
-            poids = ?,
+            grammage = ?,
             stock = ?,
             code_barre = ?,
             stock_alert = ?,
@@ -313,23 +341,21 @@ exports.updateProduct = async (req, res) => {
             etat = ?,
             disponible = ?,
             product_type_id = ?,
-            num_serie = ?,
-            date_expiration = ?,
-            date_fabrication = ?,
-            marque_id = ?
+            pricing_metal = ?,
+            pricing_variant = ?,
+            nature_produit = ?
             WHERE id = ?
         `;
 
         await db.execute(query, [
             id_point_de_vente || null,
+            fournisseur_id || null,
             nom,
             id_categorie || null,
             finalPhoto,
             description || null,
             prixVal,
-            parsedPrixAchat,
-            fournisseurIdVal,
-            poidsValue ? Number(poidsValue) : 0,
+            grammage ? Number(grammage) : 0,
             stockVal,
             code_barre || null,
             stockAlertVal,
@@ -337,10 +363,9 @@ exports.updateProduct = async (req, res) => {
             etat ?? 1,
             disponibleVal,
             product_type_id || null,
-            numSerieVal,
-            dateExpirationVal,
-            dateFabricationVal,
-            marqueIdVal,
+            toNullableString(pricing_metal),
+            toNullableString(pricing_variant),
+            nature_produit,
             id
         ]);
 
@@ -469,7 +494,7 @@ exports.importProducts = async (req, res) => {
             const normalized = {
                 nom,
                 prix,
-                poids: toNullableNumber(row.poids ?? row.grammage) ?? 0,
+                grammage: toNullableNumber(row.grammage) ?? 0,
                 stock,
                 stock_alert: toNullableNumber(row.stock_alert) ?? 1,
                 reference: toNullableString(row.reference),

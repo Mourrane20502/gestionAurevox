@@ -1,7 +1,115 @@
 const db = require("../config/db").promise();
 const { getNextNumber } = require("../utils/numberingSettings");
+const { logProductMovement } = require("../utils/productMovementLogger");
+const fs = require("fs");
+const path = require("path");
+
+const uploadsDir = path.join(__dirname, "../../uploads");
+const resolveUploadPath = (filename) =>
+    path.join(uploadsDir, path.basename(String(filename || "")));
+const safeUnlink = async (filename) => {
+    const clean = String(filename || "").trim();
+    if (!clean) return;
+    try {
+        await fs.promises.unlink(resolveUploadPath(clean));
+    } catch {
+        // Ignore if file doesn't exist.
+    }
+};
 
 const getNow = () => new Date().toISOString().slice(0, 19).replace("T", " ");
+
+function isGrosNature(val) {
+    const s = String(val || "").trim().toLowerCase();
+    return s === "gros" || s === "gro";
+}
+
+async function aggregateFactureGrosItemsByProduct(connection, factureId) {
+    const [items] = await connection.execute(
+        "SELECT produit_id, designation, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
+        [factureId]
+    );
+
+    const map = new Map();
+    const unresolvedByDesignation = new Map();
+
+    for (const it of items) {
+        const pid = Number(it?.produit_id);
+        const g = Number(it?.grammage);
+        if (!Number.isFinite(g) || g <= 0) continue;
+
+        if (Number.isFinite(pid) && pid > 0) {
+            map.set(pid, (map.get(pid) || 0) + g);
+            continue;
+        }
+
+        const designation = String(it?.designation || "").trim();
+        if (!designation) continue;
+        unresolvedByDesignation.set(
+            designation,
+            (unresolvedByDesignation.get(designation) || 0) + g
+        );
+    }
+
+    for (const [designation, grammage] of unresolvedByDesignation.entries()) {
+        const [rows] = await connection.execute(
+            `SELECT id
+             FROM products
+             WHERE nature_produit = 'Gros'
+               AND LOWER(TRIM(nom)) = LOWER(TRIM(?))
+             LIMIT 2`,
+            [designation]
+        );
+        if (Array.isArray(rows) && rows.length === 1) {
+            const resolvedPid = Number(rows[0].id);
+            if (Number.isFinite(resolvedPid) && resolvedPid > 0) {
+                map.set(resolvedPid, (map.get(resolvedPid) || 0) + Number(grammage || 0));
+            }
+        }
+    }
+
+    return map;
+}
+
+async function subtractGrosStockForFactureApproval(connection, factureId, referenceNumero, approverId) {
+    const soldByProduct = await aggregateFactureGrosItemsByProduct(connection, factureId);
+    for (const [pid, totalG] of soldByProduct.entries()) {
+        const [rows] = await connection.execute(
+            "SELECT grammage, nature_produit FROM products WHERE id = ? FOR UPDATE",
+            [pid]
+        );
+        if (!Array.isArray(rows) || rows.length === 0) continue;
+        if (!isGrosNature(rows[0].nature_produit)) continue;
+
+        const current = Number(rows[0].grammage) || 0;
+        const toSubtract = Number(totalG || 0);
+        if (current + 1e-8 < toSubtract) {
+            throw new Error(
+                `Grammage insuffisant pour le produit (id ${pid}) : disponible ${current} g, demandé ${toSubtract} g`
+            );
+        }
+
+        await connection.execute(
+            "UPDATE products SET grammage = grammage - ? WHERE id = ?",
+            [toSubtract, pid]
+        );
+
+        await logProductMovement(
+            {
+                productId: pid,
+                type: "facture_gros_sortie",
+                quantityBefore: current,
+                quantityAfter: current - toSubtract,
+                description: "Sortie grammage (validation via règlement gros)",
+                userId: approverId ?? null,
+                referenceType: "facture_gros",
+                referenceId: Number(factureId),
+                referenceNumero: referenceNumero || null,
+            },
+            connection
+        );
+    }
+}
 
 async function ensureNumeroRecuColumn(connection) {
     const conn = connection || await db.getConnection();
@@ -16,6 +124,7 @@ async function ensureNumeroRecuColumn(connection) {
         if (shouldRelease) conn.release();
     }
 }
+
 
 async function ensureClientFromDocument({ client_id, facture_id, commande_id }) {
     if (client_id) return client_id;
@@ -163,7 +272,7 @@ async function propagateApprovalFromReglementGros(connection, reglement) {
 
     if (propagation.facture_gros_id) {
         const [rows] = await connection.execute(
-            `SELECT f.id, f.montant_ttc,
+            `SELECT f.id, f.numero_facture, f.montant_ttc,
                 (
                     COALESCE((
                         SELECT SUM(rc1.montant)
@@ -189,6 +298,16 @@ async function propagateApprovalFromReglementGros(connection, reglement) {
             const montantTtc = Number(f.montant_ttc) || 0;
             const totalRegle = Number(f.total_regle) || 0;
             const nextStatut = montantTtc > 0 && totalRegle >= montantTtc - 0.01 ? "payee" : "non_payee";
+
+            // IMPORTANT: si la facture était encore en_attente, la sortie stock n'a pas encore été faite.
+            // On décrémente ici avant de passer la facture en non_payee/payee.
+            await subtractGrosStockForFactureApproval(
+                connection,
+                propagation.facture_gros_id,
+                f.numero_facture,
+                reglement?.approved_by || reglement?.created_by || null
+            );
+
             const [result] = await connection.execute(
                 "UPDATE factures_gros SET statut = ? WHERE id = ? AND statut = 'en_attente'",
                 [nextStatut, propagation.facture_gros_id]
@@ -282,8 +401,10 @@ exports.getAllReglementsClientsGros = async (req, res) => {
                     c.nom_complet AS client_nom,
                     f.numero_facture,
                     f.montant_ttc AS facture_montant_ttc,
-                    cmd.numero_commande,
-                    cmd.montant_ttc AS commande_montant_ttc,
+                    COALESCE(cmd.numero_commande, cmdf.numero_commande) AS numero_commande,
+                    COALESCE(cmd.montant_ttc, cmdf.montant_ttc) AS commande_montant_ttc,
+                    COALESCE(cmd.statut, cmdf.statut) AS commande_statut,
+                    COALESCE(cmd.numero_commande, cmdf.numero_commande) AS commande_gros_numero,
                     COALESCE(pdvf.id, pdvc.id) AS point_de_vente_id,
                     COALESCE(pdvf.nom, pdvc.nom) AS point_de_vente_nom,
                     COALESCE(ssf.NOM_SOUS_SOCIETE, ssc.NOM_SOUS_SOCIETE) AS sous_societe_nom,
@@ -294,6 +415,7 @@ exports.getAllReglementsClientsGros = async (req, res) => {
              LEFT JOIN clients c ON r.client_id = c.id
              LEFT JOIN factures_gros f ON r.facture_gros_id = f.id
              LEFT JOIN commandes_gros cmd ON r.commande_gros_id = cmd.id
+             LEFT JOIN commandes_gros cmdf ON f.commande_gros_id = cmdf.id
              LEFT JOIN point_de_vente pdvf ON pdvf.id = f.point_de_vente_id
              LEFT JOIN point_de_vente pdvc ON pdvc.id = cmd.point_de_vente_id
              LEFT JOIN sous_societe ssf ON ssf.ID = pdvf.id_sous_gestionnaire
@@ -342,8 +464,10 @@ exports.getReglementClientGrosById = async (req, res) => {
                     c.nom_complet AS client_nom,
                     f.numero_facture,
                     f.montant_ttc AS facture_montant_ttc,
-                    cmd.numero_commande,
-                    cmd.montant_ttc AS commande_montant_ttc,
+                    COALESCE(cmd.numero_commande, cmdf.numero_commande) AS numero_commande,
+                    COALESCE(cmd.montant_ttc, cmdf.montant_ttc) AS commande_montant_ttc,
+                    COALESCE(cmd.statut, cmdf.statut) AS commande_statut,
+                    COALESCE(cmd.numero_commande, cmdf.numero_commande) AS commande_gros_numero,
                     COALESCE(pdvf.id, pdvc.id) AS point_de_vente_id,
                     COALESCE(pdvf.nom, pdvc.nom) AS point_de_vente_nom,
                     COALESCE(ssf.NOM_SOUS_SOCIETE, ssc.NOM_SOUS_SOCIETE) AS sous_societe_nom,
@@ -354,6 +478,7 @@ exports.getReglementClientGrosById = async (req, res) => {
              LEFT JOIN clients c ON r.client_id = c.id
              LEFT JOIN factures_gros f ON r.facture_gros_id = f.id
              LEFT JOIN commandes_gros cmd ON r.commande_gros_id = cmd.id
+             LEFT JOIN commandes_gros cmdf ON f.commande_gros_id = cmdf.id
              LEFT JOIN point_de_vente pdvf ON pdvf.id = f.point_de_vente_id
              LEFT JOIN point_de_vente pdvc ON pdvc.id = cmd.point_de_vente_id
              LEFT JOIN sous_societe ssf ON ssf.ID = pdvf.id_sous_gestionnaire
@@ -482,5 +607,51 @@ exports.getSituationReglementClientGros = async (req, res) => {
         });
     } catch (err) {
         res.status(500).json({ message: "Erreur situation règlement gros", error: err.message });
+    }
+};
+
+exports.uploadReglementClientGrosPdf = async (req, res) => {
+    const { id } = req.params;
+    const file = req.file;
+    if (!file) {
+        return res.status(400).json({ message: "Aucun fichier fourni" });
+    }
+
+    const ext = String(file.originalname || "").toLowerCase();
+    const isPdf = file.mimetype === "application/pdf" || ext.endsWith(".pdf");
+    if (!isPdf) {
+        await safeUnlink(file.filename);
+        return res.status(400).json({ message: "Seul le format PDF est autorisé" });
+    }
+
+    try {
+        const [rows] = await db.execute(
+            "SELECT id, pdf_path FROM reglements_clients_gros WHERE id = ? LIMIT 1",
+            [id]
+        );
+        if (!Array.isArray(rows) || rows.length === 0) {
+            await safeUnlink(file.filename);
+            return res.status(404).json({ message: "Règlement gros introuvable" });
+        }
+
+        const previousPdf = rows[0].pdf_path;
+        await db.execute(
+            "UPDATE reglements_clients_gros SET pdf_path = ? WHERE id = ?",
+            [file.filename, id]
+        );
+
+        if (previousPdf && previousPdf !== file.filename) {
+            await safeUnlink(previousPdf);
+        }
+
+        return res.status(200).json({
+            message: "PDF téléversé avec succès",
+            pdf_path: file.filename,
+            pdf_url: `/uploads/${encodeURIComponent(file.filename)}`,
+        });
+    } catch (error) {
+        await safeUnlink(file.filename);
+        console.error("Error uploading reglement client gros PDF:", error);
+        return res.status(500).json({ message: "Erreur lors du téléversement du PDF" });
     }
 };

@@ -10,15 +10,26 @@ import {
 } from "@/components/common/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/common/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { 
-    RefreshCcw, ShieldCheck, FileText, 
-    ShoppingCart, Receipt, RotateCcw, Package, MessageSquare, 
-    Banknote, Loader2,  Sparkles, Download
+import {
+    RefreshCcw,
+    ShieldCheck,
+    FileText,
+    ShoppingCart,
+    Receipt,
+    RotateCcw,
+    Package,
+    Truck,
+    MessageSquare,
+    Banknote,
+    Loader2,
+    Sparkles,
+    Download,
+    CheckCircle2,
+    XCircle,
 } from "lucide-react";
 import { Input } from "@/components/common/ui/input";
 import { toast } from "sonner";
-import { DeleteSvgIcon, ValidateSvgIcon, RejectSvgIcon } from "@/components/icons/actionSvgIcons";
-import { motion } from "framer-motion";
+import { DeleteSvgIcon, ValidateSvgIcon } from "@/components/icons/actionSvgIcons";
 import { cn } from "@/lib/utils";
 import { buildReglementCode } from "@/lib/reglementCode";
 import { generateAvoirGrosPdfFromApiRow } from "@/components/pdf/GrosDocumentPdf";
@@ -62,48 +73,63 @@ function clearDevisApprovalLocalTimers(devisId: number) {
     }
 }
 
-const ActionButton = ({ 
-    onClick, 
-    isLoading, 
+const ActionButton = ({
+    onClick,
+    isLoading,
     type,
-    label
-}: { 
-    onClick: (e: React.MouseEvent) => void; 
+    label,
+}: {
+    onClick: (e: React.MouseEvent) => void;
     isLoading: boolean;
-    type: 'approve' | 'reject';
+    type: "approve" | "reject";
     label: string;
 }) => {
-    const isApprove = type === 'approve';
-    
+    const isApprove = type === "approve";
+
     return (
-        <motion.button
-            whileHover={{ scale: 1.25, rotate: isApprove ? 5 : -5 }}
-            whileTap={{ scale: 0.85 }}
+        <Button
+            type="button"
+            size="sm"
             onClick={onClick}
             disabled={isLoading}
-            className={cn(
-                "relative group flex items-center justify-center p-1.5 rounded-xl transition-all duration-300",
-                isApprove 
-                    ? "text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" 
-                    : "text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 shadow-sm"
-            )}
             title={label}
+            className={cn(
+                "relative h-8 min-w-[5.5rem] shrink-0 cursor-pointer gap-1.5 overflow-hidden rounded-lg border-0 px-3 text-[13px] font-semibold tracking-tight text-white shadow-md",
+                "transition-all duration-200 ease-out",
+                "hover:-translate-y-px hover:shadow-lg",
+                "active:translate-y-0 active:shadow-md active:brightness-95",
+                "disabled:pointer-events-none disabled:translate-y-0 disabled:shadow-md disabled:brightness-100",
+                "focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                isApprove
+                    ? [
+                          "!bg-gradient-to-b !from-emerald-500 !to-emerald-700",
+                          "hover:!from-emerald-400 hover:!to-emerald-600",
+                          "shadow-emerald-900/15 hover:shadow-emerald-900/25",
+                          "focus-visible:ring-emerald-500/70",
+                          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-white/25",
+                      ]
+                    : [
+                          "!bg-gradient-to-b !from-red-500 !to-red-700",
+                          "hover:!from-red-400 hover:!to-red-600",
+                          "shadow-red-900/15 hover:shadow-red-900/25",
+                          "focus-visible:ring-red-500/70",
+                          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-white/20",
+                      ]
+            )}
         >
             {isLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
             ) : (
-                isApprove ? <ValidateSvgIcon className="h-6 w-6 stroke-[2.5]" /> : <RejectSvgIcon className="h-6 w-6 stroke-[2.5]" />
+                <>
+                    {isApprove ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 opacity-95" strokeWidth={2.25} aria-hidden />
+                    ) : (
+                        <XCircle className="h-3.5 w-3.5 shrink-0 opacity-95" strokeWidth={2.25} aria-hidden />
+                    )}
+                    <span className="tabular-nums">{isApprove ? "Valider" : "Rejeter"}</span>
+                </>
             )}
-            
-            <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                whileHover={{ opacity: 1, scale: 1 }}
-                className={cn(
-                    "absolute -inset-1 rounded-xl filter blur-md -z-10 transition-opacity duration-300",
-                    isApprove ? "bg-emerald-400/25" : "bg-red-400/25"
-                )}
-            />
-        </motion.button>
+        </Button>
     );
 };
 
@@ -141,16 +167,12 @@ interface BonLivraisonApproval {
     id: number;
     numero_bon_livraison: string;
     date_bon_livraison: string;
-    commande_id?: number | null;
-    numero_commande?: string | null;
-    client_nom?: string | null;
+    client_nom: string;
     statut: string;
+    numero_commande?: string | null;
+    user_nom?: string | null;
+    montant_ttc?: number | null;
 }
-
-const isPendingBlStatus = (status: string | null | undefined) => {
-    const s = String(status || "").trim().toLowerCase();
-    return s === "en_attente" || s === "en attente" || s === "brouillon";
-};
 
 interface DevisGrosApproval {
     id: number;
@@ -298,7 +320,6 @@ export default function Approvals() {
     const [pendingDevis, setPendingDevis] = useState<Devis[]>([]);
     const [pendingCommandes, setPendingCommandes] = useState<Commande[]>([]);
     const [pendingFactures, setPendingFactures] = useState<Facture[]>([]);
-    const [pendingBonsLivraison, setPendingBonsLivraison] = useState<BonLivraisonApproval[]>([]);
     const [pendingDevisGros, setPendingDevisGros] = useState<DevisGrosApproval[]>([]);
     const [pendingCommandesGros, setPendingCommandesGros] = useState<CommandeGrosApproval[]>([]);
     const [pendingFacturesGros, setPendingFacturesGros] = useState<FactureGrosApproval[]>([]);
@@ -310,6 +331,7 @@ export default function Approvals() {
     const [pendingReglementsClients, setPendingReglementsClients] = useState<ReglementClientApproval[]>([]);
     const [pendingReglementsClientsGros, setPendingReglementsClientsGros] = useState<ReglementClientGrosApproval[]>([]);
     const [pendingRemboursements, setPendingRemboursements] = useState<RemboursementApproval[]>([]);
+    const [pendingBonsLivraison, setPendingBonsLivraison] = useState<BonLivraisonApproval[]>([]);
     const [myApprovalRights, setMyApprovalRights] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState<"devis" | "commandes" | "bons_livraison" | "factures" | "gros" | "avoirs" | "inventaire" | "achats_fournisseurs" | "reglements" | "remboursements">("devis");
     const [activeGrosTab, setActiveGrosTab] = useState<"devis_gros" | "commandes_gros" | "factures_gros" | "avoirs_gros" | "reglements_gros">("devis_gros");
@@ -382,6 +404,12 @@ export default function Approvals() {
             }
 
             const canApproveEverything = role === "superadmin" || role === "admin";
+            const hasApprovalsViewPerm = userPermissions.includes("approvals_view");
+            const hasBonsLivraisonViewPerm = userPermissions.includes("bons_livraison_view");
+            const canFetchCommandeRelated =
+                canApproveEverything || rights.includes("commande") || hasApprovalsViewPerm;
+            const canFetchBonsLivraison =
+                canFetchCommandeRelated || hasBonsLivraisonViewPerm;
 
             const canSeeInventory = canApproveEverything || rights.includes('inventaire');
             const canSeeAchats = canApproveEverything || rights.includes('achats_fournisseurs');
@@ -390,11 +418,11 @@ export default function Approvals() {
 
             const [devisRes, cmdRes, blRes, facRes, devisGrosRes, cmdGrosRes, facGrosRes, avRes, avGrosRes, invRes, achatsRes, regCliRes, regCliGrosRes, regFourRes, rembRes] = await Promise.all([
                 (canApproveEverything || rights.includes('devis')) ? fetch("/api/devis", { headers }) : Promise.resolve(null),
-                (canApproveEverything || rights.includes('commande')) ? fetch("/api/commandes", { headers }) : Promise.resolve(null),
-                (canApproveEverything || rights.includes('commande')) ? fetch("/api/bons-livraison", { headers }) : Promise.resolve(null),
+                canFetchCommandeRelated ? fetch("/api/commandes", { headers }) : Promise.resolve(null),
+                canFetchBonsLivraison ? fetch("/api/bons-livraison", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('facture')) ? fetch("/api/factures", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('devis')) ? fetch("/api/devis-gros", { headers }) : Promise.resolve(null),
-                (canApproveEverything || rights.includes('commande')) ? fetch("/api/commandes-gros", { headers }) : Promise.resolve(null),
+                canFetchCommandeRelated ? fetch("/api/commandes-gros", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('facture')) ? fetch("/api/factures-gros", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('avoir')) ? fetch("/api/avoirs", { headers }) : Promise.resolve(null),
                 (canApproveEverything || rights.includes('avoir')) ? fetch("/api/avoirs-gros", { headers }) : Promise.resolve(null),
@@ -629,7 +657,16 @@ export default function Approvals() {
 
             if (blRes && blRes.ok) {
                 const data: BonLivraisonApproval[] = await blRes.json();
-                setPendingBonsLivraison(data.filter((b) => isPendingBlStatus(b.statut)));
+                const list = Array.isArray(data) ? data : [];
+                setPendingBonsLivraison(
+                    list.filter((b) => {
+                        const s = String(b.statut ?? "")
+                            .trim()
+                            .toLowerCase()
+                            .replace(/\s+/g, "_");
+                        return s === "en_attente";
+                    })
+                );
             } else {
                 setPendingBonsLivraison([]);
             }
@@ -742,21 +779,10 @@ export default function Approvals() {
         const handler = () => {
             fetchAll();
         };
-        const focusHandler = () => {
-            fetchAll();
-        };
-        const intervalId = window.setInterval(() => {
-            fetchAll();
-        }, 10000);
 
         window.addEventListener("approvals-updated", handler);
-        window.addEventListener("focus", focusHandler);
-        document.addEventListener("visibilitychange", focusHandler);
         return () => {
-            window.clearInterval(intervalId);
             window.removeEventListener("approvals-updated", handler);
-            window.removeEventListener("focus", focusHandler);
-            document.removeEventListener("visibilitychange", focusHandler);
         };
     }, [token, role, isAdminOrResponsable]);
 
@@ -812,7 +838,13 @@ export default function Approvals() {
             });
 
             if (res.ok) {
-                toast.success(type === "facture" ? "Facture validée" : "Validation effectuée");
+                toast.success(
+                    type === "facture"
+                        ? "Facture validée"
+                        : type === "bon_livraison"
+                          ? "Bon de livraison validé"
+                          : "Validation effectuée"
+                );
                 window.dispatchEvent(new CustomEvent("approvals-updated"));
             } else {
                 fetchAll(); // Restore item on failure
@@ -979,7 +1011,7 @@ export default function Approvals() {
             });
 
             if (res.ok) {
-                toast.success("Demande rejetée");
+                toast.success(type === "bon_livraison" ? "Bon de livraison annulé" : "Demande rejetée");
                 window.dispatchEvent(new CustomEvent("approvals-updated"));
             } else {
                 fetchAll(); // Restore data on failure
@@ -1081,7 +1113,7 @@ export default function Approvals() {
                             Approbations
                         </h1>
                         <p className="text-sm text-muted-foreground mt-0.5">
-                            Centralisez toutes les demandes en attente de validation (devis, commandes, factures, avoirs).
+                            Centralisez toutes les demandes en attente de validation (devis, commandes, bons de livraison, factures, avoirs).
                         </p>
                     </div>
                     <Button
@@ -1096,7 +1128,7 @@ export default function Approvals() {
                     </Button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
                     <Card className="border-l-4 border-l-indigo-500 shadow-sm hover:shadow-md transition-all duration-200 bg-gradient-to-br from-background to-indigo-50/30 dark:to-indigo-500/5">
                         <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-2">
@@ -1123,6 +1155,21 @@ export default function Approvals() {
                             <div className="flex items-baseline gap-1">
                                 <span className="text-3xl font-black tabular-nums">{pendingCommandes.length}</span>
                                 <span className="text-xs text-muted-foreground font-medium">à valider</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card className="border-l-4 border-l-violet-500 shadow-sm hover:shadow-md transition-all duration-200 bg-gradient-to-br from-background to-violet-50/30 dark:to-violet-500/5">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider flex items-center gap-2">
+                                <Truck className="h-4 w-4" />
+                                Bons livraison
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-3xl font-black tabular-nums">{pendingBonsLivraison.length}</span>
+                                <span className="text-xs text-muted-foreground font-medium">livraison</span>
                             </div>
                         </CardContent>
                     </Card>
@@ -1233,12 +1280,12 @@ export default function Approvals() {
                                     </TabsTrigger>
                                 )}
                                 {(role === 'superadmin' || role === 'admin' || myApprovalRights.includes('commande')) && (
-                                    <TabsTrigger 
+                                    <TabsTrigger
                                         value="bons_livraison"
                                         className="flex-1 relative flex flex-col items-center justify-center py-3 px-2 data-[state=active]:bg-background data-[state=active]:shadow-md transition-all duration-200 rounded-lg group"
                                     >
-                                        <FileText className="h-5 w-5 mb-1.5 text-violet-500 group-data-[state=active]:animate-pulse" />
-                                        <span className="text-[13px] font-medium">Bons livraison</span>
+                                        <Truck className="h-5 w-5 mb-1.5 text-violet-500 group-data-[state=active]:animate-pulse" />
+                                        <span className="text-[13px] font-medium leading-tight text-center px-0.5">Bons livraison</span>
                                         {pendingBonsLivraison.length > 0 && (
                                             <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-violet-600 text-[10px] animate-in zoom-in">
                                                 {pendingBonsLivraison.length}
@@ -1466,6 +1513,7 @@ export default function Approvals() {
                                             <TableHead>Commande</TableHead>
                                             <TableHead>Client</TableHead>
                                             <TableHead>Date</TableHead>
+                                            <TableHead>Utilisateur</TableHead>
                                             <TableHead>Statut</TableHead>
                                             <TableHead>Action</TableHead>
                                         </TableRow>
@@ -1473,7 +1521,7 @@ export default function Approvals() {
                                     <TableBody>
                                         {pendingBonsLivraison.length === 0 ? (
                                             <TableRow>
-                                                <TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">
+                                                <TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">
                                                     Aucun bon de livraison en attente
                                                 </TableCell>
                                             </TableRow>
@@ -1482,30 +1530,29 @@ export default function Approvals() {
                                                 <TableCell>
                                                     <button
                                                         type="button"
-                                                        className="text-indigo-600 hover:underline font-semibold"
-                                                        onClick={() => window.open(`/dashboard/bons-livraison/${b.id}`, "_blank", "noopener,noreferrer")}
+                                                        className="text-violet-600 hover:underline font-semibold"
+                                                        onClick={() =>
+                                                            window.open(`/dashboard/bons-livraison/${b.id}`, "_blank", "noopener,noreferrer")
+                                                        }
                                                     >
                                                         {b.numero_bon_livraison}
                                                     </button>
                                                 </TableCell>
-                                                <TableCell>
-                                                    {b.commande_id ? (
-                                                        <button
-                                                            type="button"
-                                                            className="text-indigo-600 hover:underline font-semibold"
-                                                            onClick={() => window.open(`/dashboard/commandes/${b.commande_id}`, "_blank", "noopener,noreferrer")}
-                                                        >
-                                                            {b.numero_commande || `CMD #${b.commande_id}`}
-                                                        </button>
-                                                    ) : (
-                                                        b.numero_commande || "—"
-                                                    )}
+                                                <TableCell className="text-sm text-muted-foreground">
+                                                    {b.numero_commande ?? "—"}
                                                 </TableCell>
-                                                <TableCell>{b.client_nom || "—"}</TableCell>
-                                                <TableCell>{new Date(b.date_bon_livraison).toLocaleDateString()}</TableCell>
+                                                <TableCell>{b.client_nom}</TableCell>
                                                 <TableCell>
-                                                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700">
-                                                        {b.statut}
+                                                    {b.date_bon_livraison
+                                                        ? new Date(String(b.date_bon_livraison).slice(0, 10)).toLocaleDateString()
+                                                        : "—"}
+                                                </TableCell>
+                                                <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                                    {b.user_nom ?? "—"}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Badge variant="outline" className="text-xs border-violet-300 text-violet-700">
+                                                        {String(b.statut || "").replace(/_/g, " ")}
                                                     </Badge>
                                                 </TableCell>
                                                 <TableCell className="flex items-center gap-2">

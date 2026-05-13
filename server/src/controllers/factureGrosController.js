@@ -52,6 +52,31 @@ async function resolveSousSocieteFromPdv(connection, pointDeVenteId) {
     };
 }
 
+async function resolvePointDeVenteFromItems(connection, items) {
+    if (!Array.isArray(items) || items.length === 0) return null;
+    const productIds = Array.from(
+        new Set(
+            items
+                .map((it) => Number(it?.produit_id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+        )
+    );
+    if (!productIds.length) return null;
+    const placeholders = productIds.map(() => "?").join(",");
+    const [rows] = await connection.query(
+        `
+        SELECT DISTINCT p.id_point_de_vente AS pdv_id
+        FROM products p
+        WHERE p.id IN (${placeholders})
+          AND p.id_point_de_vente IS NOT NULL
+        `,
+        productIds
+    );
+    if (!Array.isArray(rows) || rows.length !== 1) return null;
+    const pdvId = Number(rows[0].pdv_id);
+    return Number.isFinite(pdvId) && pdvId > 0 ? pdvId : null;
+}
+
 const sumGrammage = (items) => {
     if (!Array.isArray(items)) return 0;
     return items.reduce((acc, it) => acc + (Number(it.grammage) || 0), 0);
@@ -112,9 +137,66 @@ function aggregateGrosGrammageByProductId(items) {
     return map;
 }
 
+/**
+ * Agrège le grammage par produit en résolvant aussi les lignes sans produit_id
+ * via une correspondance stricte sur la désignation (nature_produit = 'Gros').
+ * La résolution n'est appliquée que si une seule correspondance est trouvée.
+ */
+async function aggregateGrosGrammageResolvedByProduct(connection, items) {
+    const map = new Map();
+    if (!Array.isArray(items)) return map;
+
+    const unresolvedByDesignation = new Map();
+
+    for (const it of items) {
+        const pid = Number(it?.produit_id);
+        const g = Number(it?.grammage);
+        if (!Number.isFinite(g) || g <= 0) continue;
+
+        if (Number.isFinite(pid) && pid > 0) {
+            map.set(pid, (map.get(pid) || 0) + g);
+            continue;
+        }
+
+        const designation = String(it?.designation || "").trim();
+        if (!designation) continue;
+        unresolvedByDesignation.set(
+            designation,
+            (unresolvedByDesignation.get(designation) || 0) + g
+        );
+    }
+
+    for (const [designation, grammage] of unresolvedByDesignation.entries()) {
+        const [rows] = await connection.execute(
+            `SELECT id
+             FROM products
+             WHERE nature_produit = 'Gros'
+               AND LOWER(TRIM(nom)) = LOWER(TRIM(?))
+             LIMIT 2`,
+            [designation]
+        );
+
+        if (Array.isArray(rows) && rows.length === 1) {
+            const resolvedPid = Number(rows[0].id);
+            if (Number.isFinite(resolvedPid) && resolvedPid > 0) {
+                map.set(resolvedPid, (map.get(resolvedPid) || 0) + Number(grammage || 0));
+            }
+        } else {
+            console.log("[factureGros][aggregateResolved] designation non resolue ou ambigue", {
+                designation,
+                grammage,
+                matches: Array.isArray(rows) ? rows.length : 0,
+            });
+        }
+    }
+
+    console.log("[factureGros][aggregateResolved] map finale", Array.from(map.entries()));
+    return map;
+}
+
 function isGrosNature(val) {
-    const s = String(val || "").trim();
-    return s === "Gros" || s === "Gro";
+    const s = String(val || "").trim().toLowerCase();
+    return s === "gros" || s === "gro";
 }
 
 function isFactureGrosStockDeductedStatus(status) {
@@ -135,8 +217,8 @@ async function addGrammageToGrosProducts(connection, itemsByProductMap, movement
         const current = Number(rows[0].grammage) || 0;
         const after = current + Number(totalG || 0);
         await connection.execute(
-            `UPDATE products SET grammage = grammage + ? WHERE id = ? AND nature_produit = 'Gros'`,
-            [totalG, pid]
+            `UPDATE products SET grammage = grammage + ? WHERE id = ?`,
+            [Number(totalG || 0), pid]
         );
         await logProductMovement(
             {
@@ -157,6 +239,12 @@ async function addGrammageToGrosProducts(connection, itemsByProductMap, movement
 
 /** Retire le grammage vendu des produits Gros (création / mise à jour facture). */
 async function subtractGrammageFromGrosProducts(connection, itemsByProductMap, movementMeta = {}) {
+    if (!itemsByProductMap || itemsByProductMap.size === 0) {
+        console.log("[factureGros][subtract] map vide: aucune ligne resolue pour decrement", {
+            ref: movementMeta.referenceNumero || movementMeta.referenceId || null,
+        });
+        return;
+    }
     for (const [pid, totalG] of itemsByProductMap) {
         const [rows] = await connection.execute(
             `SELECT grammage, nature_produit FROM products WHERE id = ? FOR UPDATE`,
@@ -167,8 +255,22 @@ async function subtractGrammageFromGrosProducts(connection, itemsByProductMap, m
             err.statusCode = 400;
             throw err;
         }
-        if (!isGrosNature(rows[0].nature_produit)) continue;
+        if (!isGrosNature(rows[0].nature_produit)) {
+            console.log("[factureGros][subtract] skip: nature produit non gros", {
+                pid,
+                nature: rows[0].nature_produit,
+                ref: movementMeta.referenceNumero || movementMeta.referenceId || null,
+            });
+            continue;
+        }
         const current = Number(rows[0].grammage) || 0;
+        console.log("[factureGros][subtract] before", {
+            pid,
+            nature: rows[0].nature_produit,
+            current,
+            toSubtract: Number(totalG || 0),
+            ref: movementMeta.referenceNumero || movementMeta.referenceId || null,
+        });
         if (current + 1e-8 < totalG) {
             const err = new Error(
                 `Grammage insuffisant pour le produit (id ${pid}) : disponible ${current} g, demandé ${totalG} g`
@@ -176,10 +278,20 @@ async function subtractGrammageFromGrosProducts(connection, itemsByProductMap, m
             err.statusCode = 400;
             throw err;
         }
-        await connection.execute(
-            `UPDATE products SET grammage = grammage - ? WHERE id = ? AND nature_produit = 'Gros'`,
-            [totalG, pid]
+        const [updateRes] = await connection.execute(
+            `UPDATE products SET grammage = grammage - ? WHERE id = ?`,
+            [Number(totalG || 0), pid]
         );
+        const [afterRows] = await connection.execute(
+            `SELECT grammage FROM products WHERE id = ?`,
+            [pid]
+        );
+        console.log("[factureGros][subtract] after", {
+            pid,
+            affectedRows: updateRes?.affectedRows ?? 0,
+            expectedAfter: current - Number(totalG || 0),
+            dbAfter: Number(afterRows?.[0]?.grammage ?? 0),
+        });
         await logProductMovement(
             {
                 productId: pid,
@@ -269,23 +381,12 @@ exports.createFactureGros = async (req, res) => {
                 return res.status(400).json({ message: "client_id is required" });
             }
 
-            if (!pdv_id || pdv_id === "" || pdv_id === "none") {
-                const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
-                if (pdvs.length > 0) pdv_id = pdvs[0].id;
-                else pdv_id = 1;
-            }
         }
 
         const [clientRow] = await connection.execute("SELECT id FROM clients WHERE id = ?", [effectiveClientId]);
         if (clientRow.length === 0) {
             await connection.rollback();
             return res.status(404).json({ message: "Client not found" });
-        }
-
-        if (!pdv_id || pdv_id === "" || pdv_id === "none") {
-            const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
-            if (pdvs.length > 0) pdv_id = pdvs[0].id;
-            else pdv_id = 1;
         }
 
         if (finalDevisGrosId) {
@@ -321,6 +422,18 @@ exports.createFactureGros = async (req, res) => {
                 await connection.rollback();
                 return res.status(400).json({ message: "Le grammage doit être > 0 pour chaque ligne" });
             }
+        }
+        const bodyPdvId = Number(point_de_vente_id);
+        const pdvFromItems = await resolvePointDeVenteFromItems(connection, items);
+        if (pdvFromItems) {
+            pdv_id = pdvFromItems;
+        } else if (Number.isFinite(bodyPdvId) && bodyPdvId > 0 && !finalCommandeGrosId) {
+            pdv_id = bodyPdvId;
+        }
+        if (!pdv_id || pdv_id === "" || pdv_id === "none") {
+            const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
+            if (pdvs.length > 0) pdv_id = pdvs[0].id;
+            else pdv_id = 1;
         }
 
         const totalGrammage = sumGrammage(items);
@@ -373,7 +486,8 @@ exports.createFactureGros = async (req, res) => {
         const fromItems = await resolveSousSocieteFromItems(connection, items);
         const fromPdv = await resolveSousSocieteFromPdv(connection, pdv_id);
         const sousSociete = fromItems.id ? fromItems : fromPdv;
-        const fgNumber = await getNextNumber("FG", factureGrosId, connection, {
+        // FG partage la même séquence que FA (paramètres Settings)
+        const fgNumber = await getNextNumber("FA", factureGrosId, connection, {
             sousSocieteId: sousSociete.id,
         });
         const final_numero = formatDocumentNumber("FG", fgNumber, new Date(), { sousSocieteNom: sousSociete.nom });
@@ -410,7 +524,8 @@ exports.createFactureGros = async (req, res) => {
                     );
                     traceDevisGrosId = devisIns.insertId;
                     const sousSocieteDevis = await resolveSousSocieteFromItems(connection, items);
-                    const dgNumber = await getNextNumber("DG", traceDevisGrosId, connection, {
+                    // DG partage la même séquence que DE (paramètres Settings)
+                    const dgNumber = await getNextNumber("DE", traceDevisGrosId, connection, {
                         sousSocieteId: sousSociete.id,
                     });
                     const numDg = formatDocumentNumber("DG", dgNumber, new Date(), {
@@ -466,7 +581,8 @@ exports.createFactureGros = async (req, res) => {
                     );
                     traceCommandeGrosId = cmdIns.insertId;
                     const sousSocieteCmd = fromItems.id ? fromItems : fromPdv;
-                    const cgNumber = await getNextNumber("CG", traceCommandeGrosId, connection, {
+                    // CG partage la même séquence que CO (paramètres Settings)
+                    const cgNumber = await getNextNumber("CO", traceCommandeGrosId, connection, {
                         sousSocieteId: sousSociete.id,
                     });
                     const numCg = formatDocumentNumber("CG", cgNumber, new Date(), {
@@ -523,6 +639,18 @@ exports.createFactureGros = async (req, res) => {
             [rowsItems]
         );
 
+        // Si des règlements ont été saisis au niveau commande gros avant la création de la facture,
+        // on les rattache à cette facture pour garder une traçabilité cohérente.
+        if (finalCommandeGrosId) {
+            await connection.execute(
+                `UPDATE reglements_clients_gros
+                 SET facture_gros_id = ?
+                 WHERE commande_gros_id = ?
+                   AND (facture_gros_id IS NULL OR facture_gros_id = 0)`,
+                [factureGrosId, finalCommandeGrosId]
+            );
+        }
+
         await connection.commit();
         res.status(201).json({
             message: "Facture gros créée",
@@ -553,37 +681,29 @@ exports.getAllFactureGros = async (req, res) => {
                 cg.numero_commande AS commande_gros_numero,
                 dg.numero_devis AS devis_gros_numero,
                 (
-                    COALESCE((
-                        SELECT SUM(rc1.montant)
-                        FROM reglements_clients_gros rc1
-                        WHERE rc1.facture_gros_id = fg.id
-                          AND rc1.statut = 'approuve'
-                    ), 0)
-                    +
-                    COALESCE((
-                        SELECT SUM(rc2.montant)
-                        FROM reglements_clients_gros rc2
-                        WHERE fg.commande_gros_id IS NOT NULL
-                          AND rc2.commande_gros_id = fg.commande_gros_id
-                          AND rc2.statut = 'approuve'
-                    ), 0)
+                    SELECT COALESCE(SUM(rc.montant), 0)
+                    FROM reglements_clients_gros rc
+                    WHERE rc.statut = 'approuve'
+                      AND (
+                        rc.facture_gros_id = fg.id
+                        OR (
+                            fg.commande_gros_id IS NOT NULL
+                            AND rc.commande_gros_id = fg.commande_gros_id
+                        )
+                      )
                 ) AS total_regle,
                 GREATEST(
                     COALESCE(fg.montant_ttc, 0) - (
-                        COALESCE((
-                            SELECT SUM(rc1.montant)
-                            FROM reglements_clients_gros rc1
-                            WHERE rc1.facture_gros_id = fg.id
-                              AND rc1.statut = 'approuve'
-                        ), 0)
-                        +
-                        COALESCE((
-                            SELECT SUM(rc2.montant)
-                            FROM reglements_clients_gros rc2
-                            WHERE fg.commande_gros_id IS NOT NULL
-                              AND rc2.commande_gros_id = fg.commande_gros_id
-                              AND rc2.statut = 'approuve'
-                        ), 0)
+                        SELECT COALESCE(SUM(rc.montant), 0)
+                        FROM reglements_clients_gros rc
+                        WHERE rc.statut = 'approuve'
+                          AND (
+                            rc.facture_gros_id = fg.id
+                            OR (
+                                fg.commande_gros_id IS NOT NULL
+                                AND rc.commande_gros_id = fg.commande_gros_id
+                            )
+                          )
                     ),
                     0
                 ) AS reste_a_payer
@@ -700,10 +820,6 @@ exports.updateFactureGros = async (req, res) => {
         }
 
         let pdv_id = point_de_vente_id;
-        if (!pdv_id || pdv_id === "" || pdv_id === "none") {
-            const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
-            pdv_id = pdvs.length > 0 ? pdvs[0].id : 1;
-        }
 
         let finalCommandeGrosId =
             commande_gros_id && commande_gros_id !== "" && commande_gros_id !== "none"
@@ -728,6 +844,17 @@ exports.updateFactureGros = async (req, res) => {
             }
             effectiveClientId = cmd[0].client_id;
             pdv_id = cmd[0].point_de_vente_id;
+        }
+        const bodyPdvId = Number(point_de_vente_id);
+        const pdvFromItems = await resolvePointDeVenteFromItems(connection, items);
+        if (pdvFromItems) {
+            pdv_id = pdvFromItems;
+        } else if (Number.isFinite(bodyPdvId) && bodyPdvId > 0 && !finalCommandeGrosId) {
+            pdv_id = bodyPdvId;
+        }
+        if (!pdv_id || pdv_id === "" || pdv_id === "none") {
+            const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
+            pdv_id = pdvs.length > 0 ? pdvs[0].id : 1;
         }
 
         if (finalDevisGrosId) {
@@ -757,13 +884,13 @@ exports.updateFactureGros = async (req, res) => {
         }
 
         const [previousItems] = await connection.execute(
-            "SELECT produit_id, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
+            "SELECT produit_id, designation, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
             [id]
         );
         const currentStatut = String(existing[0].statut || "").trim();
         const effectiveNextStatut = statutParam || currentStatut;
         if (isFactureGrosStockDeductedStatus(currentStatut)) {
-            const restoredByProduct = aggregateGrosGrammageByProductId(previousItems);
+            const restoredByProduct = await aggregateGrosGrammageResolvedByProduct(connection, previousItems);
             await addGrammageToGrosProducts(connection, restoredByProduct, {
                 userId: req.user?.id || null,
                 referenceType: "facture_gros",
@@ -821,7 +948,7 @@ exports.updateFactureGros = async (req, res) => {
         );
 
         if (isFactureGrosStockDeductedStatus(effectiveNextStatut)) {
-            const newSoldByProduct = aggregateGrosGrammageByProductId(items);
+            const newSoldByProduct = await aggregateGrosGrammageResolvedByProduct(connection, items);
             await subtractGrammageFromGrosProducts(connection, newSoldByProduct, {
                 userId: req.user?.id || null,
                 referenceType: "facture_gros",
@@ -862,11 +989,11 @@ exports.deleteFactureGros = async (req, res) => {
 
         await connection.beginTransaction();
         const [itemRows] = await connection.execute(
-            "SELECT produit_id, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
+            "SELECT produit_id, designation, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
             [id]
         );
         if (isFactureGrosStockDeductedStatus(rows[0]?.statut)) {
-            const restoredByProduct = aggregateGrosGrammageByProductId(itemRows);
+            const restoredByProduct = await aggregateGrosGrammageResolvedByProduct(connection, itemRows);
             await addGrammageToGrosProducts(connection, restoredByProduct, {
                 userId: req.user?.id || null,
                 referenceType: "facture_gros",
@@ -910,10 +1037,27 @@ exports.approveFactureGros = async (req, res) => {
             return res.status(400).json({ message: "Cette facture gros n'est plus en attente" });
         }
         const [items] = await connection.execute(
-            "SELECT produit_id, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
+            "SELECT produit_id, designation, grammage FROM factures_gros_items WHERE facture_gros_id = ?",
             [id]
         );
-        const soldByProduct = aggregateGrosGrammageByProductId(items);
+        console.log("[factureGros][approve] facture + items", {
+            factureId: Number(id),
+            statut: rows[0].statut,
+            numero: rows[0].numero_facture,
+            itemsCount: Array.isArray(items) ? items.length : 0,
+            rawItems: items,
+        });
+        const soldByProduct = await aggregateGrosGrammageResolvedByProduct(connection, items);
+        console.log("[factureGros][approve] soldByProduct", {
+            factureId: Number(id),
+            soldByProduct: Array.from(soldByProduct.entries()),
+        });
+        if (!soldByProduct || soldByProduct.size === 0) {
+            console.log("[factureGros][approve] WARNING: aucune ligne resolue, aucun decrement possible", {
+                factureId: Number(id),
+                rawItems: items,
+            });
+        }
         await subtractGrammageFromGrosProducts(connection, soldByProduct, {
             userId: req.user?.id || null,
             referenceType: "facture_gros",

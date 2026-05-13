@@ -52,6 +52,31 @@ async function resolveSousSocieteFromPdv(connection, pointDeVenteId) {
     };
 }
 
+async function resolvePointDeVenteFromItems(connection, items) {
+    if (!Array.isArray(items) || items.length === 0) return null;
+    const productIds = Array.from(
+        new Set(
+            items
+                .map((it) => Number(it?.produit_id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+        )
+    );
+    if (!productIds.length) return null;
+    const placeholders = productIds.map(() => "?").join(",");
+    const [rows] = await connection.query(
+        `
+        SELECT DISTINCT p.id_point_de_vente AS pdv_id
+        FROM products p
+        WHERE p.id IN (${placeholders})
+          AND p.id_point_de_vente IS NOT NULL
+        `,
+        productIds
+    );
+    if (!Array.isArray(rows) || rows.length !== 1) return null;
+    const pdvId = Number(rows[0].pdv_id);
+    return Number.isFinite(pdvId) && pdvId > 0 ? pdvId : null;
+}
+
 const sumGrammage = (items) => {
     if (!Array.isArray(items)) return 0;
     return items.reduce((acc, it) => acc + (Number(it.grammage) || 0), 0);
@@ -136,11 +161,6 @@ exports.createCommandeGros = async (req, res) => {
         }
 
         let pdv_id = point_de_vente_id;
-        if (!pdv_id || pdv_id === "" || pdv_id === "none") {
-            const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
-            if (pdvs.length > 0) pdv_id = pdvs[0].id;
-            else pdv_id = 1;
-        }
 
         let finalDevisGrosId =
             devis_gros_id && devis_gros_id !== "" && devis_gros_id !== "none"
@@ -185,6 +205,16 @@ exports.createCommandeGros = async (req, res) => {
                 return res.status(400).json({ message: "Le grammage doit être > 0 pour chaque ligne" });
             }
         }
+        const bodyPdvId = Number(pdv_id);
+        const pdvFromItems = await resolvePointDeVenteFromItems(connection, items);
+        if (pdvFromItems) {
+            pdv_id = pdvFromItems;
+        } else if (Number.isFinite(bodyPdvId) && bodyPdvId > 0) {
+            pdv_id = bodyPdvId;
+        } else {
+            const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
+            pdv_id = pdvs.length > 0 ? pdvs[0].id : 1;
+        }
 
         const totalGrammage = sumGrammage(items);
         const { normalizedItems, totals } = computeFinance(items);
@@ -218,7 +248,8 @@ exports.createCommandeGros = async (req, res) => {
                 );
                 const traceDevisGrosId = devisResult.insertId;
                 const sousSocieteDevis = await resolveSousSocieteFromItems(connection, items);
-                const seqDg = await getNextNumber("DG", traceDevisGrosId, connection, {
+                // DG partage la même séquence que DE (paramètres Settings)
+                const seqDg = await getNextNumber("DE", traceDevisGrosId, connection, {
                     sousSocieteId: sousSocieteDevis.id,
                 });
                 const finalDevisNumero = formatDocumentNumber("DG", seqDg, new Date(), {
@@ -281,7 +312,8 @@ exports.createCommandeGros = async (req, res) => {
         const fromItems = await resolveSousSocieteFromItems(connection, items);
         const fromPdv = await resolveSousSocieteFromPdv(connection, pdv_id);
         const sousSociete = fromItems.id ? fromItems : fromPdv;
-        const seqNumber = await getNextNumber("CG", commandeGrosId, connection, {
+        // CG partage la même séquence que CO (paramètres Settings)
+        const seqNumber = await getNextNumber("CO", commandeGrosId, connection, {
             sousSocieteId: sousSociete.id,
         });
         const final_numero = formatDocumentNumber("CG", seqNumber, new Date(), { sousSocieteNom: sousSociete.nom });
@@ -461,7 +493,13 @@ exports.updateCommandeGros = async (req, res) => {
         }
 
         let pdv_id = point_de_vente_id;
-        if (!pdv_id || pdv_id === "" || pdv_id === "none") {
+        const bodyPdvId = Number(pdv_id);
+        const pdvFromItems = await resolvePointDeVenteFromItems(connection, items);
+        if (pdvFromItems) {
+            pdv_id = pdvFromItems;
+        } else if (Number.isFinite(bodyPdvId) && bodyPdvId > 0) {
+            pdv_id = bodyPdvId;
+        } else {
             const [pdvs] = await connection.query("SELECT id FROM point_de_vente LIMIT 1");
             pdv_id = pdvs.length > 0 ? pdvs[0].id : 1;
         }

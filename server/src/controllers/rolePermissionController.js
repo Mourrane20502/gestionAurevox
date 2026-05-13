@@ -28,7 +28,9 @@ exports.getPermissions = async (req, res) => {
             ('devis_gros_view', 'Accès aux Devis gros'),
             ('commandes_gros_view', 'Accès aux Commandes gros'),
             ('factures_gros_view', 'Accès aux Factures gros'),
-            ('avoirs_gros_view', 'Accès aux Avoirs gros')
+            ('avoirs_gros_view', 'Accès aux Avoirs gros'),
+            ('bons_livraison_view', 'Accès aux bons de livraison'),
+            ('pointage_view', 'Accès au pointage (présences)')
             `
         );
         const [permissions] = await db.promise().query("SELECT * FROM permissions");

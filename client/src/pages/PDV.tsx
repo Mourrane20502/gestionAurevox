@@ -113,6 +113,8 @@ export default function PDV() {
     const [pdvProducts, setPdvProducts] = useState<Product[]>([]);
     const [isProductsLoading, setIsProductsLoading] = useState(false);
     const [isProductsModalOpen, setIsProductsModalOpen] = useState(false);
+    const [pdvRevenue, setPdvRevenue] = useState(0);
+    const [isRevenueLoading, setIsRevenueLoading] = useState(false);
 
     const token = localStorage.getItem("token");
     const role = (localStorage.getItem("role") || "").toLowerCase();
@@ -151,6 +153,75 @@ export default function PDV() {
         }
     };
 
+    const fetchPdvRevenue = async (pdv: PointDeVente) => {
+        setIsRevenueLoading(true);
+        try {
+            const headers = { Authorization: `Bearer ${token}` };
+            const [commandesRes, facturesRes, commandesGrosRes, facturesGrosRes] = await Promise.all([
+                fetch("/api/commandes", { headers }),
+                fetch("/api/factures", { headers }),
+                fetch("/api/commandes-gros", { headers }),
+                fetch("/api/factures-gros", { headers }),
+            ]);
+
+            const commandes = commandesRes.ok ? await commandesRes.json() : [];
+            const factures = facturesRes.ok ? await facturesRes.json() : [];
+            const commandesGros = commandesGrosRes.ok ? await commandesGrosRes.json() : [];
+            const facturesGros = facturesGrosRes.ok ? await facturesGrosRes.json() : [];
+
+            const normalize = (v: unknown) =>
+                String(v || "")
+                    .trim()
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "")
+                    .toLowerCase();
+            const wantedName = normalize(pdv.nom);
+
+            // Same logic as Dashboard report:
+            // factures + commandes non facturées + factures gros + commandes gros non facturées.
+            const byName: Record<string, number> = {};
+            const addPdvByName = (doc: any, montant: number) => {
+                const name = String(doc?.point_de_vente_nom || "Principal").trim() || "Principal";
+                byName[name] = (byName[name] || 0) + (Number(montant) || 0);
+            };
+
+            const commandeIdsFacturees = new Set<number>(
+                (Array.isArray(factures) ? factures : [])
+                    .map((f: any) => Number(f?.commande_id))
+                    .filter((id: number) => Number.isFinite(id))
+            );
+            const commandeGrosIdsFacturees = new Set<number>(
+                (Array.isArray(facturesGros) ? facturesGros : [])
+                    .map((f: any) => Number(f?.commande_gros_id))
+                    .filter((id: number) => Number.isFinite(id))
+            );
+
+            (Array.isArray(factures) ? factures : []).forEach((doc: any) =>
+                addPdvByName(doc, Number(doc?.montant_ttc || 0))
+            );
+            (Array.isArray(commandes) ? commandes : []).forEach((doc: any) => {
+                if (commandeIdsFacturees.has(Number(doc?.id))) return;
+                addPdvByName(doc, Number(doc?.montant_ttc || 0));
+            });
+            (Array.isArray(facturesGros) ? facturesGros : []).forEach((doc: any) =>
+                addPdvByName(doc, Number(doc?.montant_ttc || 0))
+            );
+            (Array.isArray(commandesGros) ? commandesGros : []).forEach((doc: any) => {
+                if (commandeGrosIdsFacturees.has(Number(doc?.id))) return;
+                addPdvByName(doc, Number(doc?.montant_ttc || 0));
+            });
+
+            const selectedRevenue =
+                Object.entries(byName).find(([name]) => normalize(name) === wantedName)?.[1] || 0;
+            setPdvRevenue(selectedRevenue);
+        } catch (error) {
+            console.error("Error fetching pdv revenue:", error);
+            setPdvRevenue(0);
+        } finally {
+            setIsRevenueLoading(false);
+        }
+    };
+
     const fetchSousSocietes = async () => {
         try {
             const response = await fetch("/api/settings/sous-societes", {
@@ -171,8 +242,10 @@ export default function PDV() {
     const handleViewProducts = (pdv: PointDeVente) => {
         setSelectedPdv(pdv);
         setPdvProducts([]);
+        setPdvRevenue(0);
         setIsProductsModalOpen(true);
         fetchPdvProducts(pdv.id);
+        fetchPdvRevenue(pdv);
     };
 
     useEffect(() => {
@@ -306,13 +379,28 @@ export default function PDV() {
     );
 
     // Grammage restant = somme(stock * grammage) (ce qu'il reste en stock)
+    // Pour certains produits gros, le stock peut être absent (null/undefined/"").
+    // Dans ce cas on compte 1 unité pour inclure leur grammage dans le total affiché.
+    const stockUnitsForGrammage = (product: Product) => {
+        const raw = (product as any).stock;
+        if (raw === null || typeof raw === "undefined" || raw === "") return 1;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) return 0;
+        // Certains produits "gros" remontent avec stock=0 alors que le grammage de la ligne
+        // représente bien une quantité présente à afficher dans le total.
+        if (parsed <= 0 && (Number(product.grammage) || 0) > 0) return 1;
+        return parsed;
+    };
+
     const totalGrammageRestant = pdvProducts.reduce(
-        (sum, p) => sum + (Number(p.stock) || 0) * (Number(p.grammage) || 0),
+        (sum, p) => sum + stockUnitsForGrammage(p) * (Number(p.grammage) || 0),
         0
     );
 
     // Total grammage initial = vendu + restant
     const totalGrammageInitial = totalGrammageVendu + totalGrammageRestant;
+    // CA du PDV = total des commandes réglées (total_regle) du PDV associé.
+    const totalChiffreAffaires = pdvRevenue;
 
     const normalizeVariantKey = (value?: string | null): string | null => {
         const v = String(value || "")
@@ -338,7 +426,7 @@ export default function PDV() {
 
     const grammageActuelByVariant = pdvProducts.reduce<Record<string, number>>((acc, product) => {
         const variant = getVariantLabel(product);
-        const grammageActuel = (Number(product.stock) || 0) * (Number(product.grammage) || 0);
+        const grammageActuel = stockUnitsForGrammage(product) * (Number(product.grammage) || 0);
         if (grammageActuel <= 0) return acc;
         acc[variant] = (acc[variant] || 0) + grammageActuel;
         return acc;
@@ -823,6 +911,23 @@ export default function PDV() {
                                         {pdvProducts
                                             .reduce((sum, p) => sum + (Number(p.prix) || 0), 0)
                                             .toLocaleString("fr-FR")}
+                                        <span className="text-[10px] font-bold text-indigo-200 ml-1">DH</span>
+                                    </p>
+                                </div>
+                            )}
+                            {/* Chiffre d'affaire (admin uniquement) */}
+                            {isAdmin && (
+                                <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-3 border border-white/10 md:col-start-1">
+                                    <p className="text-indigo-200 text-[9px] font-black uppercase tracking-widest mb-1">
+                                        Chiffre d'affaire
+                                    </p>
+                                    <p className="text-base font-extrabold text-white leading-none">
+                                        {isRevenueLoading
+                                            ? "..."
+                                            : totalChiffreAffaires.toLocaleString("fr-FR", {
+                                                  minimumFractionDigits: 0,
+                                                  maximumFractionDigits: 2,
+                                              })}
                                         <span className="text-[10px] font-bold text-indigo-200 ml-1">DH</span>
                                     </p>
                                 </div>

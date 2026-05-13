@@ -7,7 +7,7 @@ import { FileText, Mail, Send } from "lucide-react";
 
 type FactureRow = {
     id: number;
-    kind: "client" | "fournisseur";
+    kind: "client" | "client_gros" | "fournisseur";
     numero_facture?: string;
     client_nom?: string;
     montant_ttc?: number | string;
@@ -46,14 +46,17 @@ export default function Impots() {
         (async () => {
             setLoading(true);
             try {
-                const [clientRes, fournisseurRes] = await Promise.all([
+                const [clientRes, clientGrosRes, fournisseurRes] = await Promise.all([
                     fetch("/api/factures", { headers: { Authorization: `Bearer ${token}` } }),
+                    fetch("/api/factures-gros", { headers: { Authorization: `Bearer ${token}` } }),
                     fetch("/api/achats-fournisseurs", { headers: { Authorization: `Bearer ${token}` } }),
                 ]);
                 if (!clientRes.ok) throw new Error("Impossible de charger les factures clients.");
+                if (!clientGrosRes.ok) throw new Error("Impossible de charger les factures gros.");
                 if (!fournisseurRes.ok) throw new Error("Impossible de charger les factures fournisseurs.");
 
                 const clientData = await clientRes.json();
+                const clientGrosData = await clientGrosRes.json();
                 const fournisseurData = await fournisseurRes.json();
 
                 const clientRows: FactureRow[] = (Array.isArray(clientData) ? clientData : []).map((f: any) => ({
@@ -81,7 +84,12 @@ export default function Impots() {
                         };
                     });
 
-                setFactures([...clientRows, ...fournisseurRows]);
+                const clientGrosRows: FactureRow[] = (Array.isArray(clientGrosData) ? clientGrosData : []).map((f: any) => ({
+                    ...f,
+                    kind: "client_gros",
+                }));
+
+                setFactures([...clientRows, ...clientGrosRows, ...fournisseurRows]);
             } catch (e: any) {
                 toast.error(e.message || "Erreur de chargement.");
             } finally {
@@ -169,6 +177,7 @@ export default function Impots() {
         const selectedClientIds = selectedRows
             .filter((f) => f.kind === "client")
             .map((f) => Number(f.id));
+        const selectedClientGrosCount = selectedRows.filter((f) => f.kind === "client_gros").length;
         const selectedFournisseurIds = selectedRows
             .filter((f) => f.kind === "fournisseur")
             .map((f) => Number(f.id));
@@ -194,6 +203,11 @@ export default function Impots() {
         if (recipientsList.length === 0) {
             toast.error("Renseignez au moins un destinataire.");
             return;
+        }
+        if (selectedClientGrosCount > 0) {
+            toast.warning(
+                `${selectedClientGrosCount} facture(s) gros sélectionnée(s) seront ignorées pour l'envoi (non supportées dans cet écran).`
+            );
         }
 
         setSending(true);
@@ -287,7 +301,7 @@ export default function Impots() {
                                         <th className="text-left px-3 py-2">N° Facture</th>
                                         <th className="text-left px-3 py-2">Client</th>
                                         <th className="text-left px-3 py-2">Date</th>
-                                        <th className="text-right px-3 py-2">Montant TTC</th>
+                                        <th className="text-right px-3 py-2">Montant</th>
                                         <th className="text-left px-3 py-2">Statut</th>
                                     </tr>
                                 </thead>
@@ -315,8 +329,8 @@ export default function Impots() {
                                                     />
                                                 </td>
                                                 <td className="px-3 py-2">
-                                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${f.kind === "client" ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"}`}>
-                                                        {f.kind === "client" ? "Client" : "Fournisseur"}
+                                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${f.kind === "client" ? "bg-indigo-100 text-indigo-700" : f.kind === "client_gros" ? "bg-violet-100 text-violet-700" : "bg-emerald-100 text-emerald-700"}`}>
+                                                        {f.kind === "client" ? "Client" : f.kind === "client_gros" ? "Client gros" : "Fournisseur"}
                                                     </span>
                                                 </td>
                                                 <td className="px-3 py-2 font-medium">{f.numero_facture || `#${f.id}`}</td>

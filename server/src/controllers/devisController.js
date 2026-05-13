@@ -3,6 +3,20 @@ const { logProductMovement } = require("../utils/productMovementLogger");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getOffset, getNextNumber } = require("../utils/numberingSettings");
 const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+
+const parseDateOnlySafe = (value) => {
+    const raw = String(value || "").trim();
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
+        if (!Number.isNaN(dt.getTime())) return dt;
+    }
+    const fallback = new Date(raw);
+    return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+};
 const { sendDevisCreated } = require("../services/emailService");
 const { sendDevisValidatedPdf } = require("../services/emailService");
 const { buildDevisPdf } = require("../services/devisPdfService");
@@ -98,7 +112,7 @@ exports.createDevis = async (req, res) => {
             });
         } else {
             totalHT = Number(req.body.montant_ht) || 0;
-            const tauxTVA = Number(req.body.taux_tva ?? 20) || 20;
+            const tauxTVA = Number(req.body.taux_tva) || 0;
             totalTVA = (totalHT * tauxTVA) / 100;
         }
 
@@ -136,7 +150,7 @@ exports.createDevis = async (req, res) => {
             `TEMP-${Date.now()}`,
             date_devis || new Date().toISOString().split('T')[0],
             totalHT,
-            req.body.taux_tva ?? items?.[0]?.tva ?? 20,
+            req.body.taux_tva ?? items?.[0]?.tva ?? 0,
             totalTVA,
             req.user.id,
             finalStatus,
@@ -151,7 +165,8 @@ exports.createDevis = async (req, res) => {
         // Auto-generate final numero_devis avec séquence configurable
         const sousSociete = await resolveSousSocieteFromItems(connection, items);
         const seqNumber = await getNextNumber("DE", devisId, connection, { sousSocieteId: sousSociete.id });
-        const final_numero = formatDocumentNumber('DE', seqNumber, new Date(), { sousSocieteNom: sousSociete.nom });
+        const numeroDate = parseDateOnlySafe(date_devis || new Date().toISOString().split("T")[0]);
+        const final_numero = formatDocumentNumber('DE', seqNumber, numeroDate, { sousSocieteNom: sousSociete.nom });
         await connection.execute("UPDATE devis SET numero_devis = ? WHERE id = ?", [final_numero, devisId]);
 
         if (items && items.length > 0) {
@@ -296,6 +311,22 @@ exports.getAllDevis = async (req, res) => {
                 ) AS sous_societe_nom_from_numero,
                 EXISTS(SELECT 1 FROM commandes co WHERE co.devis_id = d.id) AS has_commande,
                 EXISTS(SELECT 1 FROM factures f WHERE f.devis_id = d.id) AS has_facture,
+                EXISTS(
+                    SELECT 1 FROM bon_de_livraison bl
+                    INNER JOIN commandes co ON co.id = bl.commande_id
+                    WHERE co.devis_id = d.id
+                      AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+                    LIMIT 1
+                ) AS has_bon_livraison,
+                (
+                    SELECT bl.id
+                    FROM bon_de_livraison bl
+                    INNER JOIN commandes co ON co.id = bl.commande_id
+                    WHERE co.devis_id = d.id
+                      AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+                    ORDER BY bl.id DESC
+                    LIMIT 1
+                ) AS bon_livraison_id,
                 COALESCE(d.reduction, 0) AS reduction
             FROM devis d
             LEFT JOIN clients c ON d.client_id = c.id
@@ -407,7 +438,7 @@ exports.updateDevis = async (req, res) => {
             });
         } else {
             totalHT = Number(req.body.montant_ht) || 0;
-            const tauxTVA = Number(req.body.taux_tva ?? 20) || 20;
+            const tauxTVA = Number(req.body.taux_tva) || 0;
             totalTVA = (totalHT * tauxTVA) / 100;
         }
 
@@ -429,14 +460,18 @@ exports.updateDevis = async (req, res) => {
         const queryDevis = `
             UPDATE devis
             SET numero_devis = ?, date_devis = ?, montant_ht = ?, taux_tva = ?, montant_tva = ?, statuts_devis = ?, client_id = ?, reduction = ?, total_reduction = ?, montant_ttc = ?
-            WHERE id = ? ${req.user.role !== 'admin' ? 'AND user_id = ?' : ''}
+            WHERE id = ? ${(
+                req.user.role !== 'admin' &&
+                req.user.role !== 'directeur' &&
+                req.user.role !== 'responsable'
+            ) ? 'AND user_id = ?' : ''}
         `;
 
         const updateParams = [
             numero_devis,
             date_devis || new Date().toISOString().split('T')[0],
             totalHT,
-            req.body.taux_tva ?? items?.[0]?.tva ?? 20,
+            req.body.taux_tva ?? items?.[0]?.tva ?? 0,
             totalTVA,
             newStatus,
             client_id,
@@ -446,7 +481,11 @@ exports.updateDevis = async (req, res) => {
             id
         ];
 
-        if (req.user.role !== 'admin') {
+        if (
+            req.user.role !== 'admin' &&
+            req.user.role !== 'directeur' &&
+            req.user.role !== 'responsable'
+        ) {
             updateParams.push(req.user.id);
         }
 
@@ -609,14 +648,32 @@ exports.getDevisById = async (req, res) => {
                    COALESCE(
                        (SELECT p.id_point_de_vente FROM devis_items di INNER JOIN products p ON di.produit_id = p.id WHERE di.devis_id = d.id AND p.id_point_de_vente IS NOT NULL ORDER BY di.id LIMIT 1),
                        (SELECT point_de_vente_id FROM commandes WHERE devis_id = d.id LIMIT 1)
-                   ) AS point_de_vente_id
+                   ) AS point_de_vente_id,
+                   (
+                       SELECT bl.id
+                       FROM bon_de_livraison bl
+                       INNER JOIN commandes co ON co.id = bl.commande_id
+                       WHERE co.devis_id = d.id
+                         AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+                       ORDER BY bl.id DESC
+                       LIMIT 1
+                   ) AS bon_livraison_id,
+                   (
+                       SELECT bl.numero_bon_livraison
+                       FROM bon_de_livraison bl
+                       INNER JOIN commandes co ON co.id = bl.commande_id
+                       WHERE co.devis_id = d.id
+                         AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+                       ORDER BY bl.id DESC
+                       LIMIT 1
+                   ) AS numero_bon_livraison_linked
             FROM devis d
             LEFT JOIN clients c ON d.client_id = c.id
             WHERE d.id = ?
         `;
         const params = [id];
 
-        if (req.user.role !== 'admin') {
+        if (req.user.role !== 'admin' && req.user.role !== 'directeur' && req.user.role !== 'responsable') {
             sql += " AND d.user_id = ?";
             params.push(req.user.id);
         }
@@ -628,7 +685,7 @@ exports.getDevisById = async (req, res) => {
         }
 
         const [items] = await db.execute(`
-            SELECT di.*, p.reference, COALESCE(p.nom, di.designation) as designation 
+            SELECT di.*, p.photo, p.grammage, p.reference, COALESCE(p.nom, di.designation) as designation 
             FROM devis_items di
             LEFT JOIN products p ON di.produit_id = p.id
             WHERE di.devis_id = ?
@@ -662,10 +719,28 @@ exports.deleteDevis = async (req, res) => {
     await connection.beginTransaction();
 
     try {
+        const devisId = Number(id);
+        if (!Number.isFinite(devisId) || devisId <= 0) {
+            await connection.rollback();
+            return res.status(400).json({ message: "Identifiant devis invalide." });
+        }
+
+        // Interdire la suppression si déjà lié à une commande
+        const [linkedCommandes] = await connection.execute(
+            "SELECT id FROM commandes WHERE devis_id = ? LIMIT 1",
+            [devisId]
+        );
+        if (linkedCommandes.length > 0) {
+            await connection.rollback();
+            return res.status(400).json({
+                message: "Impossible de supprimer ce devis car il est déjà lié à une commande."
+            });
+        }
+
         // Check if devis is already linked to a facture: in that case, forbid deletion
         const [linkedFactures] = await connection.execute(
             "SELECT id FROM factures WHERE devis_id = ? LIMIT 1",
-            [id]
+            [devisId]
         );
 
         if (linkedFactures.length > 0) {
@@ -675,8 +750,11 @@ exports.deleteDevis = async (req, res) => {
             });
         }
 
+        // Nettoyer d'abord les lignes enfants pour éviter les erreurs FK
+        await connection.execute("DELETE FROM devis_items WHERE devis_id = ?", [devisId]);
+
         let sql = "DELETE FROM devis WHERE id = ?";
-        const params = [id];
+        const params = [devisId];
 
         if (req.user.role !== 'admin') {
             sql += " AND user_id = ?";
@@ -696,7 +774,7 @@ exports.deleteDevis = async (req, res) => {
         await connection.rollback();
         if (error.code === "ER_ROW_IS_REFERENCED_2") {
             return res.status(400).json({
-                message: "Impossible de supprimer ce devis car il est déjà lié à une facture."
+                message: "Impossible de supprimer ce devis car il est déjà lié à un document."
             });
         }
         console.error(error);

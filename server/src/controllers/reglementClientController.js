@@ -1,6 +1,21 @@
 const db = require("../config/db").promise();
 const { getNextNumber } = require("../utils/numberingSettings");
 const { logProductMovement } = require("../utils/productMovementLogger");
+const fs = require("fs");
+const path = require("path");
+
+const uploadsDir = path.join(__dirname, "../../uploads");
+const resolveUploadPath = (filename) =>
+    path.join(uploadsDir, path.basename(String(filename || "")));
+const safeUnlink = async (filename) => {
+    const clean = String(filename || "").trim();
+    if (!clean) return;
+    try {
+        await fs.promises.unlink(resolveUploadPath(clean));
+    } catch {
+        // Ignore if file doesn't exist.
+    }
+};
 
 const getNow = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
@@ -17,6 +32,7 @@ async function ensureNumeroRecuColumn(connection) {
         if (shouldRelease) conn.release();
     }
 }
+
 
 async function resolveSousSocieteForReglement(connection, factureId, commandeId) {
     const fId = Number(factureId);
@@ -273,6 +289,7 @@ async function propagateApprovalFromReglement(connection, reglement, approverId 
                         WHERE f.commande_id IS NOT NULL
                           AND rc2.commande_id = f.commande_id
                           AND rc2.statut = 'approuve'
+                          AND (rc2.facture_id IS NULL OR rc2.facture_id = 0)
                     ), 0)
                 ) AS total_regle
              FROM factures f
@@ -317,6 +334,7 @@ exports.createReglementClient = async (req, res) => {
     } = req.body;
 
     const userId = req.user.id;
+    let effectiveCommandeId = commande_id || null;
 
     if (!facture_id && !commande_id) {
         return res
@@ -338,10 +356,20 @@ exports.createReglementClient = async (req, res) => {
               ];
 
     try {
+        // Si le règlement est saisi via facture uniquement, rattacher automatiquement
+        // la commande liée pour éviter les enregistrements avec commande_id NULL.
+        if (!effectiveCommandeId && facture_id) {
+            const [[factureRow]] = await db.execute(
+                "SELECT commande_id FROM factures WHERE id = ? LIMIT 1",
+                [facture_id]
+            );
+            effectiveCommandeId = factureRow?.commande_id || null;
+        }
+
         const effectiveClientId = await ensureClientFromDocument({
             client_id,
             facture_id,
-            commande_id,
+            commande_id: effectiveCommandeId,
         });
 
         // IMPORTANT: Un règlement créé via "Payer" ne doit JAMAIS être approuvé automatiquement.
@@ -366,10 +394,10 @@ exports.createReglementClient = async (req, res) => {
                     [facture_id]
                 );
                 pendingRows = rowsPending;
-            } else if (commande_id) {
+            } else if (effectiveCommandeId) {
                 const [[linkedFacture]] = await connection.execute(
                     "SELECT id FROM factures WHERE commande_id = ? LIMIT 1",
-                    [commande_id]
+                    [effectiveCommandeId]
                 );
                 const linkedFactureId = linkedFacture?.id ?? null;
 
@@ -383,7 +411,7 @@ exports.createReglementClient = async (req, res) => {
                         LIMIT 1
                         FOR UPDATE
                     `,
-                        [commande_id, linkedFactureId]
+                        [effectiveCommandeId, linkedFactureId]
                     );
                     pendingRows = rowsPending;
                 } else {
@@ -395,7 +423,7 @@ exports.createReglementClient = async (req, res) => {
                         LIMIT 1
                         FOR UPDATE
                     `,
-                        [commande_id]
+                        [effectiveCommandeId]
                     );
                     pendingRows = rowsPending;
                 }
@@ -410,6 +438,16 @@ exports.createReglementClient = async (req, res) => {
             }
 
             const insertedIds = [];
+            let allowedFactureIdsForCommande = null;
+            if (effectiveCommandeId) {
+                const [commandeFactures] = await connection.execute(
+                    "SELECT id FROM factures WHERE commande_id = ?",
+                    [effectiveCommandeId]
+                );
+                allowedFactureIdsForCommande = new Set(
+                    (commandeFactures || []).map((f) => Number(f.id)).filter((id) => Number.isFinite(id))
+                );
+            }
 
             for (const ligne of lignesToInsert) {
                 const {
@@ -418,9 +456,23 @@ exports.createReglementClient = async (req, res) => {
                     mode_paiement: lMode,
                     banque_id: lBanqueId,
                     commentaire: lComment,
+                    facture_id: lFactureIdRaw,
                 } = ligne;
 
                 if (!lMontant || !lMode) continue;
+                const lFactureId = lFactureIdRaw != null ? Number(lFactureIdRaw) : null;
+                const effectiveFactureId = Number.isFinite(lFactureId) && lFactureId > 0 ? lFactureId : (facture_id || null);
+                if (
+                    effectiveCommandeId &&
+                    effectiveFactureId &&
+                    allowedFactureIdsForCommande &&
+                    !allowedFactureIdsForCommande.has(Number(effectiveFactureId))
+                ) {
+                    await connection.rollback();
+                    return res.status(400).json({
+                        message: "La facture liée ne correspond pas à la commande sélectionnée.",
+                    });
+                }
 
                 const [result] = await connection.execute(
                     `
@@ -430,8 +482,8 @@ exports.createReglementClient = async (req, res) => {
                 `,
                     [
                         effectiveClientId,
-                        facture_id || null,
-                        commande_id || null,
+                        effectiveFactureId,
+                        effectiveCommandeId || null,
                         lDate || getNow(),
                         lMontant,
                         lMode,
@@ -444,7 +496,7 @@ exports.createReglementClient = async (req, res) => {
                     ]
                 );
 
-                const sousSociete = await resolveSousSocieteForReglement(connection, facture_id, commande_id);
+                const sousSociete = await resolveSousSocieteForReglement(connection, effectiveFactureId, effectiveCommandeId);
                 const nextNumeroRecu = await getNextNumber("RC", result.insertId, connection, { sousSocieteId: sousSociete.id });
                 await connection.execute(
                     "UPDATE reglements_clients SET numero_recu = ? WHERE id = ?",
@@ -486,8 +538,8 @@ exports.getAllReglementsClients = async (req, res) => {
                 c.nom_complet AS client_nom,
                 f.numero_facture,
                 f.montant_ttc AS facture_montant_ttc,
-                cmd.numero_commande,
-                cmd.montant_ttc AS commande_montant_ttc,
+                COALESCE(cmd.numero_commande, cmdf.numero_commande) AS numero_commande,
+                COALESCE(cmd.montant_ttc, cmdf.montant_ttc, f.montant_ttc) AS commande_montant_ttc,
                 COALESCE(
                     (
                         SELECT p.id_point_de_vente
@@ -629,8 +681,8 @@ exports.getReglementClientById = async (req, res) => {
                 c.nom_complet AS client_nom,
                 f.numero_facture,
                 f.montant_ttc AS facture_montant_ttc,
-                cmd.numero_commande,
-                cmd.montant_ttc AS commande_montant_ttc,
+                COALESCE(cmd.numero_commande, cmdf.numero_commande) AS numero_commande,
+                COALESCE(cmd.montant_ttc, cmdf.montant_ttc, f.montant_ttc) AS commande_montant_ttc,
                 COALESCE(
                     (
                         SELECT p.id_point_de_vente
@@ -890,6 +942,189 @@ exports.rejectReglementClient = async (req, res) => {
     }
 };
 
+exports.updateReglementClient = async (req, res) => {
+    const { id } = req.params;
+    const role = String(req.user?.role || "").toLowerCase();
+    if (role !== "admin" && role !== "superadmin") {
+        return res.status(403).json({ message: "Seul un administrateur peut modifier un règlement." });
+    }
+
+    const inputLines = Array.isArray(req.body?.lignes) ? req.body.lignes : null;
+    const normalizedLines = inputLines
+        ? inputLines
+              .map((l) => ({
+                  montant: Number(l?.montant || 0),
+                  mode_paiement: String(l?.mode_paiement || "").trim().toLowerCase(),
+                  banque_id: !l?.banque_id || l.banque_id === "none" ? null : Number(l.banque_id),
+                  date_reglement: l?.date_reglement || null,
+                  commentaire: l?.commentaire || null,
+                  facture_id: l?.facture_id != null ? Number(l.facture_id) : null,
+              }))
+              .filter((l) => Number.isFinite(l.montant) && l.montant > 0)
+        : null;
+
+    if (normalizedLines && normalizedLines.length === 0) {
+        return res.status(400).json({ message: "Aucune ligne valide fournie." });
+    }
+
+    try {
+        const connection = await db.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.execute(
+                "SELECT * FROM reglements_clients WHERE id = ? FOR UPDATE",
+                [id]
+            );
+            if (!Array.isArray(rows) || rows.length === 0) {
+                await connection.rollback();
+                return res.status(404).json({ message: "Règlement introuvable" });
+            }
+            const current = rows[0];
+            let allowedFactureIdsForCommande = null;
+            if (current.commande_id) {
+                const [commandeFactures] = await connection.execute(
+                    "SELECT id FROM factures WHERE commande_id = ?",
+                    [current.commande_id]
+                );
+                allowedFactureIdsForCommande = new Set(
+                    (commandeFactures || []).map((f) => Number(f.id)).filter((id) => Number.isFinite(id))
+                );
+            }
+
+            const linesToApply = normalizedLines && normalizedLines.length > 0
+                ? normalizedLines
+                : [
+                      {
+                          montant: Number(req.body?.montant || 0),
+                          mode_paiement: String(req.body?.mode_paiement || "").trim().toLowerCase(),
+                          banque_id:
+                              !req.body?.banque_id || req.body.banque_id === "none"
+                                  ? null
+                                  : Number(req.body.banque_id),
+                          date_reglement: req.body?.date_reglement || null,
+                          commentaire: req.body?.commentaire || null,
+                          facture_id: req.body?.facture_id != null ? Number(req.body.facture_id) : null,
+                      },
+                  ];
+
+            for (const line of linesToApply) {
+                if (!Number.isFinite(line.montant) || line.montant <= 0) {
+                    await connection.rollback();
+                    return res.status(400).json({ message: "Montant invalide." });
+                }
+                if (!line.mode_paiement) {
+                    await connection.rollback();
+                    return res.status(400).json({ message: "Mode de paiement requis." });
+                }
+                if (!line.date_reglement) {
+                    await connection.rollback();
+                    return res.status(400).json({ message: "Date de règlement requise." });
+                }
+                if (line.mode_paiement === "espece" && line.montant > 20000) {
+                    await connection.rollback();
+                    return res.status(400).json({ message: "Impossible de dépasser 20000 MAD en mode espèce." });
+                }
+                if (
+                    current.commande_id &&
+                    line.facture_id &&
+                    allowedFactureIdsForCommande &&
+                    !allowedFactureIdsForCommande.has(Number(line.facture_id))
+                ) {
+                    await connection.rollback();
+                    return res.status(400).json({
+                        message: "La facture liée ne correspond pas à la commande du règlement.",
+                    });
+                }
+            }
+
+            const first = linesToApply[0];
+            await connection.execute(
+                `UPDATE reglements_clients
+                 SET montant = ?, mode_paiement = ?, banque_id = ?, date_reglement = ?, commentaire = ?, facture_id = ?, statut = 'en_attente', approved_by = NULL, approved_at = NULL, updated_at = ?
+                 WHERE id = ?`,
+                [
+                    first.montant,
+                    first.mode_paiement,
+                    first.banque_id,
+                    first.date_reglement,
+                    first.commentaire || null,
+                    first.facture_id || current.facture_id || null,
+                    getNow(),
+                    id,
+                ]
+            );
+
+            const extraLines = linesToApply.slice(1);
+            for (const line of extraLines) {
+                const [inserted] = await connection.execute(
+                    `INSERT INTO reglements_clients
+                    (client_id, facture_id, commande_id, date_reglement, montant, mode_paiement, banque_id, statut, commentaire, created_by, approved_by, approved_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente', ?, ?, NULL, NULL)`,
+                    [
+                        current.client_id || null,
+                        line.facture_id || current.facture_id || null,
+                        current.commande_id || null,
+                        line.date_reglement,
+                        line.montant,
+                        line.mode_paiement,
+                        line.banque_id,
+                        line.commentaire || null,
+                        current.created_by || req.user.id,
+                    ]
+                );
+                const sousSociete = await resolveSousSocieteForReglement(
+                    connection,
+                    line.facture_id || current.facture_id || null,
+                    current.commande_id || null
+                );
+                const nextNumeroRecu = await getNextNumber("RC", inserted.insertId, connection, {
+                    sousSocieteId: sousSociete.id,
+                });
+                await connection.execute(
+                    "UPDATE reglements_clients SET numero_recu = ? WHERE id = ?",
+                    [nextNumeroRecu, inserted.insertId]
+                );
+            }
+
+            await connection.commit();
+            return res.status(200).json({
+                message: "Règlement modifié avec succès.",
+                lines_count: linesToApply.length,
+            });
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    } catch (err) {
+        console.error("Error updating reglement client:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+exports.deleteReglementClient = async (req, res) => {
+    const { id } = req.params;
+    const role = String(req.user?.role || "").toLowerCase();
+    if (role !== "admin" && role !== "superadmin") {
+        return res.status(403).json({ message: "Seul un administrateur peut supprimer un règlement." });
+    }
+    try {
+        const [rows] = await db.execute(
+            "SELECT id, statut FROM reglements_clients WHERE id = ? LIMIT 1",
+            [id]
+        );
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return res.status(404).json({ message: "Règlement introuvable" });
+        }
+        await db.execute("DELETE FROM reglements_clients WHERE id = ?", [id]);
+        return res.status(200).json({ message: "Règlement supprimé avec succès." });
+    } catch (err) {
+        console.error("Error deleting reglement client:", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
 exports.markReglementImpaye = async (req, res) => {
     const { id } = req.params;
     const { commentaire } = req.body || {};
@@ -986,9 +1221,9 @@ exports.getSituationReglement = async (req, res) => {
             });
         }
 
-        // Situation pour commande : si la commande a une facture liée, on utilise la situation facture (règlements sur la facture)
+        // Situation pour commande : agréger toutes les factures liées à la commande (split inclus).
         const [[commande]] = await db.execute(
-            "SELECT id, montant_ttc, (SELECT id FROM factures WHERE commande_id = c.id LIMIT 1) AS facture_id FROM commandes c WHERE c.id = ?",
+            "SELECT id, montant_ttc FROM commandes WHERE id = ?",
             [commandeId]
         );
         if (!commande) {
@@ -997,26 +1232,48 @@ exports.getSituationReglement = async (req, res) => {
                 .json({ message: "Commande introuvable" });
         }
 
-        const linkedFactureId = commande.facture_id != null ? commande.facture_id : null;
-        let montantTtc = Number(commande.montant_ttc || 0);
-        let totalRegle = 0;
+        const [linkedFactures] = await db.execute(
+            "SELECT id, montant_ttc FROM factures WHERE commande_id = ?",
+            [commandeId]
+        );
 
-        if (linkedFactureId) {
-            const totals = await computeFactureReglementTotals(linkedFactureId);
-            if (totals) {
-                montantTtc = Number(totals.montant_ttc) || montantTtc;
-                totalRegle = Number(totals.total_regle) || 0;
-            }
-        } else {
-            const [[row]] = await db.execute(
+        const factureIds = Array.isArray(linkedFactures)
+            ? linkedFactures
+                  .map((f) => Number(f.id))
+                  .filter((id) => Number.isFinite(id) && id > 0)
+            : [];
+
+        let montantTtc = Number(commande.montant_ttc || 0);
+        if (factureIds.length > 0) {
+            montantTtc = linkedFactures.reduce(
+                (sum, f) => sum + (Number(f.montant_ttc) || 0),
+                0
+            );
+        }
+
+        let totalRegle = 0;
+        if (factureIds.length > 0) {
+            const placeholders = factureIds.map(() => "?").join(",");
+            const [rows] = await db.execute(
                 `
                 SELECT COALESCE(SUM(montant), 0) AS total_regle
                 FROM reglements_clients
-                WHERE commande_id = ? AND statut = 'approuve'
-            `,
+                WHERE statut = 'approuve'
+                  AND (commande_id = ? OR facture_id IN (${placeholders}))
+                `,
+                [commandeId, ...factureIds]
+            );
+            totalRegle = Number(rows?.[0]?.total_regle || 0);
+        } else {
+            const [rows] = await db.execute(
+                `
+                SELECT COALESCE(SUM(montant), 0) AS total_regle
+                FROM reglements_clients
+                WHERE statut = 'approuve' AND commande_id = ?
+                `,
                 [commandeId]
             );
-            totalRegle = Number(row.total_regle || 0);
+            totalRegle = Number(rows?.[0]?.total_regle || 0);
         }
 
         const reste = Math.max(montantTtc - totalRegle, 0);
@@ -1175,6 +1432,52 @@ exports.downloadReglementClientPdf = async (req, res) => {
     } catch (error) {
         console.error("Error generating reglement PDF download:", error);
         res.status(500).json({ message: "Erreur serveur lors de la génération du PDF" });
+    }
+};
+
+exports.uploadReglementClientPdf = async (req, res) => {
+    const { id } = req.params;
+    const file = req.file;
+    if (!file) {
+        return res.status(400).json({ message: "Aucun fichier fourni" });
+    }
+
+    const ext = String(file.originalname || "").toLowerCase();
+    const isPdf = file.mimetype === "application/pdf" || ext.endsWith(".pdf");
+    if (!isPdf) {
+        await safeUnlink(file.filename);
+        return res.status(400).json({ message: "Seul le format PDF est autorisé" });
+    }
+
+    try {
+        const [rows] = await db.execute(
+            "SELECT id, pdf_path FROM reglements_clients WHERE id = ? LIMIT 1",
+            [id]
+        );
+        if (!Array.isArray(rows) || rows.length === 0) {
+            await safeUnlink(file.filename);
+            return res.status(404).json({ message: "Règlement introuvable" });
+        }
+
+        const previousPdf = rows[0].pdf_path;
+        await db.execute(
+            "UPDATE reglements_clients SET pdf_path = ? WHERE id = ?",
+            [file.filename, id]
+        );
+
+        if (previousPdf && previousPdf !== file.filename) {
+            await safeUnlink(previousPdf);
+        }
+
+        return res.status(200).json({
+            message: "PDF téléversé avec succès",
+            pdf_path: file.filename,
+            pdf_url: `/uploads/${encodeURIComponent(file.filename)}`,
+        });
+    } catch (error) {
+        await safeUnlink(file.filename);
+        console.error("Error uploading reglement client PDF:", error);
+        return res.status(500).json({ message: "Erreur lors du téléversement du PDF" });
     }
 };
 

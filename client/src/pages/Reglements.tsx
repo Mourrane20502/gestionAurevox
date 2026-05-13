@@ -121,10 +121,17 @@ interface Commande {
     banque_id?: number | null;
 }
 
+interface Banque {
+    id: number;
+    nom_banque?: string | null;
+}
+
 export default function Reglements() {
+    const MAX_REGLEMENT_LINE_AMOUNT = 20000;
     const role = localStorage.getItem("role");
     const permissions = JSON.parse(localStorage.getItem("permissions") || "[]");
     const isAdmin = role === "admin" || role === "responsable" || role === "directeur";
+    const isStrictAdmin = role === "admin" || role === "superadmin";
     const isAuthorized = isAdmin || permissions.includes("reglements_view");
 
     const token = localStorage.getItem("token");
@@ -135,6 +142,7 @@ export default function Reglements() {
     const [clients, setClients] = useState<Client[]>([]);
     const [factures, setFactures] = useState<Facture[]>([]);
     const [commandes, setCommandes] = useState<Commande[]>([]);
+    const [banques, setBanques] = useState<Banque[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const [filterClient, setFilterClient] = useState<string>("all");
@@ -161,7 +169,7 @@ export default function Reglements() {
     const [situation, setSituation] = useState<SituationReglement | null>(null);
 
     const [reglementLines, setReglementLines] = useState<
-        { mode_paiement: string; banque_id: string; montant: string; date_reglement: string; commentaire: string }[]
+        { mode_paiement: string; banque_id: string; montant: string; date_reglement: string; commentaire: string; facture_id?: string }[]
     >([
         {
             mode_paiement: "espece",
@@ -169,6 +177,7 @@ export default function Reglements() {
             montant: "",
             date_reglement: new Date().toISOString().split("T")[0],
             commentaire: "",
+            facture_id: "none",
         },
     ]);
 
@@ -185,6 +194,10 @@ export default function Reglements() {
     } | null>(null);
 
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState<ReglementClient | null>(null);
+    const [isDeletingReglement, setIsDeletingReglement] = useState(false);
+    const [editTarget, setEditTarget] = useState<ReglementClient | null>(null);
 
     const [docSearch, setDocSearch] = useState("");
     const [showDocDropdown, setShowDocDropdown] = useState(false);
@@ -209,6 +222,21 @@ export default function Reglements() {
         });
         return map;
     }, [factures]);
+    const commandeToFactures = useMemo(() => {
+        const map = new Map<number, Facture[]>();
+        factures.forEach((f) => {
+            const cmdId = Number((f as any).commande_id);
+            if (!Number.isFinite(cmdId) || !Number.isFinite(Number((f as any).id))) return;
+            const current = map.get(cmdId) || [];
+            current.push(f);
+            map.set(cmdId, current);
+        });
+        return map;
+    }, [factures]);
+    const linkedFacturesForDialog = useMemo(() => {
+        if (dialogContext.type !== "commande" || !dialogContext.documentId) return [] as Facture[];
+        return commandeToFactures.get(Number(dialogContext.documentId)) || [];
+    }, [commandeToFactures, dialogContext.documentId, dialogContext.type]);
 
     const reglementHasLinkedFacture = (r: ReglementClient) =>
         Boolean(
@@ -234,6 +262,15 @@ export default function Reglements() {
             if (linked?.id != null) return `Facture #${linked.id}`;
         }
         return "Facture associée";
+    };
+
+    const cleanReglementCommentForEdit = (raw: unknown) => {
+        return String(raw || "")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line && !/^\[(PAY[EÉ]|IMPAY[EÉ]|REFUS[EÉ])\]/i.test(line))
+            .join("\n")
+            .trim();
     };
 
     const locationState = (location.state || {}) as any;
@@ -305,7 +342,7 @@ export default function Reglements() {
             if (!token) return;
             setIsLoading(true);
             try {
-                const [regRes, clientRes, facRes, cmdRes, modesRes] = await Promise.all([
+                const [regRes, clientRes, facRes, cmdRes, modesRes, banquesRes] = await Promise.all([
                     fetch("/api/reglements-clients", {
                         headers: { Authorization: `Bearer ${token}` },
                     }),
@@ -319,6 +356,9 @@ export default function Reglements() {
                         headers: { Authorization: `Bearer ${token}` },
                     }),
                     fetch("/api/settings/payment-modes", {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }),
+                    fetch("/api/banque", {
                         headers: { Authorization: `Bearer ${token}` },
                     }),
                 ]);
@@ -349,6 +389,10 @@ export default function Reglements() {
                 if (modesRes.ok) {
                     const data = await modesRes.json();
                     setPaymentModes(Array.isArray(data) ? data : []);
+                }
+                if (banquesRes.ok) {
+                    const data = await banquesRes.json();
+                    setBanques(Array.isArray(data) ? data : []);
                 }
             } catch (e) {
                 console.error(e);
@@ -432,6 +476,11 @@ export default function Reglements() {
             clientNom,
         });
 
+        const defaultLineFactureId =
+            type === "commande" && (commandeToFactures.get(Number(id)) || []).length === 1
+                ? String((commandeToFactures.get(Number(id)) || [])[0].id)
+                : "none";
+
         if (currentSituation && currentSituation.reste_a_payer > 0) {
             setReglementLines([{
                 mode_paiement: defaultMode,
@@ -439,6 +488,7 @@ export default function Reglements() {
                 montant: currentSituation.reste_a_payer.toString(),
                 date_reglement: new Date().toISOString().split("T")[0],
                 commentaire: "",
+                facture_id: defaultLineFactureId,
             }]);
         } else {
             setReglementLines([{
@@ -447,6 +497,7 @@ export default function Reglements() {
                 montant: "",
                 date_reglement: new Date().toISOString().split("T")[0],
                 commentaire: "",
+                facture_id: defaultLineFactureId,
             }]);
         }
 
@@ -825,11 +876,17 @@ export default function Reglements() {
         setReglementLines((prev) => [
             ...prev,
             {
-                mode_paiement: "espece",
-                banque_id: "none",
+                mode_paiement: prev[0]?.mode_paiement || "espece",
+                banque_id:
+                    (editTarget?.banque_id != null
+                        ? String(editTarget.banque_id)
+                        : prev[0]?.banque_id) || "none",
                 montant: "",
-                date_reglement: new Date().toISOString().split("T")[0],
+                date_reglement: prev[0]?.date_reglement || new Date().toISOString().split("T")[0],
                 commentaire: "",
+                facture_id:
+                    prev[0]?.facture_id ||
+                    (linkedFacturesForDialog.length === 1 ? String(linkedFacturesForDialog[0].id) : "none"),
             },
         ]);
     };
@@ -845,7 +902,7 @@ export default function Reglements() {
         if (!token || !dialogContext.type || !dialogContext.documentId) return;
 
         const pendingReglement = getPendingReglementForDocument(dialogContext.type, dialogContext.documentId);
-        if (pendingReglement) {
+        if (!editTarget && pendingReglement) {
             toast.error(
                 "Un règlement en attente existe déjà pour ce document. Veuillez l'approuver ou le traiter avant d'en saisir un nouveau."
             );
@@ -858,13 +915,25 @@ export default function Reglements() {
             return;
         }
 
-        if (situation && totalSaisi > situation.reste_a_payer + 0.01) {
+        if (!editTarget && situation && totalSaisi > situation.reste_a_payer + 0.01) {
             toast.error("Le total saisi dépasse le reste à payer.");
             return;
         }
 
         setIsSubmitting(true);
         try {
+            const hasLineOverLimit = reglementLines.some((l) => {
+                const isEspece = String(l.mode_paiement || "").toLowerCase() === "espece";
+                return isEspece && (parseFloat(l.montant || "0") || 0) > MAX_REGLEMENT_LINE_AMOUNT;
+            });
+            if (hasLineOverLimit) {
+                toast.error(
+                    `Impossible de dépasser ${MAX_REGLEMENT_LINE_AMOUNT.toLocaleString("fr-FR")} MAD par ligne en mode espèce.`
+                );
+                setIsSubmitting(false);
+                return;
+            }
+
             const lignes = reglementLines
                 .map((l) => ({
                     montant: parseFloat(l.montant || "0") || 0,
@@ -872,8 +941,23 @@ export default function Reglements() {
                     banque_id: l.banque_id === "none" ? null : l.banque_id,
                     date_reglement: l.date_reglement,
                     commentaire: l.commentaire || null,
+                    facture_id:
+                        dialogContext.type === "commande"
+                            ? l.facture_id && l.facture_id !== "none"
+                                ? Number(l.facture_id)
+                                : null
+                            : null,
                 }))
                 .filter((l) => l.montant > 0);
+
+            if (dialogContext.type === "commande" && linkedFacturesForDialog.length > 0) {
+                const hasMissingFacture = lignes.some((l) => !l.facture_id);
+                if (hasMissingFacture) {
+                    toast.error("Veuillez sélectionner la facture liée pour chaque ligne de règlement.");
+                    setIsSubmitting(false);
+                    return;
+                }
+            }
 
             if (!lignes.length) {
                 toast.error("Aucun montant valide saisi.");
@@ -881,23 +965,32 @@ export default function Reglements() {
                 return;
             }
 
-            const body: any = {
-                lignes,
-            };
-            if (dialogContext.type === "facture") {
-                body.facture_id = dialogContext.documentId;
+            let res: Response;
+            if (editTarget) {
+                res = await fetch(`/api/reglements-clients/${editTarget.id}`, {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({ lignes }),
+                });
             } else {
-                body.commande_id = dialogContext.documentId;
+                const body: any = { lignes };
+                if (dialogContext.type === "facture") {
+                    body.facture_id = dialogContext.documentId;
+                } else {
+                    body.commande_id = dialogContext.documentId;
+                }
+                res = await fetch("/api/reglements-clients", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify(body),
+                });
             }
-
-            const res = await fetch("/api/reglements-clients", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify(body),
-            });
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
@@ -906,9 +999,82 @@ export default function Reglements() {
                 return;
             }
 
-            toast.success("Règlement enregistré en attente d'approbation.");
+            toast.success(editTarget ? "Règlement modifié avec succès." : "Règlement enregistré en attente d'approbation.");
             window.dispatchEvent(new CustomEvent("approvals-updated"));
             setDialogOpen(false);
+            setEditTarget(null);
+
+            if (
+                !editTarget &&
+                locationState?.autoCreateFactureAfterReglement &&
+                dialogContext.type === "commande" &&
+                dialogContext.documentId
+            ) {
+                try {
+                    const commandeId = Number(dialogContext.documentId);
+                    if (Number.isFinite(commandeId) && commandeId > 0) {
+                        const commandeRes = await fetch(`/api/commandes/${commandeId}`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                        });
+                        if (commandeRes.ok) {
+                            const commandeData = await commandeRes.json();
+                            const today = new Date();
+                            const dateFacture = today.toISOString().split("T")[0];
+                            const dateEcheance = new Date(
+                                today.getTime() + 30 * 24 * 60 * 60 * 1000
+                            )
+                                .toISOString()
+                                .split("T")[0];
+                            const firstMode =
+                                String(lignes[0]?.mode_paiement || "").trim().toLowerCase() || "virement";
+
+                            const factureBody = {
+                                date_facture: dateFacture,
+                                date_echeance: dateEcheance,
+                                client_id: commandeData?.client_id,
+                                commande_id: commandeId,
+                                devis_id: commandeData?.devis_id || "none",
+                                mode_paiement: firstMode,
+                                reduction: Number(commandeData?.reduction || 0),
+                                statut: "en_attente",
+                                items: Array.isArray(commandeData?.items)
+                                    ? commandeData.items.map((it: any) => ({
+                                        produit_id: it?.produit_id || null,
+                                        designation: it?.designation || "",
+                                        quantite: Number(it?.quantite) || 0,
+                                        prix_unitaire: Number(it?.prix_unitaire) || 0,
+                                        tva: Number(it?.tva) || 0,
+                                        reduction: Number(it?.reduction) || 0,
+                                    }))
+                                    : [],
+                            };
+
+                            const factureRes = await fetch("/api/factures", {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    Authorization: `Bearer ${token}`,
+                                },
+                                body: JSON.stringify(factureBody),
+                            });
+
+                            if (factureRes.ok) {
+                                toast.success("Facture créée automatiquement après saisie du règlement.");
+                            } else {
+                                const factureErr = await factureRes.json().catch(() => ({}));
+                                toast.error(
+                                    factureErr?.message ||
+                                        "Règlement enregistré, mais la création automatique de facture a échoué."
+                                );
+                            }
+                        } else {
+                            toast.error("Règlement enregistré, mais impossible de charger la commande pour créer la facture.");
+                        }
+                    }
+                } catch {
+                    toast.error("Règlement enregistré, mais la création automatique de facture a échoué.");
+                }
+            }
 
             const refreshed = await fetch("/api/reglements-clients", {
                 headers: { Authorization: `Bearer ${token}` },
@@ -923,6 +1089,60 @@ export default function Reglements() {
         } finally {
             setIsSubmitting(false);
         }
+    };
+
+    const handleDeleteReglement = async () => {
+        if (!token || !deleteTarget) return;
+        setIsDeletingReglement(true);
+        try {
+            const res = await fetch(`/api/reglements-clients/${deleteTarget.id}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                toast.error(body?.message || "Impossible de supprimer ce règlement.");
+                return;
+            }
+            setReglements((prev) => prev.filter((x) => x.id !== deleteTarget.id));
+            toast.success("Règlement supprimé.");
+            setDeleteDialogOpen(false);
+            setDeleteTarget(null);
+        } catch {
+            toast.error("Erreur lors de la suppression du règlement.");
+        } finally {
+            setIsDeletingReglement(false);
+        }
+    };
+
+    const openEditDialog = async (r: ReglementClient) => {
+        setEditTarget(r);
+        setDialogContext({
+            type: r.facture_id ? "facture" : "commande",
+            documentId: (r.facture_id || r.commande_id || null) as number | null,
+            numero: r.numero_facture || r.numero_commande || null,
+            clientNom: r.client_nom || null,
+        });
+        if (r.facture_id) {
+            await loadSituation("facture", Number(r.facture_id));
+            setSelectedDocType("facture");
+            setDocSearch(r.numero_facture || "");
+        } else if (r.commande_id) {
+            await loadSituation("commande", Number(r.commande_id));
+            setSelectedDocType("commande");
+            setDocSearch(r.numero_commande || "");
+        }
+        setReglementLines([
+            {
+                mode_paiement: String(r.mode_paiement || "espece"),
+                banque_id: r.banque_id != null ? String(r.banque_id) : "none",
+                montant: String(r.montant ?? ""),
+                date_reglement: String(r.date_reglement || "").split("T")[0],
+                commentaire: cleanReglementCommentForEdit(r.commentaire),
+                facture_id: r.facture_id != null ? String(r.facture_id) : "none",
+            },
+        ]);
+        setDialogOpen(true);
     };
 
     if (!isAuthorized) {
@@ -1342,11 +1562,52 @@ export default function Reglements() {
                                         const dateLabel = isNaN(dateObj.getTime())
                                             ? "-"
                                             : dateObj.toLocaleDateString("fr-FR");
-                                        const isFacture = reglementHasLinkedFacture(r);
-                                        const docLabel = isFacture
-                                            ? getFactureLabelFromReglement(r)
-                                            : (r.numero_commande || `Commande #${r.commande_id}`);
-                                        const docSubLabel = !isFacture ? "Non facturé" : null;
+                                        const linkedFacturesForCommande =
+                                            r.commande_id != null
+                                                ? (commandeToFactures.get(Number(r.commande_id)) || [])
+                                                : [];
+                                        const pickFactureByAmount = (() => {
+                                            if (!linkedFacturesForCommande.length) return null;
+                                            const regMontant = Number(r.montant) || 0;
+                                            if (regMontant <= 0) return null;
+                                            const matches = linkedFacturesForCommande.filter(
+                                                (f: any) => Math.abs((Number(f?.montant_ttc) || 0) - regMontant) <= 0.01
+                                            );
+                                            return matches.length === 1 ? matches[0] : null;
+                                        })();
+                                        const directFactureForRow =
+                                            (r.facture_id != null
+                                                ? factures.find((f: any) => Number(f?.id) === Number(r.facture_id))
+                                                : null) ||
+                                            (r.numero_facture
+                                                ? factures.find(
+                                                      (f: any) =>
+                                                          String(f?.numero_facture || "").trim() ===
+                                                          String(r.numero_facture || "").trim()
+                                                  )
+                                                : null);
+                                        const linkedFactureForRow =
+                                            directFactureForRow ||
+                                            pickFactureByAmount ||
+                                            (r.facture_id != null
+                                                ? linkedFacturesForCommande.find((f: any) => Number(f.id) === Number(r.facture_id))
+                                                : null) ||
+                                            (r.numero_facture
+                                                ? linkedFacturesForCommande.find(
+                                                      (f: any) =>
+                                                          String(f?.numero_facture || "").trim() ===
+                                                          String(r.numero_facture || "").trim()
+                                                  )
+                                                : null) ||
+                                            (linkedFacturesForCommande.length === 1 ? linkedFacturesForCommande[0] : null);
+                                        const factureCodeForRow =
+                                            String(r.numero_facture || "").trim() ||
+                                            (r.facture_id != null ? `Facture #${r.facture_id}` : "") ||
+                                            (linkedFactureForRow
+                                                ? String(linkedFactureForRow.numero_facture || `Facture #${linkedFactureForRow.id}`)
+                                                : "");
+                                        const docLabel = r.numero_commande || `Commande #${r.commande_id}`;
+                                        const docSubLabel = null;
                                         const statutLabel =
                                             r.statut === "approuve"
                                                 ? "Approuvé"
@@ -1360,13 +1621,15 @@ export default function Reglements() {
                                                 className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors text-sm"
                                             >
                                                 <TableCell className="pl-6">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => navigate(`/dashboard/reglements/details/client/${r.id}`)}
-                                                        className="font-bold text-indigo-600 hover:underline"
-                                                    >
-                                                        {buildReglementCode("client", r.id, r.date_reglement, r.numero_recu, (r as any).sous_societe_nom, (r as any).numero_facture || (r as any).numero_commande)}
-                                                    </button>
+                                                    <div className="flex flex-col items-start">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => navigate(`/dashboard/reglements/details/client/${r.id}`)}
+                                                            className="font-bold text-indigo-600 hover:underline"
+                                                        >
+                                                            {buildReglementCode("client", r.id, r.date_reglement, r.numero_recu, (r as any).sous_societe_nom, (r as any).numero_facture || (r as any).numero_commande)}
+                                                        </button>
+                                                    </div>
                                                 </TableCell>
                                             <TableCell className="pl-6">{dateLabel}</TableCell>
                                                 <TableCell>{r.client_nom || "-"}</TableCell>
@@ -1377,6 +1640,20 @@ export default function Reglements() {
                                                         <span className="font-medium">{docLabel}</span>
                                                         {docSubLabel && (
                                                             <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">Non facturé</span>
+                                                        )}
+                                                        {factureCodeForRow && (
+                                                            <button
+                                                                type="button"
+                                                                className="mt-1 w-fit text-[10px] rounded-full border px-2 py-0.5 hover:bg-muted/50 text-indigo-700"
+                                                                onClick={() => {
+                                                                    const factId =
+                                                                        (r.facture_id != null ? Number(r.facture_id) : null) ||
+                                                                        (linkedFactureForRow ? Number(linkedFactureForRow.id) : null);
+                                                                    if (factId) navigate(`/dashboard/factures/${factId}`);
+                                                                }}
+                                                            >
+                                                                {factureCodeForRow}
+                                                            </button>
                                                         )}
                                                     </div>
                                                 </TableCell>
@@ -1514,6 +1791,28 @@ export default function Reglements() {
                                                                     <CheckCircle2 className="h-4 w-4" />
                                                                     Remettre approuvé
                                                                 </DropdownMenuItem>
+                                                            )}
+                                                            {isStrictAdmin && (
+                                                                <>
+                                                                    <DropdownMenuItem
+                                                                        className="cursor-pointer"
+                                                                        onClick={() => openEditDialog(r)}
+                                                                    >
+                                                                        <FileText className="h-4 w-4" />
+                                                                        Modifier
+                                                                    </DropdownMenuItem>
+                                                                    <DropdownMenuItem
+                                                                        variant="destructive"
+                                                                        className="cursor-pointer text-red-600 focus:text-red-600"
+                                                                        onClick={() => {
+                                                                            setDeleteTarget(r);
+                                                                            setDeleteDialogOpen(true);
+                                                                        }}
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                        Supprimer
+                                                                    </DropdownMenuItem>
+                                                                </>
                                                             )}
                                                         </DropdownMenuContent>
                                                     </DropdownMenu>
@@ -1832,23 +2131,31 @@ export default function Reglements() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="sm:max-w-2xl w-[90vw] p-0 overflow-hidden rounded-3xl border-none shadow-2xl">
+            <Dialog
+                open={dialogOpen}
+                onOpenChange={(open) => {
+                    setDialogOpen(open);
+                    if (!open) setEditTarget(null);
+                }}
+            >
+                <DialogContent className="sm:max-w-2xl w-[90vw] max-h-[90vh] p-0 overflow-hidden rounded-3xl border-none shadow-2xl flex flex-col">
                     <div className="h-1.5 bg-emerald-600" />
-                    <DialogHeader className="px-6 pt-4 pb-2 text-center">
+                    <DialogHeader className="px-6 pt-4 pb-2 text-center shrink-0">
                         <DialogTitle className="flex flex-col items-center gap-2">
                             <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 mb-2">
                                 <Banknote className="h-6 w-6" />
                             </div>
                             <span className="text-xl font-bold text-emerald-700 dark:text-emerald-300">
-                                {dialogContext.documentId ? "Saisir un règlement" : "Nouveau règlement client"}
+                                {editTarget ? "Modifier un règlement client" : dialogContext.documentId ? "Saisir un règlement" : "Nouveau règlement client"}
                             </span>
                         </DialogTitle>
                         <DialogDescription className="px-1 pt-2 text-sm text-muted-foreground">
-                            Enregistrez un paiement partiel ou total associé à une facture ou une commande.
+                            {editTarget
+                                ? "Modifiez le règlement sélectionné et ajoutez autant de lignes que nécessaire."
+                                : "Enregistrez un paiement partiel ou total associé à une facture ou une commande."}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="px-6 pb-4 space-y-5">
+                    <div className="px-6 pb-4 space-y-5 overflow-y-auto min-h-0 flex-1">
                         {!dialogContext.documentId ? (
                             <div className="space-y-4 bg-muted/30 p-4 rounded-2xl border border-border/50">
                                 <div className="grid grid-cols-2 gap-2 p-1 bg-muted rounded-xl">
@@ -1968,7 +2275,7 @@ export default function Reglements() {
                                         </p>
                                     </div>
                                 </div>
-                                {!locationState?.factureId && !locationState?.commandeId && (
+                                {!editTarget && !locationState?.factureId && !locationState?.commandeId && (
                                     <Button
                                         variant="ghost"
                                         size="sm"
@@ -2067,9 +2374,9 @@ export default function Reglements() {
                             {reglementLines.map((l, idx) => (
                                 <div
                                     key={idx}
-                                    className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end border border-border rounded-xl p-3 bg-muted/30"
+                                    className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end border border-border rounded-xl p-3 bg-muted/30"
                                 >
-                                    <div className="space-y-1">
+                                    <div className="space-y-1 md:col-span-2 min-w-0">
                                         <p className="text-[11px] font-semibold text-muted-foreground">
                                             Montant
                                         </p>
@@ -2078,18 +2385,28 @@ export default function Reglements() {
                                             min="0"
                                             step="0.01"
                                             value={l.montant}
-                                            onChange={(e) =>
+                                            onChange={(e) => {
+                                                const raw = e.target.value;
+                                                const parsed = parseFloat(raw || "0") || 0;
+                                                const isEspece =
+                                                    String(l.mode_paiement || "").toLowerCase() === "espece";
+                                                if (isEspece && parsed > MAX_REGLEMENT_LINE_AMOUNT) {
+                                                    toast.error(
+                                                        `Impossible de dépasser ${MAX_REGLEMENT_LINE_AMOUNT.toLocaleString("fr-FR")} MAD par ligne en mode espèce.`
+                                                    );
+                                                    return;
+                                                }
                                                 setReglementLines((prev) =>
                                                     prev.map((p, i) =>
                                                         i === idx
-                                                            ? { ...p, montant: e.target.value }
+                                                            ? { ...p, montant: raw }
                                                             : p
                                                     )
-                                                )
-                                            }
+                                                );
+                                            }}
                                         />
                                     </div>
-                                    <div className="space-y-1">
+                                    <div className="space-y-1 md:col-span-2 min-w-0">
                                         <p className="text-[11px] font-semibold text-muted-foreground">
                                             Mode
                                         </p>
@@ -2127,7 +2444,7 @@ export default function Reglements() {
                                             </SelectContent>
                                         </Select>
                                     </div>
-                                    <div className="space-y-1">
+                                    <div className="space-y-1 md:col-span-2 min-w-0">
                                         <p className="text-[11px] font-semibold text-muted-foreground">
                                             Date
                                         </p>
@@ -2148,7 +2465,75 @@ export default function Reglements() {
                                             }
                                         />
                                     </div>
-                                    <div className="space-y-1">
+                                    <div className="space-y-1 md:col-span-2 min-w-0">
+                                        <p className="text-[11px] font-semibold text-muted-foreground">
+                                            Banque
+                                        </p>
+                                        <Select
+                                            value={l.banque_id || "none"}
+                                            onValueChange={(val) =>
+                                                setReglementLines((prev) =>
+                                                    prev.map((p, i) =>
+                                                        i === idx
+                                                            ? { ...p, banque_id: val }
+                                                            : p
+                                                    )
+                                                )
+                                            }
+                                        >
+                                            <SelectTrigger className="h-9">
+                                                <SelectValue placeholder="Banque (optionnel)" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="none">Aucune banque</SelectItem>
+                                                {banques.map((b) => (
+                                                    <SelectItem key={b.id} value={String(b.id)}>
+                                                        {String(b.nom_banque || `Banque #${b.id}`)}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-1 md:col-span-2 min-w-0">
+                                        <p className="text-[11px] font-semibold text-muted-foreground">
+                                            Facture liée
+                                        </p>
+                                        {dialogContext.type === "commande" && linkedFacturesForDialog.length > 0 ? (
+                                            <Select
+                                                value={l.facture_id || "none"}
+                                                onValueChange={(val) =>
+                                                    setReglementLines((prev) =>
+                                                        prev.map((p, i) =>
+                                                            i === idx ? { ...p, facture_id: val } : p
+                                                        )
+                                                    )
+                                                }
+                                            >
+                                                <SelectTrigger className="h-9">
+                                                    <SelectValue placeholder="Choisir une facture" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="none">Choisir...</SelectItem>
+                                                    {linkedFacturesForDialog.map((f) => (
+                                                        <SelectItem key={f.id} value={String(f.id)}>
+                                                            {f.numero_facture || `Facture #${f.id}`}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        ) : (
+                                            <Input
+                                                value={
+                                                    dialogContext.type === "facture"
+                                                        ? dialogContext.numero || "Facture sélectionnée"
+                                                        : "—"
+                                                }
+                                                readOnly
+                                                className="h-9 bg-muted/40"
+                                            />
+                                        )}
+                                    </div>
+                                    <div className="space-y-1 md:col-span-2 min-w-0">
                                         <p className="text-[11px] font-semibold text-muted-foreground">
                                             Commentaire
                                         </p>
@@ -2207,12 +2592,15 @@ export default function Reglements() {
                             </div>
                         </div>
                     </div>
-                    <DialogFooter className="px-6 pb-4 flex gap-2">
+                    <DialogFooter className="px-6 pb-4 flex gap-2 shrink-0 border-t border-border/60 bg-card">
                         <Button
                             type="button"
                             variant="ghost"
                             className="flex-1 h-10 rounded-xl text-xs font-semibold"
-                            onClick={() => setDialogOpen(false)}
+                            onClick={() => {
+                                setDialogOpen(false);
+                                setEditTarget(null);
+                            }}
                         >
                             Annuler
                         </Button>
@@ -2222,7 +2610,58 @@ export default function Reglements() {
                             disabled={isSubmitting}
                             onClick={handleSubmitReglement}
                         >
-                            {isSubmitting ? "Enregistrement..." : "Enregistrer le règlement"}
+                            {isSubmitting ? "Enregistrement..." : editTarget ? "Enregistrer les modifications" : "Enregistrer le règlement"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={deleteDialogOpen}
+                onOpenChange={(open) => {
+                    setDeleteDialogOpen(open);
+                    if (!open) setDeleteTarget(null);
+                }}
+            >
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Supprimer le règlement</DialogTitle>
+                        <DialogDescription>
+                            Vous voulez supprimer ce règlement ?
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-sm">
+                        <p>
+                            <span className="font-semibold">Code:</span>{" "}
+                            {deleteTarget
+                                ? buildReglementCode("client", deleteTarget.id, deleteTarget.date_reglement, deleteTarget.numero_recu, (deleteTarget as any).sous_societe_nom, (deleteTarget as any).numero_facture || (deleteTarget as any).numero_commande)
+                                : "—"}
+                        </p>
+                        <p>
+                            <span className="font-semibold">Montant:</span>{" "}
+                            {deleteTarget
+                                ? `${(Number(deleteTarget.montant) || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MAD`
+                                : "—"}
+                        </p>
+                    </div>
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                                setDeleteDialogOpen(false);
+                                setDeleteTarget(null);
+                            }}
+                        >
+                            Annuler
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={handleDeleteReglement}
+                            disabled={isDeletingReglement || !deleteTarget}
+                        >
+                            {isDeletingReglement ? "Suppression..." : "Supprimer"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
