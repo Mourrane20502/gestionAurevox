@@ -26,7 +26,6 @@ import {
     Award,
     Receipt,
     Mail,
-    Scale,
     Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,7 +44,7 @@ interface SidebarItem {
         href: string;
         icon: any;
         permission?: string | string[];
-        /** Regroupe visuellement les entrées (ex. Vente classique vs vente gros) */
+        /** Regroupe visuellement les entrées (ex. sections du menu) */
         section?: string;
     }>;
 }
@@ -116,11 +115,6 @@ const sidebarItems: SidebarItem[] = [
             { name: "Reçus", href: "/dashboard/recus", icon: FileText, permission: "reglements_view", section: "Vente classique" },
             { name: "Avoirs", href: "/dashboard/avoirs", icon: RotateCcw, permission: "avoirs_view", section: "Vente classique" },
             { name: "Remboursement", href: "/dashboard/remboursements", icon: Banknote, permission: "commandes_view", section: "Vente classique" },
-
-            { name: "Devis gros", href: "/dashboard/devis-gros", icon: Scale, permission: "devis_gros_view", section: "Vente au gros" },
-            { name: "Commandes gros", href: "/dashboard/commandes-gros", icon: ListOrdered, permission: "commandes_gros_view", section: "Vente au gros" },
-            { name: "Factures gros", href: "/dashboard/factures-gros", icon: Receipt, permission: "factures_gros_view", section: "Vente au gros" },
-            { name: "Avoirs gros", href: "/dashboard/avoirs-gros", icon: RotateCcw, permission: "avoirs_gros_view", section: "Vente au gros" },
         ]
     },
     {
@@ -130,7 +124,6 @@ const sidebarItems: SidebarItem[] = [
         subItems: [
             { name: "Règlements Clients", href: "/dashboard/reglements", icon: FileText, permission: 'reglements_view', section: "Finance classique" },
             { name: "Règlements Fournisseurs", href: "/dashboard/fournisseurs/reglements", icon: Truck, permission: 'fournisseurs_view', section: "Finance classique" },
-            { name: "Règlements Clients Gros", href: "/dashboard/reglements-gros", icon: Receipt, permission: 'reglements_view', section: "Finance gros" },
             { name: "Bilan", href: "/dashboard/bilan", icon: FileText, permission: 'bilan_view' },
             { name: "Chiffre d'affaire", href: "/dashboard/ca", icon: CircleDollarSign, permission: 'admin_only' },
         ]
