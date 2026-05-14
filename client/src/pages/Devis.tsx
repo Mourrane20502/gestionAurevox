@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
-import { isProductWholesaleGros } from "@/lib/isProductWholesaleGros";
 import { normalizeLineTvaPercent } from "@/lib/normalizeLineTva";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
@@ -298,18 +297,8 @@ function Devis() {
     useEffect(() => {
         const state = location.state as any;
 
-        // Arrivée depuis un produit (création rapide)
+        // Arrivée depuis un produit (création rapide) — toujours en devis classique
         if (state?.selectedProduct) {
-            if (state?.selectedProduct && isProductWholesaleGros(state.selectedProduct as any)) {
-                navigate("/dashboard/devis-gros", {
-                    replace: true,
-                    state: {
-                        selectedProduct: state.selectedProduct,
-                        openNewDevisGros: true,
-                    },
-                });
-                return;
-            }
             cameFromProductSaleRef.current = true;
             const product = state.selectedProduct;
             const newItem: DevisItem = {
@@ -963,16 +952,6 @@ function Devis() {
             return;
         }
         if (state?.selectedProduct) {
-            if (state?.selectedProduct && isProductWholesaleGros(state.selectedProduct as any)) {
-                navigate("/dashboard/devis-gros", {
-                    replace: true,
-                    state: {
-                        selectedProduct: state.selectedProduct,
-                        openNewDevisGros: true,
-                    },
-                });
-                return;
-            }
             cameFromProductSaleRef.current = true;
             const product = state.selectedProduct;
             const newItem: DevisItem = {

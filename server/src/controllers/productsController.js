@@ -2,8 +2,6 @@ const db = require("../config/db").promise();
 const fs = require("fs");
 const path = require("path");
 const { logProductMovement } = require("../utils/productMovementLogger");
-const { isGroByPricingMetal } = require("../utils/grosProduct");
-
 const IMPORT_EXCLUDED_COLUMNS = new Set([
     "id",
     "user_id",
@@ -74,6 +72,19 @@ const ensurePrixDeVenteColumn = async () => {
     ensuredPrixDeVenteColumn = true;
 };
 
+/** Colonne générée : marge commerciale = prix_de_vente - prix (alignée sur le schéma SQL). */
+let ensuredMargeVirtualColumn = false;
+const ensureMargeVirtualColumn = async () => {
+    if (ensuredMargeVirtualColumn) return;
+    const [cols] = await db.execute("SHOW COLUMNS FROM products LIKE 'marge'");
+    if (!Array.isArray(cols) || cols.length === 0) {
+        await db.execute(
+            "ALTER TABLE products ADD COLUMN marge DECIMAL(10,2) AS (prix_de_vente - prix) VIRTUAL"
+        );
+    }
+    ensuredMargeVirtualColumn = true;
+};
+
 exports.getProductsImportTemplateColumns = async (_req, res) => {
     try {
         const columns = await getProductsTableColumnsMeta();
@@ -108,24 +119,28 @@ exports.createProduct = async (req, res) => {
         prix_de_vente: prixDeVenteRaw
     } = req.body;
 
-    const isGro = isGroByPricingMetal(pricing_metal);
-    const photo = !isGro && req.file ? req.file.filename : null;
+    const photo = req.file ? req.file.filename : null;
 
     const prixMissing =
         prix === undefined || prix === null || String(prix).trim() === "";
-    if (!nom || (!isGro && prixMissing)) {
+    if (!nom || prixMissing) {
         return res.status(400).json({ message: "Name and price are required" });
     }
 
     try {
         await ensureProductPricingColumns();
         await ensurePrixDeVenteColumn();
+        await ensureMargeVirtualColumn();
 
-        const stockVal = isGro ? 0 : stock ? Number(stock) : 0;
-        const stockAlertVal = isGro ? 0 : stock_alert ? Number(stock_alert) : 1;
-        const disponibleVal = isGro
-            ? parseDisponibleBody(disponible)
-            : Number(stock || 0) > 0 ? 1 : 0;
+        const stockVal = stock !== undefined && stock !== null && String(stock).trim() !== "" ? Number(stock) : 0;
+        const stockAlertVal =
+            stock_alert !== undefined && stock_alert !== null && String(stock_alert).trim() !== ""
+                ? Number(stock_alert)
+                : 1;
+        const disponibleVal =
+            disponible !== undefined && disponible !== null && String(disponible).trim() !== ""
+                ? parseDisponibleBody(disponible)
+                : Number(stockVal) > 0 ? 1 : 0;
         const parsedPrix = toNullableNumber(prix);
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
         const prixDeVenteParsed = toNullableNumber(prixDeVenteRaw);
@@ -190,6 +205,9 @@ exports.createProduct = async (req, res) => {
 
 exports.getAllProducts = async (req, res) => {
     try {
+        await ensureProductPricingColumns();
+        await ensurePrixDeVenteColumn();
+        await ensureMargeVirtualColumn();
 
         const query = `
             SELECT p.*, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom,
@@ -219,6 +237,9 @@ exports.getProductById = async (req, res) => {
     const { id } = req.params;
 
     try {
+        await ensureProductPricingColumns();
+        await ensurePrixDeVenteColumn();
+        await ensureMargeVirtualColumn();
 
         const [rows] = await db.execute(`
             SELECT p.*, c.nom AS category_name, pdv.nom AS point_de_vente_name, u.nom AS creator_name, u.prenom AS creator_prenom, pt.name AS product_type_name, f.nom AS fournisseur_nom
@@ -273,6 +294,7 @@ exports.updateProduct = async (req, res) => {
     try {
         await ensureProductPricingColumns();
         await ensurePrixDeVenteColumn();
+        await ensureMargeVirtualColumn();
 
         // Check if exists
         const [existing] = await db.execute(
@@ -286,24 +308,8 @@ exports.updateProduct = async (req, res) => {
             return res.status(404).json({ message: "Product not found" });
         }
 
-        const effectivePricingMetal =
-            pricing_metal !== undefined &&
-            pricing_metal !== null &&
-            String(pricing_metal).trim() !== ""
-                ? pricing_metal
-                : existing[0].pricing_metal;
-        const isGro = isGroByPricingMetal(effectivePricingMetal);
-
         let finalPhoto = existing[0].photo;
-        if (isGro) {
-            if (existing[0].photo) {
-                const oldPath = path.join("uploads", existing[0].photo);
-                if (fs.existsSync(oldPath)) {
-                    fs.unlinkSync(oldPath);
-                }
-            }
-            finalPhoto = null;
-        } else if (newPhoto) {
+        if (newPhoto) {
             if (existing[0].photo) {
                 const oldPath = path.join("uploads", existing[0].photo);
                 if (fs.existsSync(oldPath)) {
@@ -313,11 +319,18 @@ exports.updateProduct = async (req, res) => {
             finalPhoto = newPhoto;
         }
 
-        const stockVal = isGro ? 0 : stock ? Number(stock) : 0;
-        const stockAlertVal = isGro ? 0 : stock_alert ? Number(stock_alert) : 1;
-        const disponibleVal = isGro
-            ? parseDisponibleBody(disponible)
-            : Number(stock || 0) > 0 ? 1 : 0;
+        const stockVal =
+            stock !== undefined && stock !== null && String(stock).trim() !== ""
+                ? Number(stock)
+                : 0;
+        const stockAlertVal =
+            stock_alert !== undefined && stock_alert !== null && String(stock_alert).trim() !== ""
+                ? Number(stock_alert)
+                : 1;
+        const disponibleVal =
+            disponible !== undefined && disponible !== null && String(disponible).trim() !== ""
+                ? parseDisponibleBody(disponible)
+                : Number(stockVal) > 0 ? 1 : 0;
         const parsedPrix = toNullableNumber(prix);
         const prixVal = parsedPrix == null ? 0 : parsedPrix;
         const prixDeVenteParsed =

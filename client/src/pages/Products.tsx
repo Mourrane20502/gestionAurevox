@@ -84,7 +84,7 @@ interface Product {
     has_facture_link?: number | boolean;
     /** Prix de vente conseillé / détail (colonne SQL `prix_de_vente`) */
     prix_de_vente?: number | string | null;
-    /** Colonne virtuelle SQL : `prix - prix_de_vente` */
+    /** Colonne virtuelle SQL : `prix_de_vente - prix` (marge commerciale) */
     marge?: number | string | null;
     fournisseur_nom?: string | null;
 }
@@ -356,7 +356,7 @@ export default function Products() {
     });
 
     const [metalPricing, setMetalPricing] = useState<MetalPricingConfig | null>(null);
-    const [pricingMetal, setPricingMetal] = useState<PricingMetalForm>("or");
+    const [, setPricingMetal] = useState<PricingMetalForm>("or");
     const [pricingVariantOr, setPricingVariantOr] = useState<PricingVariantOrForm>("resign");
     const [pricingVariantSilver, setPricingVariantSilver] = useState<PricingVariantSilverForm>("beldy");
     const [productActionsByRole, setProductActionsByRole] = useState<Record<string, ProductActionConfig>>(
@@ -364,39 +364,6 @@ export default function Products() {
     );
 
     const token = localStorage.getItem("token");
-
-    const activePricingVariant =
-        pricingMetal === "or" ? pricingVariantOr : pricingVariantSilver;
-    const tarifUnitaireDhParG = readTarifUnitDhPerGramFromConfig(
-        metalPricing,
-        pricingMetal,
-        activePricingVariant
-    );
-
-    const isGroForm =
-        formData.pricing_metal === "or" || formData.pricing_metal === "silver";
-
-    useEffect(() => {
-        if (!isDialogOpen) return;
-        if (!isGroForm) return;
-        const variant = pricingMetal === "or" ? pricingVariantOr : pricingVariantSilver;
-        const unit = readTarifUnitDhPerGramFromConfig(metalPricing, pricingMetal, variant);
-        if (!Number.isFinite(unit) || unit < 0) return;
-        const g = parseFloat(String(formData.grammage).replace(",", "."));
-        if (!Number.isFinite(g) || g <= 0) return;
-        const computed = Math.round(g * unit * 100) / 100;
-        const next = computed.toFixed(2);
-        setFormData((prev) => (prev.prix === next ? prev : { ...prev, prix: next }));
-    }, [
-        isDialogOpen,
-        metalPricing,
-        pricingMetal,
-        pricingVariantOr,
-        pricingVariantSilver,
-        formData.grammage,
-        formData.pricing_metal,
-        isGroForm,
-    ]);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -781,12 +748,9 @@ export default function Products() {
             return;
         }
 
-        const isGro = isGroForm;
-        const skipForGro = new Set(["photo", "stock", "stock_alert"]);
         const data = new FormData();
         Object.entries(formData).forEach(([key, value]) => {
             if (value === null || value === "") return;
-            if (isGro && skipForGro.has(key)) return;
             data.append(key, value as string | Blob);
         });
         data.set("prix_de_vente", formData.prix_de_vente ?? "");
@@ -872,17 +836,16 @@ export default function Products() {
                 : "beldy"
         );
         setPricingMetal(initialMetal || defaultMetalFromConfig(metalPricing));
-        const gro = isNatureGros(product);
         setFormData({
             nom: product.nom,
             description: product.description || "",
             prix: product.prix?.toString() || "",
-            stock: gro ? "" : product.stock.toString(),
+            stock: product.stock != null ? product.stock.toString() : "",
             id_categorie: product.id_categorie?.toString() || "",
             id_point_de_vente: product.id_point_de_vente?.toString() || "",
             fournisseur_id: product.fournisseur_id?.toString() || "",
             code_barre: product.code_barre || "",
-            stock_alert: gro ? "" : product.stock_alert?.toString() || "",
+            stock_alert: product.stock_alert != null ? product.stock_alert.toString() : "",
             reference: product.reference || "",
             etat: product.etat?.toString() || "1",
             disponible: product.disponible === 0 || product.disponible === false ? "false" : "true",
@@ -961,7 +924,7 @@ export default function Products() {
         const prix = Number(p.prix);
         const pv = Number(p.prix_de_vente);
         if (!Number.isFinite(prix) || !Number.isFinite(pv)) return null;
-        return prix - pv;
+        return pv - prix;
     };
 
     const isProductAvailableForFilter = (product: Product) => {
@@ -1055,7 +1018,7 @@ export default function Products() {
                     )}
                 >
                     <span className={cn("w-1.5 h-1.5 rounded-full inline-block", ok ? "bg-emerald-500" : "bg-red-500")} />
-                    {ok ? `${g.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} g` : "0 g"}
+                    {ok ? g.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) : "0"}
                 </span>
             );
         }
@@ -1198,7 +1161,7 @@ export default function Products() {
 
             autoTable(doc, {
                 startY: 48,
-                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix", "Grammage", "Stock", "Point de vente", "Fournisseur", "Disponibilité"]],
+                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix", "Poids", "Stock", "Point de vente", "Fournisseur", "Disponibilité"]],
                 body: tableData,
                 theme: "grid",
                 headStyles: {
@@ -1605,63 +1568,6 @@ export default function Products() {
                                         <Input id="reference" name="reference" value={formData.reference} onChange={handleInputChange} className="h-10" />
                                     </div>
 
-                                    {isGroForm && (
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            {pricingMetal === "or" && (
-                                                <div className="grid gap-1.5">
-                                                    <Label className="text-sm font-medium">Variante (or)</Label>
-                                                    <Select
-                                                        value={pricingVariantOr}
-                                                        onValueChange={(v) => {
-                                                            const next = v as PricingVariantOrForm;
-                                                            setPricingVariantOr(next);
-                                                            setFormData((prev) => ({
-                                                                ...prev,
-                                                                pricing_metal: "or",
-                                                                pricing_variant: next,
-                                                            }));
-                                                        }}
-                                                    >
-                                                        <SelectTrigger className="h-10 w-full">
-                                                            <SelectValue />
-                                                        </SelectTrigger>
-                                                        <SelectContent>
-                                                            <SelectItem value="resign">Resign</SelectItem>
-                                                            <SelectItem value="rafinity">Rafinity</SelectItem>
-                                                            <SelectItem value="beldi">Beldi</SelectItem>
-                                                            <SelectItem value="occasion">Occasion</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                </div>
-                                            )}
-                                            {pricingMetal === "silver" && (
-                                                <div className="grid gap-1.5">
-                                                    <Label className="text-sm font-medium">Variante (silver)</Label>
-                                                    <Select
-                                                        value={pricingVariantSilver}
-                                                        onValueChange={(v) => {
-                                                            const next = v as PricingVariantSilverForm;
-                                                            setPricingVariantSilver(next);
-                                                            setFormData((prev) => ({
-                                                                ...prev,
-                                                                pricing_metal: "silver",
-                                                                pricing_variant: next,
-                                                            }));
-                                                        }}
-                                                    >
-                                                        <SelectTrigger className="h-10 w-full">
-                                                            <SelectValue />
-                                                        </SelectTrigger>
-                                                        <SelectContent>
-                                                            <SelectItem value="beldy">Beldy</SelectItem>
-                                                            <SelectItem value="rafinity">Rafinity</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
                                             <Label className="text-sm font-medium text-foreground">Point de vente</Label>
@@ -1719,14 +1625,6 @@ export default function Products() {
                                                 className="h-10"
                                               
                                             />
-                                            {isGroForm && Number.isFinite(tarifUnitaireDhParG) ? (
-                                                <p className="text-[11px] text-muted-foreground">
-                                                    Tarif unitaire :{" "}
-                                                    <span className="font-semibold text-foreground">
-                                                        {tarifUnitaireDhParG.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} DH/g
-                                                    </span>
-                                                </p>
-                                            ) : null}
                                         </div>
                                         <div className="grid gap-1.5">
                                             <Label htmlFor="marge" className="text-sm font-medium">
@@ -1740,7 +1638,7 @@ export default function Products() {
                                                     const prix = parseFloat(String(formData.prix).replace(",", "."));
                                                     const pv = parseFloat(String(formData.prix_de_vente).replace(",", "."));
                                                     if (!Number.isFinite(prix) || !Number.isFinite(pv)) return "";
-                                                    return (prix - pv).toFixed(2);
+                                                    return (pv - prix).toFixed(2);
                                                 })()}
                                                 readOnly
                                                 disabled
@@ -1748,11 +1646,10 @@ export default function Products() {
                                                 placeholder="Calculée automatiquement"
                                             />
                                             <p className="text-[11px] text-muted-foreground">
-                                                Calculée automatiquement (prix d'achat − prix de vente)
+                                                Calculée automatiquement (prix de vente − prix d&apos;achat)
                                             </p>
                                         </div>
                                     </div>
-                                    {!isGroForm && (
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="grid gap-1.5">
                                             <Label htmlFor="stock" className="text-sm font-medium">Stock</Label>
@@ -1763,7 +1660,6 @@ export default function Products() {
                                             <Input id="stock_alert" name="stock_alert" type="number" value={formData.stock_alert} onChange={handleInputChange} className="h-10" />
                                         </div>
                                     </div>
-                                    )}
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="code_barre" className="text-sm font-medium">Code barre</Label>
                                         <div className="flex gap-2">
@@ -1787,41 +1683,37 @@ export default function Products() {
                                             </div>
                                         </div>
                                     )}
-                                    {!isGroForm && (
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            <div className="grid gap-1.5">
-                                                <Label className="text-sm font-medium text-foreground">Catégorie</Label>
-                                                <Select onValueChange={(v) => handleSelectChange("id_categorie", v)} value={formData.id_categorie}>
-                                                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                                                    <SelectContent>
-                                                        {categories.map((cat) => (
-                                                            <SelectItem key={cat.id} value={cat.id.toString()}>{cat.nom}</SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                            <div className="grid gap-1.5">
-                                                <Label className="text-sm font-medium text-foreground">Disponibilité</Label>
-                                                <Select onValueChange={(v) => handleSelectChange("disponible", v)} value={formData.disponible}>
-                                                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="true">Disponible</SelectItem>
-                                                        <SelectItem value="false">Non Disponible</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-sm font-medium text-foreground">Catégorie</Label>
+                                            <Select onValueChange={(v) => handleSelectChange("id_categorie", v)} value={formData.id_categorie}>
+                                                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                <SelectContent>
+                                                    {categories.map((cat) => (
+                                                        <SelectItem key={cat.id} value={cat.id.toString()}>{cat.nom}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
-                                    )}
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-sm font-medium text-foreground">Disponibilité</Label>
+                                            <Select onValueChange={(v) => handleSelectChange("disponible", v)} value={formData.disponible}>
+                                                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Choisir..." /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="true">Disponible</SelectItem>
+                                                    <SelectItem value="false">Non Disponible</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="description" className="text-sm font-medium">Description</Label>
                                         <Textarea id="description" name="description" value={formData.description} onChange={handleInputChange} rows={3} />
                                     </div>
-                                    {!isGroForm && (
                                     <div className="grid gap-1.5">
                                         <Label htmlFor="photo" className="text-sm font-medium">Photo</Label>
                                         <Input id="photo" name="photo" type="file" onChange={handleFileChange} className="h-10" />
                                     </div>
-                                    )}
                                     <DialogFooter>
                                         <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white">
                                             {editingProduct ? "Mettre à jour" : "Créer le produit"}
@@ -2078,7 +1970,7 @@ export default function Products() {
 
                             {/* Grammage */}
                             <div className="space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Grammage (g)</Label>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Poids</Label>
                                 <div className="flex items-center gap-2">
                                     <Input
                                         type="number"
@@ -2355,29 +2247,10 @@ export default function Products() {
                                                 size="sm"
                                                 className="h-8 px-3 text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/20"
                                                     onClick={() =>
-                                                        {
-                                                            const isGrosForSale = isNatureGros(product);
-                                                            console.log("[Products][Vendre][card]", {
-                                                                productId: product.id,
-                                                                nom: product.nom,
-                                                                pricing_metal: product.pricing_metal,
-                                                                isGrosForSale,
-                                                                targetRoute: isGrosForSale ? "/dashboard/devis-gros" : "/dashboard/devis",
-                                                            });
-                                                            navigate(
-                                                                isGrosForSale
-                                                                    ? "/dashboard/devis-gros"
-                                                                    : "/dashboard/devis",
-                                                                isGrosForSale
-                                                                    ? {
-                                                                          state: {
-                                                                              selectedProduct: product,
-                                                                              openNewDevisGros: true,
-                                                                          },
-                                                                      }
-                                                                    : { state: { selectedProduct: product } }
-                                                            );
-                                                        }}
+                                                        navigate("/dashboard/devis", {
+                                                            state: { selectedProduct: product },
+                                                        })
+                                                    }
                                             >
                                                 <ShoppingCart className="h-3.5 w-3.5" /> Vendre
                                             </Button>
@@ -2406,7 +2279,7 @@ export default function Products() {
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix d'achat</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix vente</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Marge</TableHead>
-                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Grammage</TableHead>
+                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Poids</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Stock</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Point de vente</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Fournisseur</TableHead>
@@ -2517,7 +2390,7 @@ export default function Products() {
                                                 const prix = Number(product.prix);
                                                 const pv = Number(product.prix_de_vente);
                                                 if (!Number.isFinite(prix) || !Number.isFinite(pv)) return null;
-                                                return prix - pv;
+                                                return pv - prix;
                                             })();
                                             const value = hasMarge ? Number(rawMarge) : fallback;
                                             if (value == null || !Number.isFinite(value)) {
@@ -2582,29 +2455,10 @@ export default function Products() {
                                                     size="sm"
                                                     className="h-8 px-3 text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/20"
                                                     onClick={() =>
-                                                        {
-                                                            const isGrosForSale = isNatureGros(product);
-                                                            console.log("[Products][Vendre][table]", {
-                                                                productId: product.id,
-                                                                nom: product.nom,
-                                                                pricing_metal: product.pricing_metal,
-                                                                isGrosForSale,
-                                                                targetRoute: isGrosForSale ? "/dashboard/devis-gros" : "/dashboard/devis",
-                                                            });
-                                                            navigate(
-                                                                isGrosForSale
-                                                                    ? "/dashboard/devis-gros"
-                                                                    : "/dashboard/devis",
-                                                                isGrosForSale
-                                                                    ? {
-                                                                          state: {
-                                                                              selectedProduct: product,
-                                                                              openNewDevisGros: true,
-                                                                          },
-                                                                      }
-                                                                    : { state: { selectedProduct: product } }
-                                                            );
-                                                        }}
+                                                        navigate("/dashboard/devis", {
+                                                            state: { selectedProduct: product },
+                                                        })
+                                                    }
                                                 >
                                                     <ShoppingCart className="h-3.5 w-3.5" />
                                                     Vendre

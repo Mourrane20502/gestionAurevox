@@ -36,7 +36,7 @@ interface ProductRow {
     grammage?: number | string | null;
     prix?: number | string | null;
     prix_de_vente?: number | string | null;
-    /** Colonne virtuelle SQL : `prix - prix_de_vente` */
+    /** Colonne virtuelle SQL : `prix_de_vente - prix` */
     marge?: number | string | null;
 }
 
@@ -55,7 +55,7 @@ function computeMarge(p: ProductRow): number | null {
     const a = Number(p.prix);
     const b = Number(p.prix_de_vente);
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-    return a - b;
+    return b - a;
 }
 
 type MargeFilter = "all" | "positive" | "negative" | "zero" | "missing";
@@ -252,7 +252,7 @@ export default function Marge() {
                         Marge — produits
                     </h1>
                     <p className="text-muted-foreground text-sm mt-1">
-                        Marge calculée à partir de la colonne virtuelle <code>prix − prix_de_vente</code>.
+                        Marge = <strong>prix de vente − prix d&apos;achat</strong> (colonne SQL virtuelle <code>prix_de_vente − prix</code>).
                     </p>
                 </div>
                 <div className="flex gap-2">
