@@ -16,6 +16,7 @@ import { Input } from "@/components/common/ui/input";
 import { Label } from "@/components/common/ui/label";
 import { Textarea } from "@/components/common/ui/textarea";
 import {
+    Banknote,
     ArrowLeft,
     ArrowUpRight,
     Calendar,
@@ -40,6 +41,7 @@ import {
     XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buildReglementCode } from "@/lib/reglementCode";
 
 type BlItem = {
     id?: number;
@@ -72,6 +74,8 @@ type BonLivraison = {
     point_de_vente_nom?: string | null;
     sous_societe_nom?: string | null;
     items?: BlItem[];
+    /** Dernier règlement client lié (commande ou facture), enrichi par l’API détail */
+    reglement_lie?: { id: number; date_reglement?: string; numero_recu?: number | null } | null;
 };
 
 function formatDesignationWithReference(
@@ -501,6 +505,31 @@ export default function BonLivraisonDetails() {
                         ) : (
                             <p className="text-[10px] text-muted-foreground italic mt-2">Aucune facture liée</p>
                         )}
+                        {bl.reglement_lie?.id ? (
+                            <button
+                                type="button"
+                                className="w-full flex items-center justify-between gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-sky-50 text-sky-800 hover:bg-sky-100 border border-sky-100 transition-colors dark:bg-sky-950/40 dark:text-sky-200 dark:border-sky-900"
+                                onClick={() =>
+                                    navigate(`/dashboard/reglements/details/client/${bl.reglement_lie!.id}`)
+                                }
+                            >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                    <Banknote className="h-3 w-3 shrink-0" />
+                                    <span className="truncate text-left">
+                                        Règlement{" "}
+                                        {buildReglementCode(
+                                            "client",
+                                            bl.reglement_lie.id,
+                                            bl.reglement_lie.date_reglement,
+                                            bl.reglement_lie.numero_recu ?? null,
+                                            bl.sous_societe_nom ?? null,
+                                            bl.numero_facture || bl.numero_commande || null
+                                        )}
+                                    </span>
+                                </div>
+                                <ArrowUpRight className="h-3 w-3 shrink-0" />
+                            </button>
+                        ) : null}
                     </CardContent>
                 </Card>
             </div>

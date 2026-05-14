@@ -111,6 +111,8 @@ interface Commande {
     sous_societe_nom?: string | null;
     bon_livraison_id?: number | null;
     numero_bon_livraison_linked?: string | null;
+    /** Marge HT (lignes produit : Σ montant_ht − qté × prix d'achat) */
+    marge_ht?: number | string | null;
 }
 
 interface Devis {
@@ -120,6 +122,12 @@ interface Devis {
     client_nom: string;
     items?: any[];
     reduction?: number;
+}
+
+function formatListeMargeHt(value: unknown): string {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    return `${n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
 }
 
 /** Filtres statut étendus : réglé / remboursement / avoir (hors statuts métier stockés en base). */
@@ -1656,6 +1664,7 @@ function Commandes() {
                                     <TableHead className="w-[220px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Client / Point de vente</TableHead>
                                     <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Date</TableHead>
                                     <TableHead className="w-[130px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Montant</TableHead>
+                                    <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Marge (HT)</TableHead>
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Réduction</TableHead>
                                     <TableHead className="w-[150px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Utilisateur</TableHead>
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Statut règlement</TableHead>
@@ -1667,20 +1676,12 @@ function Commandes() {
                                 {isLoading ? (
                                     Array.from({ length: 5 }).map((_, i) => (
                                         <TableRow key={i} className="animate-pulse border-b border-border">
-                                            <TableCell className="pl-6"><div className="h-4 w-24 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-32 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell className="pr-6"><div className="h-8 w-16 bg-muted rounded ml-auto" /></TableCell>
+                                            <TableCell colSpan={11} className="h-12 bg-muted/20" />
                                         </TableRow>
                                     ))
                                 ) : filteredCommandes.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={9} className="text-center py-20 text-muted-foreground">
+                                        <TableCell colSpan={11} className="text-center py-20 text-muted-foreground">
                                             Aucune commande trouvée
                                         </TableCell>
                                     </TableRow>
@@ -1800,6 +1801,9 @@ function Commandes() {
                                                     maximumFractionDigits: 2,
                                                 })}{" "}
                                                 DH
+                                            </TableCell>
+                                            <TableCell className="font-bold text-right text-sm text-emerald-800 dark:text-emerald-300 tabular-nums">
+                                                {formatListeMargeHt(commande.marge_ht)}
                                             </TableCell>
                                             <TableCell className="text-center">
                                                 {Number(commande.reduction) > 0 ? (
@@ -2049,11 +2053,32 @@ function Commandes() {
                                         <TableCell colSpan={3} className="px-6 py-4 font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider text-xs">
                                             Total Complet (Filtré)
                                         </TableCell>
-                                        <TableCell className="px-4 py-4 font-black text-indigo-700 dark:text-indigo-300 text-base">
-                                     {commandes.reduce((acc, c) => acc + (Number(c.total_regle) || 0), 0).toLocaleString()} DH
-
+                                        <TableCell className="px-4 py-4 font-black text-indigo-700 dark:text-indigo-300 text-base text-right">
+                                            {filteredCommandes
+                                                .reduce(
+                                                    (acc, c) =>
+                                                        acc +
+                                                        (Number(c.montant_ttc) ||
+                                                            (Number(c.montant_ht) + Number(c.montant_tva)) ||
+                                                            0),
+                                                    0
+                                                )
+                                                .toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{" "}
+                                            DH
                                         </TableCell>
-                                        <TableCell colSpan={5} />
+                                        <TableCell className="px-4 py-4 font-bold text-emerald-800 dark:text-emerald-300 text-sm tabular-nums text-right">
+                                            {filteredCommandes
+                                                .reduce((acc, c) => acc + (Number(c.marge_ht) || 0), 0)
+                                                .toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{" "}
+                                            DH
+                                        </TableCell>
+                                        <TableCell colSpan={6} />
                                     </TableRow>
                                 )}
                             </TableBody>

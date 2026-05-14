@@ -266,7 +266,25 @@ exports.getBonLivraisonById = async (req, res) => {
             [id]
         );
 
-        res.json({ ...row, items });
+        let reglement_lie = null;
+        const commandeId = row.commande_id != null ? Number(row.commande_id) : null;
+        const factureId = row.facture_id != null ? Number(row.facture_id) : null;
+        if (Number.isFinite(commandeId) && commandeId > 0) {
+            const [regRows] = await db.query(
+                `SELECT rc.id, rc.date_reglement, rc.numero_recu
+                 FROM reglements_clients rc
+                 WHERE rc.commande_id = ?
+                    OR (? IS NOT NULL AND rc.facture_id = ?)
+                 ORDER BY rc.date_reglement DESC, rc.id DESC
+                 LIMIT 1`,
+                [commandeId, factureId, factureId]
+            );
+            if (Array.isArray(regRows) && regRows.length > 0) {
+                reglement_lie = regRows[0];
+            }
+        }
+
+        res.json({ ...row, items, reglement_lie });
     } catch (error) {
         console.error("Error fetching bon de livraison by id:", error);
         res.status(500).json({ message: "Server error" });

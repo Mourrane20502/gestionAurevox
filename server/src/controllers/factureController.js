@@ -1139,7 +1139,20 @@ exports.getAllFactures = async (req, res) => {
                     ),
                     0
                 ) AS reste_a_payer,
-                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = f.commande_id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id
+                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = f.commande_id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
+                (
+                    SELECT COALESCE(SUM(
+                        CASE
+                            WHEN p.prix_de_vente IS NOT NULL AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0 THEN
+                                COALESCE(fi.quantite, 0) * (CAST(p.prix_de_vente AS DECIMAL(14,4)) - COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
+                            ELSE
+                                COALESCE(fi.montant_ht, 0) - (COALESCE(fi.quantite, 0) * COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
+                        END
+                    ), 0)
+                    FROM facture_items fi
+                    INNER JOIN products p ON fi.produit_id = p.id
+                    WHERE fi.facture_id = f.id
+                ) AS marge_ht
             FROM factures f
             LEFT JOIN clients cl ON f.client_id = cl.id
             LEFT JOIN users u ON f.user_id = u.id

@@ -128,7 +128,7 @@ const sidebarItems: SidebarItem[] = [
             { name: "Règlements Fournisseurs", href: "/dashboard/fournisseurs/reglements", icon: Truck, permission: 'fournisseurs_view', section: "Finance classique" },
             { name: "Bilan", href: "/dashboard/bilan", icon: FileText, permission: 'bilan_view' },
             { name: "TVA (ventes)", href: "/dashboard/tva", icon: Percent, permission: ['bilan_view', 'factures_view'], section: "Finance classique" },
-            { name: "Marge produits", href: "/dashboard/marge", icon: TrendingUp, permission: ['bilan_view', 'products_view'], section: "Finance classique" },
+            { name: "Marge", href: "/dashboard/marge", icon: TrendingUp, permission: ['bilan_view', 'products_view', 'commandes_view', 'factures_view'], section: "Finance classique" },
             { name: "Chiffre d'affaire", href: "/dashboard/ca", icon: CircleDollarSign, permission: 'admin_only' },
         ]
     },

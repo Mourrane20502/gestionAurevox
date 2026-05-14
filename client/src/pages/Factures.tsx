@@ -171,8 +171,16 @@ interface Facture {
     reste_a_payer?: number;
     sous_societe_nom?: string | null;
     bon_livraison_id?: number | null;
+    /** Marge HT (lignes produit) */
+    marge_ht?: number | string | null;
 }
 type SousSocieteOption = { id: number; nom_sous_societe: string };
+
+function formatListeMargeHt(value: unknown): string {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    return `${n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
+}
 
 /** Aligné sur la liste commandes : réglée si encaissement complet, statut paiement, ou facture liée déjà payée. */
 function isCommandeRegleePourFacturation(cmdData: any, facturesList: any[]): boolean {
@@ -1613,6 +1621,7 @@ function Factures() {
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Date</TableHead>
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Échéance</TableHead>
                                     <TableHead className="w-[130px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Montant</TableHead>
+                                    <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Marge (HT)</TableHead>
                                     <TableHead className="w-[100px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Réduction</TableHead>
                                     <TableHead className="w-[90px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Avoir</TableHead>
                                     <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Statut</TableHead>
@@ -1624,19 +1633,12 @@ function Factures() {
                                 {isLoading ? (
                                     Array.from({ length: 5 }).map((_, i) => (
                                         <TableRow key={i} className="animate-pulse border-b border-border">
-                                            <TableCell className="pl-6"><div className="h-4 w-24 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-32 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell><div className="h-4 w-20 bg-muted rounded" /></TableCell>
-                                            <TableCell className="pr-6"><div className="h-8 w-16 bg-muted rounded ml-auto" /></TableCell>
+                                            <TableCell colSpan={11} className="h-12 bg-muted/20" />
                                         </TableRow>
                                     ))
                                 ) : filteredFactures.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="text-center py-20 text-muted-foreground">
+                                        <TableCell colSpan={11} className="text-center py-20 text-muted-foreground">
                                             Aucune facture enregistrée
                                         </TableCell>
                                     </TableRow>
@@ -1744,6 +1746,9 @@ function Factures() {
                                                     maximumFractionDigits: 2,
                                                 })}{" "}
                                                 DH
+                                            </TableCell>
+                                            <TableCell className="font-bold text-right text-sm text-emerald-800 dark:text-emerald-300 tabular-nums">
+                                                {formatListeMargeHt(facture.marge_ht)}
                                             </TableCell>
                                             <TableCell className="text-center">
                                                 {Number(facture.reduction) > 0 ? (
@@ -1921,6 +1926,15 @@ function Factures() {
                                         </TableCell>
                                         <TableCell className="px-4 py-4 font-black text-indigo-700 dark:text-indigo-300 text-base">
                                             {filteredFactures.reduce((acc, f) => acc + ((Number(f.montant_ttc) ?? (Number(f.montant_ht) + Number(f.montant_tva))) || 0), 0).toLocaleString()} DH
+                                        </TableCell>
+                                        <TableCell className="px-4 py-4 font-bold text-emerald-800 dark:text-emerald-300 text-sm tabular-nums text-right">
+                                            {filteredFactures
+                                                .reduce((acc, f) => acc + (Number(f.marge_ht) || 0), 0)
+                                                .toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{" "}
+                                            DH
                                         </TableCell>
                                         <TableCell colSpan={5} />
                                     </TableRow>

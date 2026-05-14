@@ -39,7 +39,7 @@ const routeTitles: Record<string, string> = {
     "/dashboard/caisse": "Caisse",
     "/dashboard/bilan": "Bilan Financier",
     "/dashboard/tva": "TVA — ventes",
-    "/dashboard/marge": "Marge — produits",
+    "/dashboard/marge": "Marge",
     "/dashboard/approvals": "Approbations",
     "/dashboard/promotions": "Promotions",
     "/dashboard/email-marketing": "Email Marketing",

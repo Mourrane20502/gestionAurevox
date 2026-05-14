@@ -1,6 +1,26 @@
 const db = require("../config/db").promise();
 
 /**
+ * Logo du gestionnaire « courant » pour favicon / branding (même ordre que la liste produits : dernier id).
+ * Accessible à tout utilisateur authentifié (sans permission gestionnaires_view).
+ */
+exports.getBrandingLogo = async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            "SELECT logo FROM gestionnaire ORDER BY id DESC LIMIT 1"
+        );
+        const logo = rows?.[0]?.logo != null ? String(rows[0].logo).trim() : "";
+        if (!logo) {
+            return res.json({ logo: null });
+        }
+        return res.json({ logo });
+    } catch (error) {
+        console.error("Error fetching gestionnaire branding logo:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+/**
  * Get all gestionnaires
  */
 exports.getAllGestionnaires = async (req, res) => {

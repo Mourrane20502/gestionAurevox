@@ -754,7 +754,25 @@ exports.getReglementClientById = async (req, res) => {
                 ) AS sous_societe_nom,
                 b.nom_banque AS banque_nom,
                 CONCAT(u.prenom, ' ', u.nom) AS created_by_nom,
-                CONCAT(u2.prenom, ' ', u2.nom) AS approved_by_nom
+                CONCAT(u2.prenom, ' ', u2.nom) AS approved_by_nom,
+                (
+                    SELECT bl.id
+                    FROM bon_de_livraison bl
+                    WHERE bl.commande_id = COALESCE(r.commande_id, f.commande_id)
+                      AND COALESCE(r.commande_id, f.commande_id) IS NOT NULL
+                      AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+                    ORDER BY bl.id DESC
+                    LIMIT 1
+                ) AS bon_livraison_id,
+                (
+                    SELECT COALESCE(bl.numero_bon_livraison, bl.numero_bl)
+                    FROM bon_de_livraison bl
+                    WHERE bl.commande_id = COALESCE(r.commande_id, f.commande_id)
+                      AND COALESCE(r.commande_id, f.commande_id) IS NOT NULL
+                      AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule'))
+                    ORDER BY bl.id DESC
+                    LIMIT 1
+                ) AS bon_livraison_numero
             FROM reglements_clients r
             LEFT JOIN clients c ON r.client_id = c.id
             LEFT JOIN factures f ON r.facture_id = f.id

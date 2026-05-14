@@ -102,6 +102,8 @@ interface Devis {
     reduction?: number;
     total_reduction?: number;
     montant_ttc?: number;
+    /** Marge HT estimée (lignes avec produit : Σ montant_ht − quantité × prix d'achat) */
+    marge_ht?: number | string | null;
     point_de_vente_nom?: string;
     sous_societe_nom?: string | null;
     bon_livraison_id?: number | null;
@@ -144,6 +146,13 @@ const getDevisFinalTTC = (devis: Devis): number => {
     // Do not apply `devis.reduction` again, otherwise totals are discounted twice.
     return toNum(devis.montant_ttc) || (toNum(devis.montant_ht) + toNum(devis.montant_tva));
 };
+
+/** Marge bénéficiaire HT (backend) : vente HT lignes produit − coût d'achat (prix catalogue × qté). */
+function formatListeMargeHt(value: unknown): string {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    return `${n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`;
+}
 
 function Devis() {
     const { id } = useParams<{ id: string }>();
@@ -1207,6 +1216,7 @@ function Devis() {
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Numéro</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Client</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">Montant</TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">Marge (HT)</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Réduction</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Date</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Statut</TableHead>
@@ -1218,12 +1228,12 @@ function Devis() {
                                 {isLoading ? (
                                     Array.from({ length: 5 }).map((_, i) => (
                                         <TableRow key={i} className="animate-pulse border-b border-border">
-                                            <TableCell colSpan={6} className="h-14 bg-muted/20" />
+                                            <TableCell colSpan={10} className="h-14 bg-muted/20" />
                                         </TableRow>
                                     ))
                                 ) : filteredDevis.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="text-center py-20">
+                                        <TableCell colSpan={10} className="text-center py-20">
                                             <FileText className="h-12 w-12 text-muted mx-auto mb-3" />
                                             <p className="text-muted-foreground font-medium">Aucun devis trouvé</p>
                                         </TableCell>
@@ -1335,6 +1345,9 @@ function Devis() {
                                                 })()}{" "}
                                                 DH
                                             </TableCell>
+                                            <TableCell className="font-bold text-right text-sm text-emerald-800 dark:text-emerald-300 tabular-nums">
+                                                {formatListeMargeHt(d.marge_ht)}
+                                            </TableCell>
                                             <TableCell className="font-semibold text-center">
                                                 {(() => {
                                                     const redSource = getDevisReductionPct(d);
@@ -1429,6 +1442,15 @@ function Devis() {
                                         <TableCell className="px-4 py-4 font-black text-indigo-700 dark:text-indigo-300 text-base">
                                             {filteredDevis
                                                 .reduce((acc, d) => acc + getDevisFinalTTC(d), 0)
+                                                .toLocaleString("fr-FR", {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2
+                                                })}{" "}
+                                            DH
+                                        </TableCell>
+                                        <TableCell className="px-4 py-4 font-bold text-emerald-800 dark:text-emerald-300 text-sm tabular-nums text-right">
+                                            {filteredDevis
+                                                .reduce((acc, d) => acc + toNum(d.marge_ht), 0)
                                                 .toLocaleString("fr-FR", {
                                                     minimumFractionDigits: 2,
                                                     maximumFractionDigits: 2

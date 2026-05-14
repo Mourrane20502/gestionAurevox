@@ -327,7 +327,20 @@ exports.getAllDevis = async (req, res) => {
                     ORDER BY bl.id DESC
                     LIMIT 1
                 ) AS bon_livraison_id,
-                COALESCE(d.reduction, 0) AS reduction
+                COALESCE(d.reduction, 0) AS reduction,
+                (
+                    SELECT COALESCE(SUM(
+                        CASE
+                            WHEN p.prix_de_vente IS NOT NULL AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0 THEN
+                                COALESCE(di.quantite, 0) * (CAST(p.prix_de_vente AS DECIMAL(14,4)) - COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
+                            ELSE
+                                COALESCE(di.montant_ht, 0) - (COALESCE(di.quantite, 0) * COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
+                        END
+                    ), 0)
+                    FROM devis_items di
+                    INNER JOIN products p ON di.produit_id = p.id
+                    WHERE di.devis_id = d.id
+                ) AS marge_ht
             FROM devis d
             LEFT JOIN clients c ON d.client_id = c.id
             LEFT JOIN users u ON d.user_id = u.id

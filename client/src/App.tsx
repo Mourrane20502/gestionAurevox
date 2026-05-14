@@ -73,6 +73,7 @@ import Recus from "@/pages/Recus";
 import EmailMarketing from "@/pages/EmailMarketing";
 import NotificationManager from "./components/common/NotificationManager";
 import PageTitle from "./components/common/PageTitle";
+import GestionnaireFaviconSync from "./components/layout/GestionnaireFaviconSync";
 
 export default function App() {
   const roleLower = (localStorage.getItem("role") || "").toLowerCase();
@@ -80,6 +81,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <GestionnaireFaviconSync />
       <PageTitle />
       <NotificationManager />
       <Routes>

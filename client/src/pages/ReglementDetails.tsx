@@ -34,6 +34,8 @@ type ReglementDetailsData = {
     numero_commande?: string | null;
     facture_id?: number | null;
     commande_id?: number | null;
+    bon_livraison_id?: number | null;
+    bon_livraison_numero?: string | null;
     facture_gros_id?: number | null;
     commande_gros_id?: number | null;
     achat_designation?: string | null;
@@ -913,6 +915,17 @@ export default function ReglementDetails() {
                                                 {data.numero_commande}
                                             </Button>
                                         )}
+                                        {normalizedType === "client" && data.bon_livraison_id ? (
+                                            <Button
+                                                variant="outline"
+                                                className="w-full justify-start"
+                                                onClick={() => navigate(`/dashboard/bons-livraison/${data.bon_livraison_id}`)}
+                                            >
+                                                <Truck className="h-4 w-4 mr-2" />
+                                                {data.bon_livraison_numero?.trim() ||
+                                                    `Bon de livraison #${data.bon_livraison_id}`}
+                                            </Button>
+                                        ) : null}
                                         {hasDocumentPdf ? (
                                             <Button
                                                 type="button"

@@ -65,7 +65,6 @@ function exportClientSituationToXls(client: Client, products: ClientProduct[]) {
         "Produit",
         "Catégorie",
         "Prix unitaire",
-        "Grammage",
         "Qté achetée",
         "Total",
         "Dernier document",
@@ -89,7 +88,6 @@ function exportClientSituationToXls(client: Client, products: ClientProduct[]) {
             p.product_name,
             p.category_name || "",
             toNum(p.current_price).toFixed(2),
-            toNum(p.grammage) > 0 ? toNum(p.grammage).toFixed(2) : "",
             String(toNum(p.total_quantity)),
             toNum(p.total_spent).toFixed(2),
             docLabel,
@@ -716,9 +714,6 @@ export default function ClientSituation() {
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3">
                                             Prix unitaire
                                         </TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3">
-                                            Grammage
-                                        </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-center">
                                             Qté achetée
                                         </TableHead>
@@ -748,9 +743,6 @@ export default function ClientSituation() {
                                                 </TableCell>
                                                 <TableCell>
                                                     <div className="h-4 bg-muted rounded w-16" />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="h-4 bg-muted rounded w-14" />
                                                 </TableCell>
                                                 <TableCell>
                                                     <div className="h-4 bg-muted rounded w-10 mx-auto" />
@@ -862,13 +854,6 @@ export default function ClientSituation() {
                                                 <TableCell>
                                                     <span className="font-semibold text-foreground text-sm">
                                                         {toNum(product.current_price).toFixed(2)} DH
-                                                    </span>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <span className="text-sm text-muted-foreground">
-                                                        {toNum(product.grammage) > 0
-                                                            ? `${toNum(product.grammage).toFixed(2)} g`
-                                                            : "—"}
                                                     </span>
                                                 </TableCell>
                                                 <TableCell className="text-center">

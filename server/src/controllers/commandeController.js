@@ -605,7 +605,20 @@ exports.getAllCommandes = async (req, res) => {
                       )
                 ) AS total_regle_combined,
                 (SELECT f3.montant_ttc FROM factures f3 WHERE f3.commande_id = c.id LIMIT 1) AS facture_montant_ttc,
-                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id
+                (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
+                (
+                    SELECT COALESCE(SUM(
+                        CASE
+                            WHEN p.prix_de_vente IS NOT NULL AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0 THEN
+                                COALESCE(ci.quantite, 0) * (CAST(p.prix_de_vente AS DECIMAL(14,4)) - COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
+                            ELSE
+                                COALESCE(ci.montant_ht, 0) - (COALESCE(ci.quantite, 0) * COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
+                        END
+                    ), 0)
+                    FROM commande_items ci
+                    INNER JOIN products p ON ci.produit_id = p.id
+                    WHERE ci.commande_id = c.id
+                ) AS marge_ht
             FROM commandes c
             LEFT JOIN clients cl ON c.client_id = cl.id
             LEFT JOIN users u ON c.user_id = u.id
