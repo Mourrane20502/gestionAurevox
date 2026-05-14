@@ -1134,7 +1134,7 @@ function Factures() {
     });
 
     const exportToXLS = () => {
-        const headers = ["N° Facture", "Client", "Date", "Échéance", "Montant HT", "Montant TVA", "Montant", "Statut", "Mode Paiement"];
+        const headers = ["N° Facture", "Client", "Date", "Échéance", "Montant", "Montant TVA", "Montant", "Statut", "Mode Paiement"];
         const rows = filteredFactures.map(f => [
             f.numero_facture,
             f.client_nom,
@@ -2323,7 +2323,7 @@ function Factures() {
                                 <div className="bg-muted/50 rounded-2xl p-6 border border-border flex flex-col md:flex-row gap-8 justify-between items-center bg-card/50">
                                     <div className="flex gap-10 text-center md:text-left">
                                         <div>
-                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant HT</p>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant</p>
                                             <p className="text-xl font-bold text-foreground">{currentTotalHT.toLocaleString()} DH</p>
                                         </div>
                                         {/* Global Reduction Removed */}

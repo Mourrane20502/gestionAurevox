@@ -573,7 +573,7 @@ export default function BonLivraisonDetails() {
                                         Remise
                                     </TableHead>
                                     <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">
-                                        Total HT
+                                        Total
                                     </TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -660,7 +660,7 @@ export default function BonLivraisonDetails() {
                         <div className="space-y-3">
                             <div className="flex justify-between items-center group text-sm">
                                 <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">
-                                    TOTAL HT
+                                    TOTAL
                                 </span>
                                 <span className="font-bold text-foreground">
                                     {Number(bl.montant_ht || 0).toLocaleString("fr-FR")} DH

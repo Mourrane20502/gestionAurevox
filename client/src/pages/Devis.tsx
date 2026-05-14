@@ -722,7 +722,7 @@ function Devis() {
     });
 
     const exportToXLS = () => {
-        const headers = ["N° Devis", "Client", "Date", "Montant HT", "Montant TVA", "Total TTC", "Status"];
+        const headers = ["N° Devis", "Client", "Date", "Montant", "Montant TVA", "Total TTC", "Status"];
         const rows = filteredDevis.map(d => [
             d.numero_devis,
             d.client_nom,
@@ -1805,7 +1805,7 @@ function Devis() {
                                 <div className="bg-muted/50 rounded-2xl p-6 border border-border flex flex-col md:flex-row gap-8 justify-between items-center bg-card/50">
                                     <div className="flex gap-10">
                                         <div className="text-center">
-                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant HT</p>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant</p>
                                             <p className="text-xl font-bold text-foreground">{(Number(formData.montant_ht) || 0).toLocaleString('fr-FR')} DH</p>
                                         </div>
                                         {/* Global Reduction Removed from Summary */}

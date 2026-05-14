@@ -111,7 +111,6 @@ interface Commande {
     sous_societe_nom?: string | null;
     bon_livraison_id?: number | null;
     numero_bon_livraison_linked?: string | null;
-    /** Marge HT (lignes produit : Σ montant_ht − qté × prix d'achat) */
     marge_ht?: number | string | null;
 }
 
@@ -986,7 +985,7 @@ function Commandes() {
     }, [paymentModes, commandes]);
 
     const exportToXLS = () => {
-        const headers = ["N° Commande", "Client", "Date", "Montant HT", "Montant TVA", "Total TTC", "Status"];
+        const headers = ["N° Commande", "Client", "Date", "Montant", "Montant TVA", "Total TTC", "Status"];
         const rows = filteredCommandes.map(c => [
             c.numero_commande,
             c.client_nom,
@@ -2473,7 +2472,7 @@ function Commandes() {
                                 <div className="bg-muted/50 rounded-2xl p-6 border border-border flex flex-col md:flex-row gap-8 justify-between items-center bg-card/50">
                                     <div className="flex gap-10 text-center md:text-left">
                                         <div>
-                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant HT</p>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant</p>
                                             <p className="text-xl font-bold text-foreground">{totalHTTotal.toLocaleString()} DH</p>
                                         </div>
                                         {/* Global Reduction Removed */}

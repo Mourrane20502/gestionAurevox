@@ -349,10 +349,10 @@ export const generateAvoirPdf = async (avoir: AvoirPdfData) => {
 
     doc.text("Désignation", colX.designation, startTableY + 5);
     doc.text("Qté", colX.quantite, startTableY + 5, { align: "right" });
-    doc.text("PU HT", colX.prixUnitaire, startTableY + 5, { align: "right" });
+    doc.text("PU", colX.prixUnitaire, startTableY + 5, { align: "right" });
     doc.text("Reduction", colX.reduction, startTableY + 5, { align: "right" });
     doc.text("TVA %", colX.tva, startTableY + 5, { align: "right" });
-    doc.text("Total HT", colX.total, startTableY + 5, { align: "right" });
+    doc.text("Total", colX.total, startTableY + 5, { align: "right" });
 
     currentY = startTableY + 10;
 
@@ -452,7 +452,7 @@ export const generateAvoirPdf = async (avoir: AvoirPdfData) => {
     };
 
     line(
-        "Montant HT :",
+        "Montant :",
         `${computedHT.toLocaleString("fr-FR", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,

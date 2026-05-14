@@ -268,7 +268,7 @@ export default function FactureGrosDetailsPage() {
             const facHt = Number(doc.montant_ht || 0);
             const facTva = Number(doc.montant_tva || 0);
             const facTtc = Number(doc.montant_ttc || 0);
-            if (Math.abs(refHt - facHt) > epsilon) messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs facture ${formatDh(facHt)}).`);
+            if (Math.abs(refHt - facHt) > epsilon) messages.push(`${label}: écart montant (${formatDh(refHt)} vs facture ${formatDh(facHt)}).`);
             if (Math.abs(refTva - facTva) > epsilon) messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs facture ${formatDh(facTva)}).`);
             if (Math.abs(refTtc - facTtc) > epsilon) messages.push(`${label}: écart montant (${formatDh(refTtc)} vs facture ${formatDh(facTtc)}).`);
 

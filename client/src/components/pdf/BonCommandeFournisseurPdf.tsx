@@ -160,7 +160,7 @@ export const generateBonCommandeFournisseurPdf = async (bon: BonCommandeFourniss
     doc.setTextColor(60, 60, 60);
     doc.text("Désignation", colX.designation, startTableY + 5);
     doc.text("Qté", colX.quantite, startTableY + 5, { align: "right" });
-    doc.text("P.U. HT", colX.prixUnitaire, startTableY + 5, { align: "right" });
+    doc.text("P.U.", colX.prixUnitaire, startTableY + 5, { align: "right" });
     doc.text("TVA %", colX.tva, startTableY + 5, { align: "right" });
     doc.text("Total", colX.total, startTableY + 5, { align: "right" });
 

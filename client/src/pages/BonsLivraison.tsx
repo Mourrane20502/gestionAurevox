@@ -1087,7 +1087,7 @@ export default function BonsLivraison() {
                                                 <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/40 bg-gradient-to-br from-indigo-50/80 to-card dark:from-indigo-950/20 px-5 py-4 flex flex-wrap gap-8 items-end">
                                                     <div>
                                                         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                            Montant HT
+                                                            Montant
                                                         </span>
                                                         <p className="text-xl font-bold tabular-nums mt-0.5">{fmtMoney(commandeDetails.montant_ht)} DH</p>
                                                     </div>
@@ -1146,7 +1146,7 @@ export default function BonsLivraison() {
                                                                         Rem. %
                                                                     </TableHead>
                                                                     <TableHead className="text-[10px] font-bold uppercase text-muted-foreground py-3 text-right pr-4">
-                                                                        HT
+                                                                    Montant
                                                                     </TableHead>
                                                                 </TableRow>
                                                             </TableHeader>

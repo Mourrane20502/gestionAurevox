@@ -457,7 +457,6 @@ export const drawSingleReceipt = (
         );
     }
 
-    // Tableau PHOTO / DÉSIGNATION / QTÉ / POIDS / MONTANT HT — toutes les lignes + vignettes, pagination auto
     const pageH = doc.internal.pageSize.getHeight();
     const marginX = 18;
     const marginRight = 18;

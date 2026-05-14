@@ -306,7 +306,7 @@ export default function DevisGrosDetailsPage() {
             const devisHt = Number(doc.montant_ht || 0);
             const devisTva = Number(doc.montant_tva || 0);
             const devisTtc = Number(doc.montant_ttc || 0);
-            if (Math.abs(refHt - devisHt) > epsilon) messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs devis ${formatDh(devisHt)}).`);
+            if (Math.abs(refHt - devisHt) > epsilon) messages.push(`${label}: écart montant (${formatDh(refHt)} vs devis ${formatDh(devisHt)}).`);
             if (Math.abs(refTva - devisTva) > epsilon) messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs devis ${formatDh(devisTva)}).`);
             if (Math.abs(refTtc - devisTtc) > epsilon) messages.push(`${label}: écart montant (${formatDh(refTtc)} vs devis ${formatDh(devisTtc)}).`);
 

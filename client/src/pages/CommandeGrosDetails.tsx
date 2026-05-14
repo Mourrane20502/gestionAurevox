@@ -284,7 +284,7 @@ export default function CommandeGrosDetailsPage() {
             const cmdHt = Number(doc.montant_ht || 0);
             const cmdTva = Number(doc.montant_tva || 0);
             const cmdTtc = Number(doc.montant_ttc || 0);
-            if (Math.abs(refHt - cmdHt) > epsilon) messages.push(`${label}: écart montant HT (${formatDh(refHt)} vs commande ${formatDh(cmdHt)}).`);
+            if (Math.abs(refHt - cmdHt) > epsilon) messages.push(`${label}: écart montant (${formatDh(refHt)} vs commande ${formatDh(cmdHt)}).`);
             if (Math.abs(refTva - cmdTva) > epsilon) messages.push(`${label}: écart montant TVA (${formatDh(refTva)} vs commande ${formatDh(cmdTva)}).`);
             if (Math.abs(refTtc - cmdTtc) > epsilon) messages.push(`${label}: écart montant (${formatDh(refTtc)} vs commande ${formatDh(cmdTtc)}).`);
 
