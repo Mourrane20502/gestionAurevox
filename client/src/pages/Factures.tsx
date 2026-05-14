@@ -1621,7 +1621,7 @@ function Factures() {
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Date</TableHead>
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Échéance</TableHead>
                                     <TableHead className="w-[130px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Montant</TableHead>
-                                    <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Marge (HT)</TableHead>
+                                    <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Marge</TableHead>
                                     <TableHead className="w-[100px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Réduction</TableHead>
                                     <TableHead className="w-[90px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Avoir</TableHead>
                                     <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Statut</TableHead>

@@ -1216,7 +1216,7 @@ function Devis() {
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Numéro</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Client</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">Montant</TableHead>
-                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">Marge (HT)</TableHead>
+                                    <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">Marge</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Réduction</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Date</TableHead>
                                     <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Statut</TableHead>

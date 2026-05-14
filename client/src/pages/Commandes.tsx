@@ -1664,7 +1664,7 @@ function Commandes() {
                                     <TableHead className="w-[220px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Client / Point de vente</TableHead>
                                     <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Date</TableHead>
                                     <TableHead className="w-[130px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Montant</TableHead>
-                                    <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Marge (HT)</TableHead>
+                                    <TableHead className="w-[120px] text-xs font-bold text-muted-foreground uppercase py-4 text-right whitespace-nowrap">Marge</TableHead>
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Réduction</TableHead>
                                     <TableHead className="w-[150px] text-xs font-bold text-muted-foreground uppercase py-4 whitespace-nowrap">Utilisateur</TableHead>
                                     <TableHead className="w-[110px] text-xs font-bold text-muted-foreground uppercase py-4 text-center whitespace-nowrap">Statut règlement</TableHead>
