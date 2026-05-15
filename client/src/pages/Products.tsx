@@ -1049,17 +1049,20 @@ export default function Products() {
     const canDeleteProducts = Boolean(productActions.canDelete);
 
     // ── Export Functions ──────────────────────────────────────────
+    const formatPrixDeVenteExport = (p: Product) =>
+        p.prix_de_vente != null &&
+        String(p.prix_de_vente).trim() !== "" &&
+        !Number.isNaN(Number(p.prix_de_vente))
+            ? `${Number(p.prix_de_vente).toFixed(2)} DH`
+            : "—";
+
     const getExportData = () => filteredProducts.map((p) => ({
         "Nom": p.nom,
         "Référence": p.reference || "—",
         "Catégorie": p.category_name || "—",
         "Type": getProductTypeDisplayLabel(p) || "—",
-        "Prix (DH)": formatProductPrice(p),
-        "Prix de vente (DH)":
-            p.prix_de_vente != null && String(p.prix_de_vente).trim() !== ""
-                ? Number(p.prix_de_vente).toLocaleString("fr-FR", { maximumFractionDigits: 2 })
-                : "—",
-        "Grammage (g)": p.grammage ? Number(p.grammage).toFixed(2) : "—",
+        "Prix d'achat (DH)": formatProductPrice(p),
+        "Prix de vente (DH)": formatPrixDeVenteExport(p),
         "Stock": p.stock,
         "Point de vente": p.point_de_vente_name || "—",
         "Fournisseur": p.fournisseur_nom || "—",
@@ -1152,7 +1155,7 @@ export default function Products() {
                 p.reference || "—",
                 p.category_name || "—",
                 formatProductPrice(p),
-                p.grammage ? `${Number(p.grammage).toFixed(2)} g` : "—",
+                formatPrixDeVenteExport(p),
                 p.stock.toString(),
                 p.point_de_vente_name || "—",
                 p.fournisseur_nom || "—",
@@ -1161,7 +1164,7 @@ export default function Products() {
 
             autoTable(doc, {
                 startY: 48,
-                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix", "Poids", "Stock", "Point de vente", "Fournisseur", "Disponibilité"]],
+                head: [["Photo", "Nom", "Référence", "Catégorie", "Prix d'achat", "Prix de vente", "Stock", "Point de vente", "Fournisseur", "Disponibilité"]],
                 body: tableData,
                 theme: "grid",
                 headStyles: {
@@ -1184,8 +1187,8 @@ export default function Products() {
                 columnStyles: {
                     0: { cellWidth: 20, halign: "center" }, // Photo
                     1: { fontStyle: "bold", cellWidth: 40 }, // Nom
-                    4: { halign: "right" }, // Prix
-                    5: { halign: "right" }, // Grammage
+                    4: { halign: "right" }, // Prix d'achat
+                    5: { halign: "right" }, // Prix de vente
                     6: { halign: "center" }, // Stock
                     9: { halign: "center" }, // Disponibilité
                 },
@@ -1204,7 +1207,7 @@ export default function Products() {
                 },
                 didParseCell: (data: any) => {
                     // Color stock column in red if low
-                    if (data.section === "body" && data.column.index === 6) { // Stock is now index 6
+                    if (data.section === "body" && data.column.index === 6) { // Stock
                         const product = filteredProducts[data.row.index];
                         if (product && product.stock_alert && product.stock <= product.stock_alert) {
                             data.cell.styles.textColor = [220, 38, 38];
@@ -1250,10 +1253,12 @@ export default function Products() {
                 { wch: 30 }, // Nom
                 { wch: 18 }, // Référence
                 { wch: 18 }, // Catégorie
-                { wch: 14 }, // Prix
-                { wch: 14 }, // Grammage
+                { wch: 14 }, // Type
+                { wch: 16 }, // Prix d'achat
+                { wch: 16 }, // Prix de vente
                 { wch: 10 }, // Stock
                 { wch: 20 }, // Point de vente
+                { wch: 18 }, // Fournisseur
                 { wch: 18 }, // Disponibilité
             ];
 

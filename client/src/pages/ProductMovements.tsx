@@ -6,6 +6,43 @@ import { RefreshCcw, History, Package, SlidersHorizontal } from "lucide-react";
 import { Input } from "@/components/common/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/common/ui/select";
 
+const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+    create: "Création produit",
+    update: "Modification produit",
+    delete: "Suppression produit",
+    devis_creation: "Devis — ligne ajoutée",
+    devis_sortie: "Devis — sortie stock",
+    facture_creation: "Facture — ligne ajoutée",
+    facture_sortie: "Facture — ligne retirée",
+    commande_creation: "Commande — ligne ajoutée",
+    commande_sortie: "Commande — sortie stock",
+    avoir_retour: "Avoir — retour stock",
+    avoir_sortie: "Avoir — annulation retour",
+    bon_livraison_creation: "BL — ligne ajoutée",
+    bon_livraison_sortie: "BL — livraison / clôture",
+};
+
+const KNOWN_MOVEMENT_TYPES = [
+    "devis_creation",
+    "devis_sortie",
+    "facture_creation",
+    "facture_sortie",
+    "commande_creation",
+    "commande_sortie",
+    "avoir_retour",
+    "avoir_sortie",
+    "bon_livraison_creation",
+    "bon_livraison_sortie",
+    "create",
+    "update",
+    "delete",
+];
+
+function formatMovementType(type: string): string {
+    const key = String(type || "").trim();
+    return MOVEMENT_TYPE_LABELS[key] || key || "—";
+}
+
 interface Movement {
     id: number;
     produit_nom: string | null;
@@ -60,10 +97,10 @@ export default function ProductMovements() {
         fetchMovements();
     }, []);
 
-    const movementTypes = useMemo(
-        () => Array.from(new Set(movements.map((m) => String(m.type || "").trim()).filter(Boolean))),
-        [movements]
-    );
+    const movementTypes = useMemo(() => {
+        const fromData = movements.map((m) => String(m.type || "").trim()).filter(Boolean);
+        return Array.from(new Set([...KNOWN_MOVEMENT_TYPES, ...fromData]));
+    }, [movements]);
     const filteredMovements = useMemo(() => {
         const q = search.trim().toLowerCase();
         return movements.filter((m) => {
@@ -164,7 +201,7 @@ export default function ProductMovements() {
                                         <SelectItem value="all">Tous les types</SelectItem>
                                         {movementTypes.map((type) => (
                                             <SelectItem key={type} value={type}>
-                                                {type}
+                                                {formatMovementType(type)}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
@@ -223,8 +260,8 @@ export default function ProductMovements() {
                                                         )}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell className="text-xs uppercase font-semibold text-muted-foreground">
-                                                    {m.type}
+                                                <TableCell className="text-xs font-semibold text-muted-foreground">
+                                                    {formatMovementType(m.type)}
                                                 </TableCell>
                                                 <TableCell className="text-right text-sm">{m.quantity_before ?? "-"}</TableCell>
                                                 <TableCell className="text-right text-sm">{m.quantity_after ?? "-"}</TableCell>
@@ -248,6 +285,7 @@ export default function ProductMovements() {
                                                                     {m.reference_type === "commande" && "Commande "}
                                                                     {m.reference_type === "facture" && "Facture "}
                                                                     {m.reference_type === "avoir" && "Avoir "}
+                                                                    {m.reference_type === "bon_livraison" && "BL "}
                                                                     {m.reference_numero}
                                                                 </span>
                                                             )}
@@ -258,6 +296,7 @@ export default function ProductMovements() {
                                                             {m.reference_type === "commande" && "Commande "}
                                                             {m.reference_type === "facture" && "Facture "}
                                                             {m.reference_type === "avoir" && "Avoir "}
+                                                            {m.reference_type === "bon_livraison" && "BL "}
                                                             <span className="font-medium text-foreground">{m.reference_numero}</span>
                                                         </span>
                                                     ) : "-"}

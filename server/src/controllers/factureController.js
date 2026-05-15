@@ -2,7 +2,7 @@ const db = require("../config/db").promise();
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
 const { canApprove } = require("../utils/approvalSettings");
-const { logProductMovement } = require("../utils/productMovementLogger");
+const { logFactureCreation, logFactureSortie } = require("../utils/documentStockMovementHelpers");
 const fs = require("fs");
 const path = require("path");
 const MAX_ESPECE_FACTURE_TTC = 20000;
@@ -692,6 +692,12 @@ exports.createFacture = async (req, res) => {
                             montant_ht,
                         ]
                     );
+                    await logFactureCreation(connection, {
+                        produitId: item.produit_id,
+                        factureId,
+                        numeroFacture: finalFactureNumero,
+                        userId: req.user.id,
+                    });
                 }
 
                 const finalMontantTtcRaw = montantHtTotal + montantTvaTotal;
@@ -989,6 +995,12 @@ exports.createFacture = async (req, res) => {
                 item.reduction || 0,
                 montant_ht
             ]);
+            await logFactureCreation(connection, {
+                produitId: item.produit_id,
+                factureId,
+                numeroFacture: final_facture_numero,
+                userId: req.user.id,
+            });
         }
 
         const finalHT = montant_ht_total;
@@ -1523,6 +1535,12 @@ exports.updateFacture = async (req, res) => {
                     item.reduction || 0,
                     (Number(item.quantite) * Number(item.prix_unitaire)) * (1 - (Number(item.reduction) || 0) / 100)
                 ]);
+                await logFactureCreation(connection, {
+                    produitId: item.produit_id,
+                    factureId: Number(id),
+                    numeroFacture: numero_facture,
+                    userId: req.user.id,
+                });
             }
         }
 
@@ -1552,7 +1570,7 @@ exports.deleteFacture = async (req, res) => {
         await connection.beginTransaction();
 
         // Check ownership/existence
-        let checkSql = "SELECT user_id FROM factures WHERE id = ?";
+        let checkSql = "SELECT user_id, numero_facture FROM factures WHERE id = ?";
         const [rows] = await connection.execute(checkSql, [id]);
         if (rows.length === 0) {
             await connection.rollback();
@@ -1561,6 +1579,20 @@ exports.deleteFacture = async (req, res) => {
         if (req.user.role !== 'admin' && rows[0].user_id !== req.user.id) {
             await connection.rollback();
             return res.status(403).json({ message: "Unauthorized" });
+        }
+
+        const numeroFacture = rows[0].numero_facture;
+        const [factureItems] = await connection.execute(
+            "SELECT produit_id FROM facture_items WHERE facture_id = ?",
+            [id]
+        );
+        for (const item of factureItems) {
+            await logFactureSortie(connection, {
+                produitId: item.produit_id,
+                factureId: Number(id),
+                numeroFacture,
+                userId: req.user.id,
+            });
         }
 
         // 1. Delete items first
