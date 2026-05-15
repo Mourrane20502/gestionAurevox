@@ -112,6 +112,16 @@ function formatProductPrice(product: Product): string {
         : `${prix.toFixed(2)} DH`;
 }
 
+function formatPriceAsInteger(
+    value: number | string | null | undefined,
+    options?: { suffix?: string }
+): string {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    const suffix = options?.suffix ?? " DH";
+    return `${Math.round(n).toLocaleString("fr-FR")}${suffix}`;
+}
+
 /** Colonne « Type » : libellé `product_types.name` si renseigné, sinon or/silver depuis `pricing_metal`. */
 function getProductTypeDisplayLabel(product: Product): string | null {
     const name = String(product.product_type_name ?? "").trim();
@@ -2682,10 +2692,12 @@ export default function Products() {
                                     {(() => {
                                         const vpGro = isNatureGros(viewingProduct);
                                         return [
-                                            { label: "Nature", value: vpGro ? "Gros" : "Détail" },
                                             {
                                                 label: "Prix",
-                                                value: formatProductPrice(viewingProduct),
+                                                value: formatPriceAsInteger(
+                                                    viewingProduct.prix,
+                                                    vpGro ? { suffix: " DH/g" } : undefined
+                                                ),
                                             },
                                             ...(viewingProduct.prix_de_vente != null &&
                                             String(viewingProduct.prix_de_vente).trim() !== "" &&
@@ -2693,11 +2705,14 @@ export default function Products() {
                                                 ? [
                                                       {
                                                           label: "Prix de vente",
-                                                          value: `${Number(viewingProduct.prix_de_vente).toFixed(2)} DH`,
+                                                          value: formatPriceAsInteger(viewingProduct.prix_de_vente),
                                                       },
                                                   ]
                                                 : []),
-                                            { label: "Grammage", value: viewingProduct.grammage ? `${Number(viewingProduct.grammage).toFixed(2)} g` : "—" },
+                                            {
+                                                label: "Type",
+                                                value: getProductTypeDisplayLabel(viewingProduct) || "—",
+                                            },
                                             ...(vpGro
                                                 ? []
                                                 : [
@@ -2710,10 +2725,6 @@ export default function Products() {
                                             ...(vpGro
                                                 ? []
                                                 : [{ label: "Catégorie", value: viewingProduct.category_name || "—" }]),
-                                            {
-                                                label: "Type",
-                                                value: getProductTypeDisplayLabel(viewingProduct) || "—",
-                                            },
                                             ...(vpGro
                                                 ? []
                                                 : [{ label: "Point de vente", value: viewingProduct.point_de_vente_name || "—" }]),
