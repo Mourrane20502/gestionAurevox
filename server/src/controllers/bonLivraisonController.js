@@ -272,7 +272,11 @@ exports.getBonLivraisonById = async (req, res) => {
         if (!row) return res.status(404).json({ message: "Bon de livraison introuvable" });
 
         const [items] = await db.query(
-            `SELECT * FROM bon_de_livraison_items WHERE bon_livraison_id = ? ORDER BY id ASC`,
+            `SELECT bi.*, p.photo, p.reference
+             FROM bon_de_livraison_items bi
+             LEFT JOIN products p ON p.id = bi.produit_id
+             WHERE bi.bon_livraison_id = ?
+             ORDER BY bi.id ASC`,
             [id]
         );
 
