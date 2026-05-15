@@ -53,16 +53,11 @@ interface CommandeItem {
 
 function formatDesignationWithReference(
     designation?: string | null,
-    reference?: string | null,
-    grammage?: number | string | null
+    reference?: string | null
 ): string {
     const label = String(designation || "").trim() || "—";
     const ref = String(reference || "").trim();
-    const g = Number(grammage);
-    const gTxt = Number.isFinite(g) && g > 0 ? `${g.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} g` : "";
-    if (ref && gTxt) return `${label} (${ref} - ${gTxt})`;
     if (ref) return `${label} (${ref})`;
-    if (gTxt) return `${label} (${gTxt})`;
     return label;
 }
 
@@ -796,8 +791,7 @@ export default function CommandeDetailsPage() {
                                                 <span className="font-bold text-slate-800 dark:text-slate-200">
                                                     {formatDesignationWithReference(
                                                         item.designation,
-                                                        item.reference || item.produit_reference || item.product_reference || null,
-                                                        (item as any).grammage
+                                                        item.reference || item.produit_reference || item.product_reference || null
                                                     )}
                                                 </span>
                                             </div>
