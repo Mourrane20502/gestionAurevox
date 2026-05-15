@@ -2693,11 +2693,8 @@ export default function Products() {
                                         const vpGro = isNatureGros(viewingProduct);
                                         return [
                                             {
-                                                label: "Prix",
-                                                value: formatPriceAsInteger(
-                                                    viewingProduct.prix,
-                                                    vpGro ? { suffix: " DH/g" } : undefined
-                                                ),
+                                                label: "Prix d'achat",
+                                                value: formatPriceAsInteger(viewingProduct.prix),
                                             },
                                             ...(viewingProduct.prix_de_vente != null &&
                                             String(viewingProduct.prix_de_vente).trim() !== "" &&
@@ -2710,21 +2707,36 @@ export default function Products() {
                                                   ]
                                                 : []),
                                             {
+                                                label: "Marge",
+                                                value: (() => {
+                                                    const m = getProductMargeValue(viewingProduct);
+                                                    return m != null ? formatPriceAsInteger(m) : "—";
+                                                })(),
+                                            },
+                                            {
+                                                label: "Fournisseur",
+                                                value: viewingProduct.fournisseur_nom?.trim() || "—",
+                                            },
+                                            {
                                                 label: "Type",
                                                 value: getProductTypeDisplayLabel(viewingProduct) || "—",
+                                            },
+                                            {
+                                                label: "Stock",
+                                                value: String(viewingProduct.stock ?? 0),
+                                            },
+                                            {
+                                                label: "Catégorie",
+                                                value: viewingProduct.category_name || "—",
                                             },
                                             ...(vpGro
                                                 ? []
                                                 : [
-                                                      { label: "Stock", value: viewingProduct.stock.toString() },
                                                       {
                                                           label: "Alerte stock",
                                                           value: viewingProduct.stock_alert?.toString() || "—",
                                                       },
                                                   ]),
-                                            ...(vpGro
-                                                ? []
-                                                : [{ label: "Catégorie", value: viewingProduct.category_name || "—" }]),
                                             ...(vpGro
                                                 ? []
                                                 : [{ label: "Point de vente", value: viewingProduct.point_de_vente_name || "—" }]),
