@@ -1693,8 +1693,9 @@ export default function Reglements() {
                                                                         onClick={async () => {
                                                                             try {
                                                                                 const designation = "";
-                                                                                const poids = "";
                                                                                 let prixTotal = 0;
+                                                                                let montantHt = 0;
+                                                                                let montantTva = 0;
                                                                                 let resteAPayer = 0;
                                                                                 const docType = r.facture_id ? "factures" : "commandes";
                                                                                 const docId = r.facture_id || r.commande_id;
@@ -1702,19 +1703,18 @@ export default function Reglements() {
                                                                                     fetch(`/api/${docType}/${docId}`, { headers: { Authorization: `Bearer ${token}` } }),
                                                                                     fetch(`/api/reglements-clients/situation?${r.facture_id ? "factureId=" + r.facture_id : "commandeId=" + r.commande_id}`, { headers: { Authorization: `Bearer ${token}` } })
                                                                                 ]);
-                                                                                let recuItems: { designation: string; type_or_silver?: string; quantite?: number; poids?: string; montant_ht?: number; image_url?: string }[] = [];
+                                                                                let recuItems: { designation: string; product_type_name?: string; type_or_silver?: string; quantite?: number; montant_ht?: number; image_url?: string }[] = [];
                                                                                 if (docRes.ok) {
                                                                                     const docData = await docRes.json();
                                                                                     prixTotal = Number(docData.montant_ttc) || 0;
+                                                                                    montantHt = Number(docData.montant_ht) || 0;
+                                                                                    montantTva = Number(docData.montant_tva) || 0;
                                                                                     if (docData.items && docData.items.length > 0) {
                                                                                         recuItems = docData.items.map((it: any) => ({
                                                                                             designation: it.designation || "—",
+                                                                                            product_type_name: it.product_type_name || undefined,
                                                                                             type_or_silver: metalTypeLabelFromProductTypeName(it.product_type_name) ?? undefined,
                                                                                             quantite: Number(it.quantite) || undefined,
-                                                                                            poids:
-                                                                                                it.grammage != null && it.grammage !== ""
-                                                                                                    ? `${it.grammage} G`
-                                                                                                    : undefined,
                                                                                             montant_ht: Number(it.montant_ht) || 0,
                                                                                             image_url: it.photo
                                                                                                 ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${encodeURIComponent(it.photo)}`
@@ -1741,7 +1741,8 @@ export default function Reglements() {
                                                                                     banque_nom: r.banque_nom || null,
                                                                                     items: recuItems.length > 0 ? recuItems : undefined,
                                                                                     designation: recuItems.length === 0 ? designation : undefined,
-                                                                                    poids: recuItems.length === 0 ? poids : undefined,
+                                                                                    montant_ht: montantHt,
+                                                                                    montant_tva: montantTva,
                                                                                     prix_total: prixTotal,
                                                                                     reste_a_payer: resteAPayer
                                                                                 });

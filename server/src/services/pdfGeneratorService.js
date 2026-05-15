@@ -31,6 +31,150 @@ function resolveUploadPath(filename) {
     return path.join(UPLOADS_DIR, safeName);
 }
 
+const escapeHtml = (value) =>
+    String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+const formatQtyBl = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "0,0";
+    return n.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+};
+
+const generateBonLivraisonHtmlTemplate = (docData, items, pdv, config) => {
+    let statutLabel = config.defaultStatus || "En attente";
+    if (docData[config.statusField]) {
+        statutLabel = String(docData[config.statusField]).replace(/_/g, " ");
+        statutLabel = statutLabel.charAt(0).toUpperCase() + statutLabel.slice(1);
+    }
+
+    let formattedDate = "";
+    if (docData[config.dateField]) {
+        const d = new Date(docData[config.dateField]);
+        formattedDate = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+    }
+
+    const pdvNom = pdv?.nom || "Point de vente";
+    const companyDisplayName = (docData.sous_societe_nom || "").trim() || pdvNom;
+    const pdvEmail = pdv?.email ? `Contact : ${pdv.email}` : "";
+    const pdvTel = pdv?.telephone ? `Tél : ${pdv.telephone}` : "";
+    const logoHtml = pdv?.logoBase64 ? `<img src="${pdv.logoBase64}" style="max-height: 80px;" />` : "";
+
+    const fiscalParts = [];
+    if (pdv?.ice) fiscalParts.push(`ICE : ${pdv.ice}`);
+    if (pdv?.if) fiscalParts.push(`IF : ${pdv.if}`);
+    if (pdv?.patente) fiscalParts.push(`Patente : ${pdv.patente}`);
+    const fiscalText = fiscalParts.length > 0 ? fiscalParts.join(" | ") : "";
+
+    let clientInfoHtml = `<div>${escapeHtml(docData.client_nom || "Client non renseigné")}</div>`;
+    if (docData.client_email) clientInfoHtml += `<div>Email : ${escapeHtml(docData.client_email)}</div>`;
+    if (docData.client_telephone) clientInfoHtml += `<div>Tél : ${escapeHtml(docData.client_telephone)}</div>`;
+    if (docData.client_ice) clientInfoHtml += `<div>ICE : ${escapeHtml(docData.client_ice)}</div>`;
+    if (docData.client_adresse) clientInfoHtml += `<div>Adresse : ${escapeHtml(docData.client_adresse)}</div>`;
+
+    const itemsHtml =
+        items.length > 0
+            ? items
+                  .map(
+                      (item) => `
+            <tr>
+                <td>${escapeHtml(item.reference || "—")}</td>
+                <td>${escapeHtml(item.designation || "—")}</td>
+                <td class="num">${formatQtyBl(item.quantite_commandee)}</td>
+                <td class="num">${formatQtyBl(item.quantite_livree ?? item.quantite)}</td>
+            </tr>`
+                  )
+                  .join("")
+            : `<tr><td colspan="4" class="empty">Aucune ligne article.</td></tr>`;
+
+    const commandeRef = docData.numero_commande
+        ? `<div>Commande : ${escapeHtml(docData.numero_commande)}</div>`
+        : "";
+
+    return `
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page { margin: 16mm; }
+            body { font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #333; line-height: 1.45; margin: 0; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 22px; }
+            .company { text-align: right; font-size: 10px; color: #505050; }
+            .company-name { font-size: 16px; font-weight: bold; color: #1a1a1a; margin-bottom: 4px; }
+            .title-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+            .doc-title { font-size: 22px; font-weight: bold; margin: 0; color: #282828; }
+            .doc-status { font-size: 12px; color: #666; }
+            .details { display: flex; justify-content: space-between; margin-bottom: 20px; gap: 16px; }
+            .block { width: 48%; }
+            .block-title { font-weight: bold; margin-bottom: 6px; color: #282828; }
+            .items-table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
+            .items-table th, .items-table td { border: 1px solid #333; padding: 8px 10px; vertical-align: top; }
+            .items-table th { background: #d9d9d9; font-weight: bold; text-align: center; }
+            .items-table td.num { text-align: right; }
+            .items-table td.empty { text-align: center; color: #888; padding: 16px; }
+            .reception { margin-top: 8px; min-height: 100px; page-break-inside: avoid; }
+            .reception-label { font-weight: bold; margin-bottom: 48px; }
+            .footer { margin-top: 24px; padding-top: 10px; border-top: 1px solid #e0e0e0; font-size: 9px; color: #787878; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div>${logoHtml}</div>
+            <div class="company">
+                <div class="company-name">${escapeHtml(companyDisplayName)}</div>
+                ${pdvEmail ? `<div>${escapeHtml(pdvEmail)}</div>` : ""}
+                ${pdvTel ? `<div>${escapeHtml(pdvTel)}</div>` : ""}
+            </div>
+        </div>
+
+        <div class="title-row">
+            <h1 class="doc-title">${config.title}</h1>
+            <div class="doc-status">Statut : ${escapeHtml(statutLabel)}</div>
+        </div>
+
+        <div class="details">
+            <div class="block">
+                <div class="block-title">Informations ${config.infoTitle}</div>
+                <div>
+                    <div>Numéro : ${escapeHtml(docData[config.numberField])}</div>
+                    ${formattedDate ? `<div>Date : ${formattedDate}</div>` : ""}
+                    ${commandeRef}
+                </div>
+            </div>
+            <div class="block">
+                <div class="block-title">Client</div>
+                <div>${clientInfoHtml}</div>
+            </div>
+        </div>
+
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th style="width:18%;">Référence</th>
+                    <th style="width:46%;">Description</th>
+                    <th style="width:18%;">Quantités commandées</th>
+                    <th style="width:18%;">Quantités livrées</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${itemsHtml}
+            </tbody>
+        </table>
+
+
+
+        <div class="footer">
+            ${escapeHtml(config.footerLeft || "")}${fiscalText ? ` | ${escapeHtml(fiscalText)}` : ""}
+        </div>
+    </body>
+    </html>
+    `;
+};
+
 const generateHtmlTemplate = (docData, items, pdv, config) => {
 
     const formatter = (value) => {
@@ -327,10 +471,7 @@ const generateHtmlTemplate = (docData, items, pdv, config) => {
             </div>
         </div>
 
-        <div class="title-section">
-            <h1 class="doc-title">${config.title}</h1>
-            <div class="doc-status">Statut : ${statutLabel}</div>
-        </div>
+      
 
         <div class="details-section">
             <div class="info-block">
@@ -488,12 +629,7 @@ const generateReglementHtmlTemplate = (regData, pdv) => {
                     <span class="detail-label">Banque :</span>
                     <span>${regData.banque_nom}</span>
                 </div>` : ""}
-                <div class="detail-item">
-                    <span class="detail-label">Statut :</span>
-                    <span style="color: ${regData.statut === 'approuve' ? '#10b981' : '#f59e0b'}">
-                        ${regData.statut === 'approuve' ? 'Approuvé' : 'En attente'}
-                    </span>
-                </div>
+              
             </div>
 
             ${regData.commentaire ? `
@@ -576,7 +712,10 @@ async function loadPdvInfoForServer(point_de_vente_id, fallbackLogo = null) {
 
 async function buildGenericPdf(docData, items = [], config) {
     const pdv = await loadPdvInfoForServer(docData.point_de_vente_id, docData.point_de_vente_logo || null);
-    const htmlContent = generateHtmlTemplate(docData, items, pdv, config);
+    const htmlContent =
+        config.type === "BON_LIVRAISON"
+            ? generateBonLivraisonHtmlTemplate(docData, items, pdv, config)
+            : generateHtmlTemplate(docData, items, pdv, config);
 
     let browser;
     try {

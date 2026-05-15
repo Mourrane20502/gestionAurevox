@@ -71,7 +71,16 @@ interface Product {
     nom: string;
     reference?: string | null;
     prix: number;
+    prix_de_vente?: number | string | null;
     stock: number;
+}
+
+/** PU de vente : prix de vente si renseigné, sinon prix d'achat (repli). */
+function getProductSaleUnitPrice(product: { prix: number; prix_de_vente?: number | string | null }): number {
+    const pv = Number(product.prix_de_vente);
+    if (Number.isFinite(pv) && pv > 0) return pv;
+    const pa = Number(product.prix);
+    return Number.isFinite(pa) ? pa : 0;
 }
 
 interface DevisItem {
@@ -310,14 +319,15 @@ function Devis() {
         if (state?.selectedProduct) {
             cameFromProductSaleRef.current = true;
             const product = state.selectedProduct;
+            const pu = getProductSaleUnitPrice(product);
             const newItem: DevisItem = {
                 produit_id: product.id,
                 designation: product.nom,
-                prix_unitaire: product.prix,
+                prix_unitaire: pu,
                 quantite: 1,
                 tva: 20,
                 reduction: 0,
-                montant_ht: product.prix
+                montant_ht: pu,
             };
             setItems([newItem]);
             calculateTotals([newItem]);
@@ -477,14 +487,15 @@ function Devis() {
             return;
         }
 
+        const pu = getProductSaleUnitPrice(product);
         const newItems = [...items];
         newItems[index] = {
             ...newItems[index],
             produit_id: product.id,
             designation: product.nom,
-            prix_unitaire: product.prix,
+            prix_unitaire: pu,
             reduction: 0,
-            montant_ht: qte * product.prix
+            montant_ht: qte * pu,
         };
         setItems(newItems);
         calculateTotals(newItems, Number(formData.reduction) || 0);
@@ -963,14 +974,15 @@ function Devis() {
         if (state?.selectedProduct) {
             cameFromProductSaleRef.current = true;
             const product = state.selectedProduct;
+            const pu = getProductSaleUnitPrice(product);
             const newItem: DevisItem = {
                 produit_id: product.id,
                 designation: product.nom,
-                prix_unitaire: product.prix,
+                prix_unitaire: pu,
                 quantite: 1,
                 tva: 20,
                 reduction: 0,
-                montant_ht: product.prix
+                montant_ht: pu,
             };
             setItems([newItem]);
             calculateTotals([newItem]);

@@ -13,10 +13,11 @@ interface PdvInfo {
 
 export interface RecuPaiementLigne {
     designation: string;
-    /** Or / Silver (dérivé du type produit), affiché sur le reçu. */
+    /** Libellé type produit (table product_types), prioritaire sur le reçu. */
+    product_type_name?: string | null;
+    /** Or / Silver (repli si product_type_name absent). */
     type_or_silver?: string | null;
     quantite?: number;
-    poids?: string;
     montant_ht?: number;
     /** URL absolue de la photo produit (ex. /uploads/...) */
     image_url?: string | null;
@@ -42,9 +43,12 @@ export interface RecuPaiementData {
     items?: RecuPaiementLigne[];
     /** Champs conservés pour compatibilité : une seule ligne si items non fourni. */
     designation?: string;
-    poids?: string;
     image_url?: string | null;
     image_base64?: string | null;
+    /** Totaux document (commande / facture) */
+    montant_ht?: number;
+    montant_tva?: number;
+    /** Montant TTC du document (alias historique prix_total) */
     prix_total?: number;
     reste_a_payer?: number;
     /** Mode cadeau: masque le nom client (mais garde le total document) */
@@ -57,6 +61,15 @@ const normalizeMoneyForDisplay = (raw: number): number => {
     // Neutralise les micro-arrondis visuels (ex: 19999.98 / 20000.02).
     if (Math.abs(rounded - nearestInt) <= 0.02) return nearestInt;
     return rounded;
+};
+
+/** Type affiché sur le reçu : nom du type produit, sinon Or/Silver. */
+const receiptLineTypeLabel = (ligne: RecuPaiementLigne): string => {
+    const fromProduct = String(ligne.product_type_name || "").trim();
+    if (fromProduct) return fromProduct.slice(0, 18);
+    const metal = ligne.type_or_silver;
+    if (metal === "Or" || metal === "Silver") return metal;
+    return "—";
 };
 
 const formatPrice = (val: number | undefined): string => {
@@ -212,7 +225,6 @@ const drawCompactDuplicateReceiptBlock = (
     const left = 10;
     const right = pageWidth - 10;
     const width = right - left;
-    const bottom = startY + blockHeight;
     const isCadeau = Boolean(data.is_cadeau);
 
     // Dark gold border requested by design (#D3A85A)
@@ -271,7 +283,7 @@ const drawCompactDuplicateReceiptBlock = (
 
     const items = (data.items && data.items.length > 0)
         ? data.items
-        : [{ designation: data.designation || "—", type_or_silver: null, quantite: undefined, poids: data.poids, montant_ht: undefined }];
+        : [{ designation: data.designation || "—", type_or_silver: null, quantite: undefined, montant_ht: undefined }];
     const shown = items;
     const displayedLineAmounts: Array<number | null> = shown.map((it) =>
         it.montant_ht != null ? normalizeMoneyForDisplay(Number(it.montant_ht) || 0) : null
@@ -298,8 +310,7 @@ const drawCompactDuplicateReceiptBlock = (
     const photoH = 11.5;
     const xDes = left + 28;
     const xType = left + 72;
-    const xQte = left + 86;
-    const xPoids = left + 98;
+    const xQte = left + 96;
     const xMontant = right - 6;
 
     doc.setFont("helvetica", "bold");
@@ -308,7 +319,6 @@ const drawCompactDuplicateReceiptBlock = (
     doc.text("DÉSIGNATION", xDes, tableTop);
     doc.text("TYPE", xType, tableTop, { align: "center" });
     doc.text("QTÉ", xQte, tableTop, { align: "center" });
-    if (!isCadeau) doc.text("POIDS", xPoids, tableTop, { align: "center" });
     if (!isCadeau) doc.text("MONTANT", xMontant, tableTop, { align: "right" });
     doc.setDrawColor(211, 168, 90);
     doc.setLineWidth(0.25);
@@ -331,9 +341,8 @@ const drawCompactDuplicateReceiptBlock = (
             photoH
         );
         doc.text(String(it.designation || "—").slice(0, 34), xDes, y);
-        doc.text((it.type_or_silver === "Or" || it.type_or_silver === "Silver") ? it.type_or_silver : "—", xType, y, { align: "center" });
+        doc.text(receiptLineTypeLabel(it), xType, y, { align: "center" });
         doc.text(Number.isFinite(Number(it.quantite)) ? String(Number(it.quantite)) : "—", xQte, y, { align: "center" });
-        if (!isCadeau) doc.text(it.poids ? String(it.poids) : "—", xPoids, y, { align: "center" });
         if (!isCadeau) {
             const displayed = displayedLineAmounts[rowIndex];
             doc.text(displayed != null ? formatPrice(displayed) : "—", xMontant, y, { align: "right" });
@@ -347,15 +356,34 @@ const drawCompactDuplicateReceiptBlock = (
         doc.line(left + 4, recapY - 3, right - 4, recapY - 3);
         doc.setFont("helvetica", "bold");
         doc.setFontSize(7.5);
-        const totalDocument = Number(data.prix_total ?? data.montant ?? 0);
-        doc.text("TOTAL :", left + 6, recapY);
-        doc.text(formatPrice(totalDocument), right - 6, recapY, { align: "right" });
-        doc.text("ACOMPTE :", left + 6, recapY + 4.5);
-        doc.text(formatPrice(data.montant), right - 6, recapY + 4.5, { align: "right" });
-        if (data.reste_a_payer !== undefined) {
-            doc.text("RESTE :", left + 6, recapY + 9);
-            doc.text(formatPrice(data.reste_a_payer), right - 6, recapY + 9, { align: "right" });
+        const totalTtc = normalizeMoneyForDisplay(
+            Number(data.prix_total ?? data.montant ?? 0)
+        );
+        let totalHt = normalizeMoneyForDisplay(Number(data.montant_ht) || 0);
+        let totalTva = normalizeMoneyForDisplay(Number(data.montant_tva) || 0);
+        if (totalHt <= 0 && totalTtc > 0 && totalTva > 0) {
+            totalHt = normalizeMoneyForDisplay(totalTtc - totalTva);
+        } else if (totalHt > 0 && totalTva <= 0 && totalTtc > totalHt) {
+            totalTva = normalizeMoneyForDisplay(totalTtc - totalHt);
+        } else if (totalHt <= 0 && totalTva <= 0 && totalTtc > 0) {
+            const sumLines = normalizeMoneyForDisplay(
+                displayedLineAmounts.reduce((acc: number, v) => acc + (v ?? 0), 0)
+            );
+            if (sumLines > 0 && sumLines < totalTtc) {
+                totalHt = sumLines;
+                totalTva = normalizeMoneyForDisplay(totalTtc - totalHt);
+            }
         }
+
+        let recapLineY = recapY;
+        doc.text("TOTAL HT :", left + 6, recapLineY);
+        doc.text(formatPrice(totalHt), right - 6, recapLineY, { align: "right" });
+        recapLineY += 4.5;
+        doc.text("TVA :", left + 6, recapLineY);
+        doc.text(formatPrice(totalTva), right - 6, recapLineY, { align: "right" });
+        recapLineY += 4.5;
+        doc.text("TOTAL TTC :", left + 6, recapLineY);
+        doc.text(formatPrice(totalTtc), right - 6, recapLineY, { align: "right" });
     }
 
 };
@@ -468,7 +496,6 @@ export const drawSingleReceipt = (
     const typeColX = 88;
     const typeCenterX = typeColX + typeColW / 2;
     const qteX = 108;
-    const poidsX = 126;
 
     const lignes: RecuPaiementLigne[] =
         data.items && data.items.length > 0
@@ -476,7 +503,6 @@ export const drawSingleReceipt = (
             : [
                   {
                       designation: data.designation || "—",
-                      poids: data.poids,
                       montant_ht: undefined,
                       image_base64: data.image_base64 ?? null,
                   },
@@ -494,9 +520,6 @@ export const drawSingleReceipt = (
         doc.text("DÉSIGNATION", descX, y);
         doc.text("TYPE", typeCenterX, y, { align: "center" });
         doc.text("QTÉ", qteX, y, { align: "center" });
-        if (!isCadeau) {
-            doc.text("POIDS", poidsX, y, { align: "center" });
-        }
         doc.text(isCadeau ? "" : "MONTANT", pageWidth - marginRight, y, { align: "right" });
         doc.setDrawColor(170, 170, 170);
         doc.setLineWidth(0.25);
@@ -550,11 +573,7 @@ export const drawSingleReceipt = (
         doc.setFontSize(bodyFontSize);
         doc.setTextColor(40, 40, 40);
         doc.text(designationLines as string[], descX, rowTop + 3.5);
-        const typeLabel =
-            ligne.type_or_silver === "Or" || ligne.type_or_silver === "Silver"
-                ? ligne.type_or_silver
-                : "—";
-        doc.text(typeLabel, typeCenterX, rowTop + 3.5, { align: "center" });
+        doc.text(receiptLineTypeLabel(ligne), typeCenterX, rowTop + 3.5, { align: "center" });
         doc.text(
             Number.isFinite(Number(ligne.quantite)) && Number(ligne.quantite) > 0
                 ? String(Number(ligne.quantite))
@@ -563,11 +582,6 @@ export const drawSingleReceipt = (
             rowTop + 3.5,
             { align: "center" }
         );
-        if (!isCadeau) {
-            doc.text(ligne.poids != null && String(ligne.poids).trim() !== "" ? String(ligne.poids) : "—", poidsX, rowTop + 3.5, {
-                align: "center",
-            });
-        }
         const lignePrixStr = isCadeau
             ? "—"
             : ligne.montant_ht !== undefined && ligne.montant_ht !== null
@@ -589,9 +603,9 @@ export const drawSingleReceipt = (
         currentY += 5;
     }
 
-    // Ligne total document (TTC)
+    // Totaux document HT / TVA / TTC
     if (!isCadeau && data.prix_total !== undefined && data.prix_total !== null) {
-        if (currentY + 14 > getMaxYBeforeBreak()) {
+        if (currentY + 22 > getMaxYBeforeBreak()) {
             doc.addPage();
             currentY = 24 + offsetY;
         }
@@ -599,10 +613,24 @@ export const drawSingleReceipt = (
         doc.setLineWidth(0.2);
         doc.line(marginX, currentY, pageWidth - marginX, currentY);
         currentY += 5;
+        const totalTtc = normalizeMoneyForDisplay(Number(data.prix_total) || 0);
+        let totalHt = normalizeMoneyForDisplay(Number(data.montant_ht) || 0);
+        let totalTva = normalizeMoneyForDisplay(Number(data.montant_tva) || 0);
+        if (totalHt <= 0 && totalTtc > 0 && totalTva > 0) {
+            totalHt = normalizeMoneyForDisplay(totalTtc - totalTva);
+        } else if (totalHt > 0 && totalTva <= 0 && totalTtc > totalHt) {
+            totalTva = normalizeMoneyForDisplay(totalTtc - totalHt);
+        }
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9);
-        doc.text("TOTAL", marginX, currentY);
-        doc.text(formatPrice(data.prix_total), pageWidth - marginRight, currentY, { align: "right" });
+        doc.text("TOTAL HT", marginX, currentY);
+        doc.text(formatPrice(totalHt), pageWidth - marginRight, currentY, { align: "right" });
+        currentY += 6;
+        doc.text("TVA", marginX, currentY);
+        doc.text(formatPrice(totalTva), pageWidth - marginRight, currentY, { align: "right" });
+        currentY += 6;
+        doc.text("TOTAL TTC", marginX, currentY);
+        doc.text(formatPrice(totalTtc), pageWidth - marginRight, currentY, { align: "right" });
         doc.setFont("helvetica", "normal");
         currentY += 8;
     }
@@ -614,26 +642,7 @@ export const drawSingleReceipt = (
         currentY = 24 + offsetY;
     }
 
-    const recapX = marginX;
-    let recapY = currentY;
-
-    if (!isCadeau) {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.5);
-        doc.setTextColor(40, 40, 40);
-        doc.text("ACOMPTE DU JOUR :", recapX, recapY);
-        doc.text(formatPrice(data.montant), pageWidth - marginRight, recapY, { align: "right" });
-
-        if (data.reste_a_payer !== undefined) {
-            recapY += 7.5;
-            doc.setTextColor(180, 0, 0);
-            doc.text("RESTE À PAYER :", recapX, recapY);
-            doc.text(formatPrice(data.reste_a_payer), pageWidth - marginRight, recapY, { align: "right" });
-            doc.setTextColor(40, 40, 40);
-        }
-    }
-
-    const infoY = recapY + 9;
+    const infoY = currentY + 9;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.5);
     doc.text("Mode de paiement :", marginX, infoY);
@@ -670,7 +679,7 @@ export const generateRecuPaiementPdf = async (
                 };
             })
         );
-    } else if (data.designation || data.poids || data.image_url || data.image_base64) {
+    } else if (data.designation || data.image_url || data.image_base64) {
         let b64: string | null = data.image_base64 ?? null;
         let iw: number | undefined;
         let ih: number | undefined;
@@ -685,7 +694,6 @@ export const generateRecuPaiementPdf = async (
         itemsWithImages = [
             {
                 designation: data.designation || "—",
-                poids: data.poids,
                 montant_ht: undefined,
                 image_base64: b64,
                 image_display_w: iw,
@@ -703,7 +711,6 @@ export const generateRecuPaiementPdf = async (
         image_url: undefined,
         image_base64: undefined,
         designation: itemsWithImages.length > 0 ? undefined : data.designation,
-        poids: itemsWithImages.length > 0 ? undefined : data.poids,
     };
 
     const sousSocieteFromNumero = await resolveSousSocieteNameFromNumero(payload.document_numero);

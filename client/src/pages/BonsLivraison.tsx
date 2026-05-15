@@ -50,7 +50,6 @@ import {
     User,
     Clock,
     XCircle,
-    DollarSign,
     MoreVertical,
 } from "lucide-react";
 import {
@@ -78,6 +77,8 @@ type BonLivraisonRow = {
     sous_societe_nom?: string | null;
     statut?: string;
     montant_ttc?: number;
+    quantite_commandee?: number | string | null;
+    quantite_livree?: number | string | null;
 };
 
 type CommandeOption = {
@@ -114,6 +115,12 @@ type CommandeDetailsPreview = {
 
 const fmtMoney = (v: number | string | null | undefined) =>
     Number(v || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const fmtQty = (v: number | string | null | undefined) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "0";
+    return n.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+};
 
 const rawStatut = (s: string | null | undefined) => String(s || "").toLowerCase().trim();
 
@@ -378,7 +385,8 @@ export default function BonsLivraison() {
 
     const reportData = useMemo(
         () => ({
-            totalTTC: filteredRows.reduce((acc, r) => acc + (Number(r.montant_ttc) || 0), 0),
+            totalQtyCommandee: filteredRows.reduce((acc, r) => acc + (Number(r.quantite_commandee) || 0), 0),
+            totalQtyLivree: filteredRows.reduce((acc, r) => acc + (Number(r.quantite_livree) || 0), 0),
             pending: filteredRows.filter((r) => isBlPending(r.statut)).length,
             livree: filteredRows.filter((r) => isLivree(r.statut)).length,
             annule: filteredRows.filter((r) => isAnnule(r.statut)).length,
@@ -428,6 +436,7 @@ export default function BonsLivraison() {
             }
             if (!res.ok) throw new Error(data.message || "Création impossible.");
             toast.success("Bon de livraison créé");
+            window.dispatchEvent(new CustomEvent("approvals-updated"));
             await loadBons();
             setActiveTab("list");
             if (data.id) navigate(`/dashboard/bons-livraison/${data.id}`);
@@ -439,13 +448,25 @@ export default function BonsLivraison() {
     };
 
     const exportToXLS = () => {
-        const headers = ["N° BL", "Date", "Commande", "Client", "Montant TTC", "Statut", "Utilisateur", "PDV", "Société"];
+        const headers = [
+            "N° BL",
+            "Date",
+            "Commande",
+            "Client",
+            "Qté commandée",
+            "Qté livrée",
+            "Statut",
+            "Utilisateur",
+            "PDV",
+            "Société",
+        ];
         const rows = filteredRows.map((r) => [
             r.numero_bon_livraison ?? "",
             r.date_bon_livraison ? String(r.date_bon_livraison).slice(0, 10) : "",
             r.numero_commande ?? "",
             r.client_nom ?? "",
-            Number(r.montant_ttc) || 0,
+            Number(r.quantite_commandee) || 0,
+            Number(r.quantite_livree) || 0,
             blStatusLabel(r.statut),
             r.user_nom ?? "",
             r.point_de_vente_nom ?? "",
@@ -466,13 +487,14 @@ export default function BonsLivraison() {
         doc.text("Bons de livraison", 14, 16);
         autoTable(doc, {
             startY: 22,
-            head: [["N° BL", "Date", "Commande", "Client", "TTC", "Statut", "Utilisateur", "PDV"]],
+            head: [["N° BL", "Date", "Commande", "Client", "Qté cmd.", "Qté livrée", "Statut", "Utilisateur", "PDV"]],
             body: filteredRows.map((r) => [
                 r.numero_bon_livraison || "—",
                 r.date_bon_livraison ? String(r.date_bon_livraison).slice(0, 10) : "—",
                 r.numero_commande || "—",
                 r.client_nom || "—",
-                `${fmtMoney(r.montant_ttc)} DH`,
+                fmtQty(r.quantite_commandee),
+                fmtQty(r.quantite_livree),
                 blStatusLabel(r.statut),
                 r.user_nom || "—",
                 r.point_de_vente_nom || "—",
@@ -508,9 +530,9 @@ export default function BonsLivraison() {
                         bg: "bg-indigo-50 dark:bg-indigo-900/20",
                     },
                     {
-                        label: "Montant TTC (filtré)",
-                        val: `${reportData.totalTTC.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH`,
-                        icon: DollarSign,
+                        label: "Qté livrée (filtré)",
+                        val: fmtQty(reportData.totalQtyLivree),
+                        icon: Package,
                         color: "text-emerald-600 dark:text-emerald-400",
                         bg: "bg-emerald-50 dark:bg-emerald-900/20",
                     },
@@ -720,7 +742,12 @@ export default function BonsLivraison() {
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 px-6">N° BL</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Commande</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Client</TableHead>
-                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-right">TTC</TableHead>
+                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">
+                                            Qté commandée
+                                        </TableHead>
+                                        <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">
+                                            Qté livrée
+                                        </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Date</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4 text-center">Statut</TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-4">Utilisateur</TableHead>
@@ -731,12 +758,12 @@ export default function BonsLivraison() {
                                     {loading ? (
                                         Array.from({ length: 5 }).map((_, i) => (
                                             <TableRow key={i} className="animate-pulse border-b border-border">
-                                                <TableCell colSpan={8} className="h-14 bg-muted/20" />
+                                                <TableCell colSpan={9} className="h-14 bg-muted/20" />
                                             </TableRow>
                                         ))
                                     ) : filteredRows.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={8} className="text-center py-20">
+                                            <TableCell colSpan={9} className="text-center py-20">
                                                 <Package className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
                                                 <p className="text-muted-foreground font-medium">Aucun bon de livraison</p>
                                             </TableCell>
@@ -787,8 +814,11 @@ export default function BonsLivraison() {
                                                     </p>
                                                 </TableCell>
                                                 <TableCell>{r.client_nom || "—"}</TableCell>
-                                                <TableCell className="text-right font-bold tabular-nums">
-                                                    {fmtMoney(r.montant_ttc)} DH
+                                                <TableCell className="text-center tabular-nums font-medium text-muted-foreground">
+                                                    {fmtQty(r.quantite_commandee)}
+                                                </TableCell>
+                                                <TableCell className="text-center tabular-nums font-bold text-emerald-700 dark:text-emerald-400">
+                                                    {fmtQty(r.quantite_livree)}
                                                 </TableCell>
                                                 <TableCell className="text-center text-muted-foreground">
                                                     {r.date_bon_livraison
@@ -1249,9 +1279,13 @@ export default function BonsLivraison() {
                             <span className="font-bold">{filteredRows.length}</span>
                         </div>
                         <div className="flex justify-between border-b border-border pb-2">
-                            <span className="text-muted-foreground">Montant TTC total</span>
-                            <span className="font-bold tabular-nums">
-                                {reportData.totalTTC.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DH
+                            <span className="text-muted-foreground">Qté commandée (total)</span>
+                            <span className="font-bold tabular-nums">{fmtQty(reportData.totalQtyCommandee)}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-border pb-2">
+                            <span className="text-muted-foreground">Qté livrée (total)</span>
+                            <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                {fmtQty(reportData.totalQtyLivree)}
                             </span>
                         </div>
                         <div className="flex justify-between">

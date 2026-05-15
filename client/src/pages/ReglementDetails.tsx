@@ -7,11 +7,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/common/ui/input";
 import { Label } from "@/components/common/ui/label";
 import { Textarea } from "@/components/common/ui/textarea";
-import { ArrowLeft, Banknote, Check, CheckCircle2, Clock, Eye, FileText, Link as LinkIcon, Mail, RefreshCcw, Send, Upload, User, Truck } from "lucide-react";
+import { ArrowLeft, Banknote, Check, CheckCircle2, Clock, Download, Eye, FileText, Link as LinkIcon, Mail, RefreshCcw, Send, Upload, User, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { buildReglementCode, type ReglementCodeType } from "@/lib/reglementCode";
-import { generateRecuPaiementPdf, type RecuPaiementData } from "@/components/pdf/RecuPaiementPdf";
-import { metalTypeLabelFromProductTypeName } from "@/lib/metalTypeLabel";
+import { buildRecuPaiementDataForReglement } from "@/lib/buildRecuPaiementDataForReglement";
+import { generateRecuPaiementPdf } from "@/components/pdf/RecuPaiementPdf";
 
 type ReglementDetailsData = {
     id: number;
@@ -506,90 +506,10 @@ export default function ReglementDetails() {
             reader.readAsDataURL(blob);
         });
 
-    const buildReceiptDataForClient = async (isCadeau = false): Promise<RecuPaiementData | null> => {
+    const buildReceiptDataForClient = async (isCadeau = false) => {
         if (normalizedType !== "client" && normalizedType !== "client_gros") return null;
-        if (!data) return null;
-        if (!token) return null;
-
-        const isFacture = !!data.numero_facture;
-        const isGros = normalizedType === "client_gros";
-        const docType = isFacture ? (isGros ? "factures-gros" : "factures") : (isGros ? "commandes-gros" : "commandes");
-        const docId = isFacture ? (isGros ? data.facture_gros_id : data.facture_id) : (isGros ? data.commande_gros_id : data.commande_id);
-        const document_numero = isFacture ? data.numero_facture : data.numero_commande;
-
-        if (!docId || !document_numero) return null;
-
-        const designation = "";
-        const poids = "";
-        let prixTotal = 0;
-        let resteAPayer = 0;
-        let recuItems: RecuPaiementData["items"] = [];
-
-        try {
-            const [docRes, sitRes] = await Promise.all([
-                fetch(`/api/${docType}/${docId}`, { headers: { Authorization: `Bearer ${token}` } }),
-                fetch(
-                    `${isGros ? "/api/reglements-clients-gros/situation" : "/api/reglements-clients/situation"}?${
-                        isFacture ? "factureId=" + docId : "commandeId=" + docId
-                    }`,
-                    { headers: { Authorization: `Bearer ${token}` } }
-                ),
-            ]);
-
-            if (docRes.ok) {
-                const docData = await docRes.json();
-                prixTotal = Number(docData.montant_ttc) || 0;
-                if (docData.items && docData.items.length > 0) {
-                    recuItems =
-                        docData.items.map((it: any) => ({
-                            designation: it.designation || "—",
-                            type_or_silver: metalTypeLabelFromProductTypeName(it.product_type_name) ?? undefined,
-                            quantite: Number(it.quantite) || undefined,
-                            poids:
-                                it.grammage != null && it.grammage !== ""
-                                    ? `${it.grammage} G`
-                                    : undefined,
-                            montant_ht: Number(it.montant_ht) || 0,
-                            image_url: it.photo ? `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${encodeURIComponent(it.photo)}` : undefined,
-                        })) || [];
-                }
-            }
-
-            if (sitRes.ok) {
-                const sitData = await sitRes.json();
-                resteAPayer = Number(sitData.reste_a_payer) || 0;
-            }
-        } catch (e) {
-            console.error(e);
-            return null;
-        }
-
-        const initials = (data.client_nom || "CL")
-            .split(" ")
-            .map((n) => n[0])
-            .join("")
-            .toUpperCase();
-        const clientCode =
-            data.client_id != null ? `${initials}${data.client_id}GT` : undefined;
-
-        return {
-            id: data.id,
-            numero_recu: data.numero_recu ?? null,
-            client_nom: data.client_nom || "Client",
-            client_code: clientCode,
-            document_type: isFacture ? "facture" : "commande",
-            document_numero: document_numero,
-            montant: Number(data.montant) || 0,
-            date_reglement: data.date_reglement,
-            mode_paiement: data.mode_paiement,
-            banque_nom: data.banque_nom || null,
-            items: recuItems && recuItems.length > 0 ? recuItems : undefined,
-            designation: recuItems && recuItems.length === 0 ? designation : undefined,
-            poids: recuItems && recuItems.length === 0 ? poids : undefined,
-            prix_total: prixTotal,
-            reste_a_payer: resteAPayer,
-            is_cadeau: isCadeau,
-        };
+        if (!data || !token) return null;
+        return buildRecuPaiementDataForReglement(normalizedType, data, token, { isCadeau });
     };
 
     const generateReceiptBlob = async (isCadeau = false): Promise<Blob | null> => {
@@ -598,6 +518,31 @@ export default function ReglementDetails() {
         const blob = await generateRecuPaiementPdf(receiptData, { output: "blob" });
         if (!blob || !(blob instanceof Blob)) return null;
         return blob;
+    };
+
+    const handleDownloadReceipt = async () => {
+        if (!canPrintAndEmail || !data) return;
+        setIsProcessingPdf(true);
+        try {
+            const receiptData = await buildReceiptDataForClient();
+            if (!receiptData) {
+                toast.error("Impossible de générer le reçu");
+                return;
+            }
+            const safeNumero = String(data.numero_facture || data.numero_commande || data.id).replace(
+                /[^a-zA-Z0-9-_]/g,
+                "_"
+            );
+            await generateRecuPaiementPdf(receiptData, {
+                filename: `Recu_paiement_${safeNumero}_${data.id}.pdf`,
+            });
+            toast.success("Reçu téléchargé");
+        } catch (e) {
+            console.error(e);
+            toast.error("Erreur lors de la génération du reçu");
+        } finally {
+            setIsProcessingPdf(false);
+        }
     };
 
     const handleCopyLink = async () => {
@@ -745,6 +690,16 @@ export default function ReglementDetails() {
                 </div>
                 {(normalizedType === "client" || normalizedType === "client_gros") && data && (
                     <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                            variant="outline"
+                            onClick={handleDownloadReceipt}
+                            disabled={!canPrintAndEmail || isProcessingPdf}
+                            className="gap-2 h-11 px-5 font-bold rounded-xl shadow-sm transition-all active:scale-95"
+                            title={!canPrintAndEmail ? "Téléchargement disponible après approbation" : undefined}
+                        >
+                            <Download className="h-4 w-4" />
+                            Télécharger le reçu
+                        </Button>
                         <Button
                             variant="outline"
                             onClick={handleCopyLink}

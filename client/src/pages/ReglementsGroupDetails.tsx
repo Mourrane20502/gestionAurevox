@@ -4,9 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui
 import { Button } from "@/components/common/ui/button";
 import { Badge } from "@/components/common/ui/badge";
 import { Input } from "@/components/common/ui/input";
-import { ArrowLeft, Eye, FileText, Receipt,  Upload, User } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileText, Receipt, RefreshCcw, Upload, User } from "lucide-react";
 import { toast } from "sonner";
 import { buildReglementCode, type ReglementCodeType } from "@/lib/reglementCode";
+import { buildRecuPaiementDataForReglement } from "@/lib/buildRecuPaiementDataForReglement";
+import { generateRecuPaiementPdf } from "@/components/pdf/RecuPaiementPdf";
 
 type ReglementRow = {
     id: number;
@@ -114,6 +116,31 @@ export default function ReglementsGroupDetails() {
         return `${base}/uploads/${encodeURIComponent(p)}`;
     })();
     const hasPdfForSelected = Boolean(uploadedPdfUrl);
+    const canDownloadReceipt = selected?.statut === "approuve";
+
+    const handleDownloadReceipt = async () => {
+        if (!selected || !token || !canDownloadReceipt) return;
+        setIsProcessingPdf(true);
+        try {
+            const receiptData = await buildRecuPaiementDataForReglement(normalizedType, selected, token);
+            if (!receiptData) {
+                toast.error("Impossible de générer le reçu");
+                return;
+            }
+            const safeNumero = String(
+                selected.numero_facture || selected.numero_commande || selected.id
+            ).replace(/[^a-zA-Z0-9-_]/g, "_");
+            await generateRecuPaiementPdf(receiptData, {
+                filename: `Recu_paiement_${safeNumero}_${selected.id}.pdf`,
+            });
+            toast.success("Reçu téléchargé");
+        } catch (e) {
+            console.error(e);
+            toast.error("Erreur lors de la génération du reçu");
+        } finally {
+            setIsProcessingPdf(false);
+        }
+    };
 
     useEffect(() => {
         const run = async () => {
@@ -211,7 +238,20 @@ export default function ReglementsGroupDetails() {
                         <p className="text-sm text-muted-foreground">Commande: {commandeCode}</p>
                     </div>
                 </div>
-                <div />
+                <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={handleDownloadReceipt}
+                    disabled={!selected || !canDownloadReceipt || isProcessingPdf}
+                    title={!canDownloadReceipt ? "Téléchargement disponible après approbation" : undefined}
+                >
+                    {isProcessingPdf ? (
+                        <RefreshCcw className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Download className="h-4 w-4" />
+                    )}
+                    Télécharger le reçu
+                </Button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -346,6 +386,21 @@ export default function ReglementsGroupDetails() {
                                 ))}
                             </div>
                         )}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-start"
+                            onClick={handleDownloadReceipt}
+                            disabled={!selected || !canDownloadReceipt || isProcessingPdf}
+                            title={!canDownloadReceipt ? "Téléchargement disponible après approbation" : undefined}
+                        >
+                            {isProcessingPdf ? (
+                                <RefreshCcw className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                                <Download className="h-4 w-4 mr-2" />
+                            )}
+                            Télécharger le reçu
+                        </Button>
                         {hasPdfForSelected ? (
                             <Button
                                 type="button"

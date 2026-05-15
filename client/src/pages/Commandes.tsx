@@ -1279,29 +1279,27 @@ function Commandes() {
                         ? String(rawImg)
                         : `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${encodeURIComponent(String(rawImg))}`)
                     : null;
+                const productTypeName =
+                    String(it?.product_type_name || (productMatch as any)?.product_type_name || "").trim() ||
+                    undefined;
                 const typeHint = String(
+                    productTypeName ||
                     it?.type_or_silver ||
-                    it?.type ||
-                    it?.product_type_name ||
                     it?.pricing_metal ||
-                    (productMatch as any)?.type ||
-                    (productMatch as any)?.product_type_name ||
                     (productMatch as any)?.pricing_metal ||
-                    it?.designation ||
-                    (productMatch as any)?.nom ||
                     ""
                 ).toLowerCase();
 
                 return {
                     designation: it?.designation || "—",
+                    product_type_name: productTypeName,
                     type_or_silver:
                         typeHint.includes("silver") || typeHint.includes("argent")
                             ? "Silver"
-                            : (typeHint.includes("or") || typeHint.includes("gold") || /\b(14k|18k|22k|24k)\b/.test(typeHint))
-                                ? "Or"
-                                : "—",
+                            : typeHint.includes("or") || typeHint.includes("gold") || /\b(14k|18k|22k|24k)\b/.test(typeHint)
+                              ? "Or"
+                              : undefined,
                     quantite: Number(it?.quantite) || 0,
-                    poids: (Number(it?.grammage) || 0) > 0 ? `${String(it.grammage)} g` : "—",
                     montant_ht: Number(it?.montant_ht) || 0,
                     image_url: imageUrl,
                 };
@@ -1318,6 +1316,8 @@ function Commandes() {
                     montant: totalRegle,
                     date_reglement: reglements[reglements.length - 1]?.date_reglement || new Date().toISOString(),
                     mode_paiement: "multiple",
+                    montant_ht: Number(fullCommande?.montant_ht) || 0,
+                    montant_tva: Number(fullCommande?.montant_tva) || 0,
                     prix_total: montantCommande,
                     reste_a_payer: reste,
                     items,
