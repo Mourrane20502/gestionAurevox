@@ -32,12 +32,12 @@ const ensureProductMovementsAuditSchema = async () => {
  * Log a product stock movement (optionally linked to devis/commande/facture/avoir).
  * @param {Object} opts
  * @param {number} opts.productId
- * @param {string} opts.type - e.g. "create", "update", "delete", "devis_sortie", "devis_retour", "avoir_sortie", "avoir_retour"
+ * @param {string} opts.type - e.g. "create", "update", "delete", "devis_creation", "devis_sortie", "facture_creation", "facture_sortie", "bon_livraison_creation", "bon_livraison_sortie", "commande_creation", "commande_sortie", "avoir_retour", "avoir_sortie"
  * @param {number|null} opts.quantityBefore
  * @param {number|null} opts.quantityAfter
  * @param {string|null} opts.description
  * @param {number|null} opts.userId
- * @param {string|null} opts.referenceType - "devis" | "commande" | "facture" | "avoir"
+ * @param {string|null} opts.referenceType - "devis" | "commande" | "facture" | "avoir" | "bon_livraison"
  * @param {number|null} opts.referenceId
  * @param {string|null} opts.referenceNumero - e.g. "DEV-001", "AV-002"
  */

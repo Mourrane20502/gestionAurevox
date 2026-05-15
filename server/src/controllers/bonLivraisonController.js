@@ -1,4 +1,8 @@
 const db = require("../config/db").promise();
+const {
+    logBonLivraisonCreation,
+    logBonLivraisonSortie,
+} = require("../utils/documentStockMovementHelpers");
 
 /** Valeurs ENUM / stockées : en_attente, livree, annulee */
 const BL_STATUT = {
@@ -436,6 +440,7 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
         );
 
         const blId = insertBl.insertId;
+        const userId = req.user?.id || commande.user_id || null;
         for (const item of commandeItems) {
             await connection.query(
                 `INSERT INTO bon_de_livraison_items
@@ -452,6 +457,12 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
                     Number(item.montant_ht) || 0,
                 ]
             );
+            await logBonLivraisonCreation(connection, {
+                produitId: item.produit_id,
+                bonLivraisonId: blId,
+                numeroBl: numero,
+                userId,
+            });
         }
 
         await connection.commit();
@@ -470,26 +481,62 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
 };
 
 exports.approveBonLivraison = async (req, res) => {
+    const connection = await db.getConnection();
     try {
         await ensureBonLivraisonSchema();
-        const { id } = req.params;
-        const [result] = await db.query(
-            `UPDATE bon_de_livraison
-             SET statut = ?
+        const blId = Number(req.params.id);
+        if (!Number.isFinite(blId) || blId <= 0) {
+            return res.status(400).json({ message: "ID invalide" });
+        }
+
+        await connection.beginTransaction();
+
+        const [blRows] = await connection.query(
+            `SELECT id, COALESCE(numero_bon_livraison, numero_bl) AS numero_bl
+             FROM bon_de_livraison
              WHERE id = ?
                AND (
                     statut = ?
                     OR LOWER(REPLACE(TRIM(COALESCE(statut, '')), ' ', '_')) IN ('en_attente', 'enattente', 'brouillon')
-               )`,
-            [BL_STATUT.LIVREE, id, BL_STATUT.EN_ATTENTE]
+               )
+             LIMIT 1`,
+            [blId, BL_STATUT.EN_ATTENTE]
         );
-        if (!result?.affectedRows) {
+        if (!Array.isArray(blRows) || blRows.length === 0) {
+            await connection.rollback();
             return res.status(404).json({ message: "Bon de livraison non trouvé ou déjà traité" });
         }
+
+        const numeroBl = blRows[0].numero_bl;
+        const [blItems] = await connection.query(
+            "SELECT produit_id FROM bon_de_livraison_items WHERE bon_livraison_id = ?",
+            [blId]
+        );
+
+        await connection.query(
+            `UPDATE bon_de_livraison SET statut = ? WHERE id = ?`,
+            [BL_STATUT.LIVREE, blId]
+        );
+
+        const userId = req.user?.id || null;
+        for (const item of blItems || []) {
+            await logBonLivraisonSortie(connection, {
+                produitId: item.produit_id,
+                bonLivraisonId: blId,
+                numeroBl,
+                userId,
+                description: "Bon de livraison livré",
+            });
+        }
+
+        await connection.commit();
         res.json({ message: "Bon de livraison validé (livré)" });
     } catch (error) {
+        await connection.rollback().catch(() => {});
         console.error("Error approving bon de livraison:", error);
         res.status(500).json({ message: "Server error" });
+    } finally {
+        connection.release();
     }
 };
 
@@ -544,11 +591,20 @@ exports.updateBonLivraison = async (req, res) => {
 
         await connection.beginTransaction();
 
-        const [existing] = await connection.query("SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1", [blId]);
+        const [existing] = await connection.query(
+            `SELECT id, statut, COALESCE(numero_bon_livraison, numero_bl) AS numero_bl
+             FROM bon_de_livraison WHERE id = ? LIMIT 1`,
+            [blId]
+        );
         if (!Array.isArray(existing) || existing.length === 0) {
             await connection.rollback();
             return res.status(404).json({ message: "Bon de livraison introuvable" });
         }
+
+        const previousStatut = normalizeBonLivraisonStatutForDb(existing[0].statut) || existing[0].statut;
+        const numeroBl = existing[0].numero_bl;
+        const userId = req.user?.id || null;
+        let nextStatut = previousStatut;
 
         const fields = [];
         const values = [];
@@ -587,6 +643,7 @@ exports.updateBonLivraison = async (req, res) => {
             }
             fields.push("statut = ?");
             values.push(canon);
+            nextStatut = canon;
         }
 
         if (montant_ht != null) {
@@ -622,6 +679,28 @@ exports.updateBonLivraison = async (req, res) => {
                         Number(item?.montant_ht) || 0,
                     ]
                 );
+                await logBonLivraisonCreation(connection, {
+                    produitId: item?.produit_id ? Number(item.produit_id) : null,
+                    bonLivraisonId: blId,
+                    numeroBl,
+                    userId,
+                });
+            }
+        }
+
+        if (nextStatut === BL_STATUT.LIVREE && previousStatut !== BL_STATUT.LIVREE) {
+            const [blItems] = await connection.query(
+                "SELECT produit_id FROM bon_de_livraison_items WHERE bon_livraison_id = ?",
+                [blId]
+            );
+            for (const item of blItems || []) {
+                await logBonLivraisonSortie(connection, {
+                    produitId: item.produit_id,
+                    bonLivraisonId: blId,
+                    numeroBl,
+                    userId,
+                    description: "Bon de livraison livré",
+                });
             }
         }
 
@@ -648,10 +727,30 @@ exports.deleteBonLivraison = async (req, res) => {
         const { id } = req.params;
         await connection.beginTransaction();
 
-        const [existing] = await connection.query("SELECT id FROM bon_de_livraison WHERE id = ? LIMIT 1", [id]);
+        const [existing] = await connection.query(
+            `SELECT id, COALESCE(numero_bon_livraison, numero_bl) AS numero_bl
+             FROM bon_de_livraison WHERE id = ? LIMIT 1`,
+            [id]
+        );
         if (!Array.isArray(existing) || existing.length === 0) {
             await connection.rollback();
             return res.status(404).json({ message: "Bon de livraison introuvable" });
+        }
+
+        const numeroBl = existing[0].numero_bl;
+        const [blItems] = await connection.query(
+            "SELECT produit_id FROM bon_de_livraison_items WHERE bon_livraison_id = ?",
+            [id]
+        );
+        const userId = req.user?.id || null;
+        for (const item of blItems || []) {
+            await logBonLivraisonSortie(connection, {
+                produitId: item.produit_id,
+                bonLivraisonId: Number(id),
+                numeroBl,
+                userId,
+                description: "Bon de livraison supprimé",
+            });
         }
 
         await connection.query("DELETE FROM bon_de_livraison_items WHERE bon_livraison_id = ?", [id]);

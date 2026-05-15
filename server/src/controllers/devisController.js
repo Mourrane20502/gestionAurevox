@@ -1,5 +1,5 @@
 const db = require("../config/db").promise();
-const { logProductMovement } = require("../utils/productMovementLogger");
+const { logDevisCreation, logDevisSortie } = require("../utils/documentStockMovementHelpers");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getOffset, getNextNumber } = require("../utils/numberingSettings");
 const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
@@ -186,6 +186,23 @@ exports.createDevis = async (req, res) => {
                 (Number(item.quantite) || 0) * (Number(item.prix_unitaire) || 0) * (1 - (Number(item.reduction) || 0) / 100)
             ]);
             await connection.query(queryItems, [itemsData]);
+
+            for (const item of items) {
+                await logDevisCreation(connection, {
+                    produitId: item.produit_id,
+                    devisId,
+                    numeroDevis: final_numero,
+                    userId: req.user.id,
+                });
+                if (finalStatus === "accepté") {
+                    await logDevisSortie(connection, {
+                        produitId: item.produit_id,
+                        devisId,
+                        numeroDevis: final_numero,
+                        userId: req.user.id,
+                    });
+                }
+            }
         }
 
         await connection.commit();
@@ -529,6 +546,26 @@ exports.updateDevis = async (req, res) => {
                 (Number(item.quantite) || 0) * (Number(item.prix_unitaire) || 0) * (1 - (Number(item.reduction) || 0) / 100)
             ]);
             await connection.query(queryItems, [itemsData]);
+
+            for (const item of items) {
+                await logDevisCreation(connection, {
+                    produitId: item.produit_id,
+                    devisId: Number(id),
+                    numeroDevis: numeroDevis,
+                    userId: req.user.id,
+                });
+            }
+
+            if (newStatus === "accepté" && previousStatus !== "accepté") {
+                for (const item of items) {
+                    await logDevisSortie(connection, {
+                        produitId: item.produit_id,
+                        devisId: Number(id),
+                        numeroDevis: numeroDevis,
+                        userId: req.user.id,
+                    });
+                }
+            }
         }
 
         await connection.commit();
@@ -559,21 +596,46 @@ exports.approveDevis = async (req, res) => {
         return res.status(403).json({ message: "Vous n'avez pas les droits pour valider un devis" });
     }
 
+    const connection = await db.getConnection();
     try {
-        const [rows] = await db.execute("SELECT id, statuts_devis FROM devis WHERE id = ?", [id]);
+        await connection.beginTransaction();
+
+        const [rows] = await connection.execute(
+            "SELECT id, statuts_devis, numero_devis FROM devis WHERE id = ?",
+            [id]
+        );
 
         if (rows.length === 0) {
+            await connection.rollback();
             return res.status(404).json({ message: "Devis introuvable" });
         }
 
         if (rows[0].statuts_devis === "accepté") {
+            await connection.rollback();
             return res.status(400).json({ message: "Ce devis est déjà accepté" });
         }
 
-        await db.execute(
+        const numeroDevis = rows[0].numero_devis;
+        const [items] = await connection.execute(
+            "SELECT produit_id, quantite FROM devis_items WHERE devis_id = ?",
+            [id]
+        );
+
+        for (const item of items) {
+            await logDevisSortie(connection, {
+                produitId: item.produit_id,
+                devisId: Number(id),
+                numeroDevis,
+                userId: req.user.id,
+            });
+        }
+
+        await connection.execute(
             "UPDATE devis SET statuts_devis = 'accepté' WHERE id = ?",
             [id]
         );
+
+        await connection.commit();
 
         // Background PDF/email processes (slow) to make response instant
         (async () => {
@@ -599,8 +661,11 @@ exports.approveDevis = async (req, res) => {
 
         res.status(200).json({ message: "Devis accepté avec succès" });
     } catch (error) {
+        await connection.rollback().catch(() => {});
         console.error("Error approving devis:", error);
         res.status(500).json({ message: "Internal server error" });
+    } finally {
+        connection.release();
     }
 };
 
