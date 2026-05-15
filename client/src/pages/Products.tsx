@@ -2218,11 +2218,6 @@ export default function Products() {
                                             Stock: {product.stock}
                                         </span>
                                     )}
-                                    {product.grammage ? (
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
-                                            {Number(product.grammage).toFixed(2)} g
-                                        </span>
-                                    ) : null}
                                     {!isNatureGros(product) && (
                                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full font-semibold bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">
                                             {formatProductPrice(product)}
@@ -2279,7 +2274,6 @@ export default function Products() {
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix d'achat</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Prix vente</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Marge</TableHead>
-                            <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Poids</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Stock</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Point de vente</TableHead>
                             <TableHead className="text-xs font-semibold text-muted-foreground uppercase tracking-wide py-3">Fournisseur</TableHead>
@@ -2291,7 +2285,7 @@ export default function Products() {
                         {isLoading ? (
                             Array.from({ length: 5 }).map((_, i) => (
                                 <TableRow key={i} className="border-b border-border">
-                                    {Array.from({ length: 12 }).map((_, j) => (
+                                    {Array.from({ length: 11 }).map((_, j) => (
                                         <TableCell key={j}>
                                             <div className="h-4 bg-muted rounded animate-pulse w-24" />
                                         </TableCell>
@@ -2300,7 +2294,7 @@ export default function Products() {
                             ))
                         ) : filteredProducts.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={12} className="text-center py-16">
+                                <TableCell colSpan={11} className="text-center py-16">
                                     <Package className="h-10 w-10 text-muted mx-auto mb-3" />
                                     <p className="text-muted-foreground font-medium">Aucun produit trouvé</p>
                                     <p className="text-muted text-sm mt-1">Essayez un autre terme de recherche</p>
@@ -2410,11 +2404,6 @@ export default function Products() {
                                                 </span>
                                             );
                                         })()}
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className="text-sm text-muted-foreground font-medium">
-                                            {product.grammage ? `${Number(product.grammage).toFixed(2)} g` : "—"}
-                                        </span>
                                     </TableCell>
                                     <TableCell>{getStockBadge(product)}</TableCell>
                                     <TableCell>
