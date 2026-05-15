@@ -1005,36 +1005,20 @@ export default function Products() {
     };
 
     const getStockBadge = (product: Product) => {
-        if (isNatureGros(product)) {
-            const g = Number(product.grammage);
-            const ok = Number.isFinite(g) && g > 0;
-            return (
-                <span
-                    className={cn(
-                        "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold",
-                        ok
-                            ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
-                            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                    )}
-                >
-                    <span className={cn("w-1.5 h-1.5 rounded-full inline-block", ok ? "bg-emerald-500" : "bg-red-500")} />
-                    {ok ? g.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) : "0"}
-                </span>
-            );
-        }
-        const isLow = product.stock_alert && product.stock <= product.stock_alert;
+        const stock = Number(product.stock) || 0;
+        const isLow = product.stock_alert && stock <= product.stock_alert;
         if (isLow) {
             return (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block"></span>
-                    {product.stock}
+                    {stock}
                 </span>
             );
         }
         return (
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-                {product.stock}
+                {stock}
             </span>
         );
     };
