@@ -66,8 +66,15 @@ const canApprove = async (roleName, documentType) => {
 const getAutoApprovalHour = async () => {
     await ensureSettingsTable();
     const [rows] = await db.query("SELECT setting_value FROM general_settings WHERE setting_key = 'auto_approval_hour'");
-    if (rows.length === 0) return null; // Default to null (disabled)
-    return rows[0].setting_value;
+    if (rows.length === 0) return null;
+    const v = String(rows[0].setting_value ?? "").trim();
+    return v || null;
+};
+
+const normalizeRoleForAutoApproval = (role) => {
+    const r = String(role ?? "").trim().toLowerCase();
+    if (r === "commercial") return "user";
+    return r;
 };
 
 const setAutoApprovalHour = async (hour) => {
@@ -110,16 +117,11 @@ const setAutoApprovalEnabled = async (enabled) => {
 };
 
 /**
- * Checks if a document should be auto-approved.
- * Logic: if it's after the configured 'auto_approval_hour' 
- * AND the user has role 'user' (commercial).
+ * Validation automatique après l'heure de clôture (tous les rôles).
  */
 const shouldAutoApprove = async (user) => {
     try {
-        const userRole = (user.role || "").toString().toLowerCase();
-        
-        // Only commercial users (role 'user') are eligible for auto-approval after hours
-        if (userRole !== 'user') return false;
+        const userRole = normalizeRoleForAutoApproval(user?.role);
 
         const featureOn = await getAutoApprovalEnabled();
         if (!featureOn) return false;
@@ -127,24 +129,51 @@ const shouldAutoApprove = async (user) => {
         const closingHourSetting = await getAutoApprovalHour();
         if (!closingHourSetting) return false;
 
-        // closingHourSetting is expected as "HH:mm"
-        const [cHour, cMin] = closingHourSetting.split(':').map(Number);
-        
-        // We use the server's local time. 
-        // If there's a timezone issue, we'll see it in the log below.
+        const parts = closingHourSetting.split(":");
+        const cHour = parseInt(parts[0], 10);
+        const cMin = parseInt(parts[1] ?? "0", 10);
+        if (!Number.isFinite(cHour) || !Number.isFinite(cMin)) return false;
+
         const now = new Date();
         const currentHour = now.getHours();
         const currentMin = now.getMinutes();
 
-        const isAfterHours = currentHour > cHour || (currentHour === cHour && currentMin >= cMin);
-        
-        console.log(`[Auto-Approval Check] Current: ${currentHour}:${currentMin}, Closing: ${cHour}:${cMin}, Role: ${userRole}, Triggered: ${isAfterHours}`);
+        const isAfterHours =
+            currentHour > cHour || (currentHour === cHour && currentMin >= cMin);
+
+        console.log(
+            `[Auto-Approval] now=${currentHour}:${String(currentMin).padStart(2, "0")} closing=${cHour}:${String(cMin).padStart(2, "0")} role=${userRole} enabled=${featureOn} triggered=${isAfterHours}`
+        );
 
         return isAfterHours;
     } catch (err) {
         console.error("Error in shouldAutoApprove:", err);
         return false;
     }
+};
+
+/**
+ * Statut initial à la création selon validation auto / droits d'approbation.
+ */
+const resolveCreationApprovalStatut = async (
+    user,
+    documentType,
+    { pending, approved, requested }
+) => {
+    const featureOn = await getAutoApprovalEnabled();
+    if (!featureOn) {
+        return pending;
+    }
+
+    const autoApprove = await shouldAutoApprove(user);
+    if (autoApprove) return approved;
+
+    const allowedToApprove = await canApprove(user.role, documentType);
+    if (allowedToApprove) return requested ?? approved;
+
+    const role = (user?.role || "").toString().toLowerCase();
+    if (role === "user") return pending;
+    return requested ?? approved;
 };
 
 module.exports = {
@@ -155,5 +184,6 @@ module.exports = {
     setAutoApprovalHour,
     getAutoApprovalEnabled,
     setAutoApprovalEnabled,
-    shouldAutoApprove
+    shouldAutoApprove,
+    resolveCreationApprovalStatut,
 };

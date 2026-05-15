@@ -2,7 +2,7 @@ const db = require("../config/db").promise();
 const { logDevisCreation, logDevisSortie } = require("../utils/documentStockMovementHelpers");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getOffset, getNextNumber } = require("../utils/numberingSettings");
-const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const parseDateOnlySafe = (value) => {
     const raw = String(value || "").trim();
@@ -137,14 +137,11 @@ exports.createDevis = async (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        // For non-admin users, force status to "en attente"
-        // Non-admin/non-responsable users must go through approval unless auto-approval conditions are met
-        const allowedToApprove = await canApprove(req.user.role, 'devis');
-        const autoApprove = await shouldAutoApprove(req.user);
-        const defaultStatus = (req.user.role === 'user' && !autoApprove) ? "en attente" : "accepté";
-        
-        // Force 'accepté' if autoApprove is true
-        const finalStatus = autoApprove ? "accepté" : (allowedToApprove ? (statuts_devis || defaultStatus) : "en attente");
+        const finalStatus = await resolveCreationApprovalStatut(req.user, "devis", {
+            pending: "en attente",
+            approved: "accepté",
+            requested: statuts_devis,
+        });
 
         const [result] = await connection.query(queryDevis, [
             `TEMP-${Date.now()}`,

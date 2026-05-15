@@ -1,7 +1,7 @@
 const db = require("../config/db").promise();
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
-const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const { isGrosProductRow } = require("../utils/grosProduct");
 
@@ -150,9 +150,11 @@ exports.createAvoirGros = async (req, res) => {
             }
         }
 
-        const allowedToApprove = await canApprove(req.user.role, "avoir");
-        const autoApprove = await shouldAutoApprove(req.user);
-        const finalStatut = autoApprove ? "valide" : (allowedToApprove ? (statut || status || "valide") : "en_attente");
+        const finalStatut = await resolveCreationApprovalStatut(req.user, "avoir", {
+            pending: "en_attente",
+            approved: "valide",
+            requested: statut || status,
+        });
 
         const [insertRes] = await connection.execute(
             `INSERT INTO avoirs_gros

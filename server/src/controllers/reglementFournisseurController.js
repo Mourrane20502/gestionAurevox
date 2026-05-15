@@ -1,4 +1,5 @@
 const db = require("../config/db").promise();
+const { resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const getNow = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
@@ -131,6 +132,13 @@ exports.createReglementFournisseur = async (req, res) => {
                 });
             }
 
+            const finalStatut = await resolveCreationApprovalStatut(req.user, "reglements", {
+                pending: "en_attente",
+                approved: "approuve",
+            });
+            const autoApproveReglement = finalStatut === "approuve";
+            const approvedAt = autoApproveReglement ? getNow() : null;
+
             const insertedIds = [];
 
             for (const ligne of lignesToInsert) {
@@ -148,8 +156,8 @@ exports.createReglementFournisseur = async (req, res) => {
                 const [result] = await connection.execute(
                     `
                     INSERT INTO reglements_fournisseurs
-                    (fournisseur_id, achat_id, date_reglement, date_echeance, montant, mode_paiement, banque_id, statut, commentaire, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente', ?, ?)
+                    (fournisseur_id, achat_id, date_reglement, date_echeance, montant, mode_paiement, banque_id, statut, commentaire, created_by, approved_by, approved_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `,
                     [
                         effectiveFournisseurId,
@@ -159,8 +167,11 @@ exports.createReglementFournisseur = async (req, res) => {
                         lMontant,
                         lMode,
                         !lBanqueId || lBanqueId === "none" ? null : lBanqueId,
+                        finalStatut,
                         lComment || null,
                         userId,
+                        autoApproveReglement ? userId : null,
+                        approvedAt,
                     ]
                 );
 

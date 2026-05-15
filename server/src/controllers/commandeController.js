@@ -2,7 +2,7 @@ const db = require("../config/db").promise();
 const { logProductMovement } = require("../utils/productMovementLogger");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
-const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const parseDateOnlySafe = (value) => {
     const raw = String(value || "").trim();
@@ -281,15 +281,11 @@ exports.createCommande = async (req, res) => {
             }
         }
 
-        // 2. Handle statut (Column is 'statut' in DB)
-        const allowedToApprove = await canApprove(req.user.role, 'commande');
-        const autoApprove = await shouldAutoApprove(req.user);
-        
-        // If role is 'user' (Commercial), default to 'en_attente' unless it's after hours
-        const defaultStatut = (req.user.role === 'user' && !autoApprove) ? 'en_attente' : 'validee';
-        
-        // CRITICAL: If autoApprove is true, we FORCE 'validee' even if the frontend sends 'en_attente'
-        const final_statut = autoApprove ? 'validee' : (allowedToApprove ? (statut || status || defaultStatut) : 'en_attente');
+        const final_statut = await resolveCreationApprovalStatut(req.user, "commande", {
+            pending: "en_attente",
+            approved: "validee",
+            requested: statut || status,
+        });
         let final_devis_id = devis_id || null;
 
         const insertCommandeQuery = `

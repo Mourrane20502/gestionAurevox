@@ -1,4 +1,5 @@
 const db = require("../config/db").promise();
+const { shouldAutoApprove } = require("../utils/approvalSettings");
 const {
     logBonLivraisonCreation,
     logBonLivraisonSortie,
@@ -78,6 +79,19 @@ const ensureBonLivraisonSchema = async () => {
     await ensureColumn("bon_de_livraison", "client_id", "client_id INT NULL");
     await ensureColumn("bon_de_livraison", "user_id", "user_id INT NULL");
     await ensureColumn("bon_de_livraison", "statut", "statut VARCHAR(50) DEFAULT 'en_attente'");
+    try {
+        const [statutCol] = await db.query(
+            "SHOW COLUMNS FROM bon_de_livraison WHERE Field = 'statut'"
+        );
+        const colType = String(statutCol[0]?.Type || "").toLowerCase();
+        if (colType.startsWith("enum")) {
+            await db.query(
+                "ALTER TABLE bon_de_livraison MODIFY COLUMN statut VARCHAR(50) DEFAULT 'en_attente'"
+            );
+        }
+    } catch (e) {
+        console.warn("[bonLivraison] statut column normalize:", e?.message || e);
+    }
     await ensureColumn("bon_de_livraison", "montant_ht", "montant_ht DECIMAL(12,2) DEFAULT 0");
     await ensureColumn("bon_de_livraison", "montant_tva", "montant_tva DECIMAL(12,2) DEFAULT 0");
     await ensureColumn("bon_de_livraison", "montant_ttc", "montant_ttc DECIMAL(12,2) DEFAULT 0");
@@ -389,6 +403,8 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
 
         const numero = buildBlNumber();
         const dateBl = new Date().toISOString().slice(0, 10);
+        const autoApproveBl = await shouldAutoApprove(req.user);
+        const blStatutInitial = autoApproveBl ? BL_STATUT.LIVREE : BL_STATUT.EN_ATTENTE;
         const insertColumns = [
             "numero_bon_livraison",
             "date_bon_livraison",
@@ -406,7 +422,7 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
             commande.id,
             commande.client_id,
             req.user?.id || commande.user_id || null,
-            "en_attente",
+            blStatutInitial,
             Number(commande.montant_ht) || 0,
             Number(commande.montant_tva) || 0,
             Number(commande.montant_ttc) || 0,
@@ -463,13 +479,33 @@ exports.createBonLivraisonFromCommande = async (req, res) => {
                 numeroBl: numero,
                 userId,
             });
+            if (autoApproveBl && item.produit_id) {
+                await logBonLivraisonSortie(connection, {
+                    produitId: item.produit_id,
+                    bonLivraisonId: blId,
+                    numeroBl: numero,
+                    userId,
+                    description: "Bon de livraison livré (validation automatique)",
+                });
+            }
+        }
+
+        if (autoApproveBl) {
+            await connection.query(
+                `UPDATE bon_de_livraison SET statut = ? WHERE id = ?`,
+                [BL_STATUT.LIVREE, blId]
+            );
         }
 
         await connection.commit();
         return res.status(201).json({
-            message: "Bon de livraison créé",
+            message: autoApproveBl
+                ? "Bon de livraison créé et validé automatiquement"
+                : "Bon de livraison créé",
             id: blId,
             numero_bon_livraison: numero,
+            statut: blStatutInitial,
+            auto_approved: autoApproveBl,
         });
     } catch (error) {
         await connection.rollback().catch(() => {});

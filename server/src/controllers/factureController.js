@@ -1,7 +1,7 @@
 const db = require("../config/db").promise();
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
-const { canApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 const { logFactureCreation, logFactureSortie } = require("../utils/documentStockMovementHelpers");
 const fs = require("fs");
 const path = require("path");
@@ -434,8 +434,11 @@ exports.createFacture = async (req, res) => {
             }
         }
 
-        // 2. Toute facture créée doit passer par validation Approvals.
-        const final_statut = "en_attente";
+        const final_statut = await resolveCreationApprovalStatut(req.user, "facture", {
+            pending: "en_attente",
+            approved: "non_payee",
+            requested: statut || status,
+        });
 
         // Clean other nullable fields
         let final_commande_id = (commande_id === "" || commande_id === "none" || !commande_id) ? null : commande_id;

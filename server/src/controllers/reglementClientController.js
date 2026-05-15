@@ -1,6 +1,7 @@
 const db = require("../config/db").promise();
 const { getNextNumber } = require("../utils/numberingSettings");
 const { logProductMovement } = require("../utils/productMovementLogger");
+const { resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 const fs = require("fs");
 const path = require("path");
 
@@ -372,9 +373,12 @@ exports.createReglementClient = async (req, res) => {
             commande_id: effectiveCommandeId,
         });
 
-        // IMPORTANT: Un règlement créé via "Payer" ne doit JAMAIS être approuvé automatiquement.
-        // Il doit rester en attente et suivre le workflow normal d'approbation.
-        const final_statut = "en_attente";
+        const final_statut = await resolveCreationApprovalStatut(req.user, "reglements", {
+            pending: "en_attente",
+            approved: "approuve",
+        });
+        const autoApproveReglement = final_statut === "approuve";
+        const approvedAt = autoApproveReglement ? getNow() : null;
 
         const connection = await db.getConnection();
         try {
@@ -488,11 +492,11 @@ exports.createReglementClient = async (req, res) => {
                         lMontant,
                         lMode,
                         !lBanqueId || lBanqueId === "none" ? null : lBanqueId,
-                        final_statut, // Use the determined final_statut
+                        final_statut,
                         lComment || null,
                         userId,
-                        null,
-                        null,
+                        autoApproveReglement ? userId : null,
+                        approvedAt,
                     ]
                 );
 
@@ -502,6 +506,16 @@ exports.createReglementClient = async (req, res) => {
                     "UPDATE reglements_clients SET numero_recu = ? WHERE id = ?",
                     [nextNumeroRecu, result.insertId]
                 );
+
+                if (autoApproveReglement) {
+                    const [regRows] = await connection.execute(
+                        "SELECT * FROM reglements_clients WHERE id = ?",
+                        [result.insertId]
+                    );
+                    if (regRows.length > 0) {
+                        await propagateApprovalFromReglement(connection, regRows[0], userId);
+                    }
+                }
 
                 insertedIds.push(result.insertId);
             }
