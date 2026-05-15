@@ -1,7 +1,0 @@
-{
-    "name": "gestion-aurevox",
-    "version": "1.0.0",
-    "scripts": {
-      "build": "npm install --prefix client && npm run vercel-build --prefix client"
-    }
-  }

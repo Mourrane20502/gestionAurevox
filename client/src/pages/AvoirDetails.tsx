@@ -31,6 +31,7 @@ import {
     FileText
 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { generateAvoirPdf } from "@/components/pdf/AvoirPdf";
 
 interface AvoirItem {
@@ -44,8 +45,21 @@ interface AvoirItem {
   quantite: number;
   prix_unitaire: number;
   tva: number;
+  reduction?: number;
   montant_ht: number;
 }
+
+const roundMoney = (v: number) => Math.round(v * 100) / 100;
+
+const lineMontantHt = (item: AvoirItem) => roundMoney(Number(item.montant_ht) || 0);
+
+/** TTC ligne = montant HT × (1 + TVA % / 100) */
+const lineMontantTtc = (item: AvoirItem) => {
+  const ht = lineMontantHt(item);
+  const tvaPct = Number(item.tva) || 0;
+  if (Math.abs(tvaPct) < 0.005) return ht;
+  return roundMoney(ht * (1 + tvaPct / 100));
+};
 
 function formatDesignationWithReference(
   designation?: string | null,
@@ -403,8 +417,10 @@ export default function AvoirDetailsPage() {
                   <TableHead className="w-[40%] text-[10px] font-black uppercase tracking-widest py-5 pl-8 text-foreground">Désignation</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">Qté</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">P.U</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">Prix HT</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">TVA</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">Total</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">Remise</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">Total TTC</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -441,22 +457,47 @@ export default function AvoirDetailsPage() {
                     <TableCell className="text-center font-black text-slate-700 dark:text-slate-300">
                       {Number(item.quantite).toLocaleString("fr-FR")}
                     </TableCell>
-                    <TableCell className="text-center font-medium text-slate-600 dark:text-slate-400">
-                      {Number(item.prix_unitaire).toLocaleString("fr-FR")} DH
+                    <TableCell className="text-center font-medium text-slate-600 dark:text-slate-400 tabular-nums">
+                      {Number(item.prix_unitaire).toLocaleString("fr-FR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{" "}
+                      DH
+                    </TableCell>
+                    <TableCell className="text-center font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+                      {lineMontantHt(item).toLocaleString("fr-FR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{" "}
+                      DH
                     </TableCell>
                     <TableCell className="text-center">
                       <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded text-[10px] font-bold text-slate-500">
                         {Number(item.tva).toFixed(0)}%
                       </span>
                     </TableCell>
-                    <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200">
-                      {Number(item.montant_ht).toLocaleString("fr-FR")} DH
+                    <TableCell className="text-center">
+                      <span
+                        className={cn(
+                          "px-2.5 py-1 rounded text-[10px] font-bold",
+                          Number(item.reduction) > 0 ? "bg-amber-100 text-amber-600" : "bg-slate-50 text-slate-300"
+                        )}
+                      >
+                        {Number(item.reduction || 0).toFixed(1).replace(".", ",")}%
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">
+                      {lineMontantTtc(item).toLocaleString("fr-FR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{" "}
+                      DH
                     </TableCell>
                   </TableRow>
                 ))}
                 {items.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-16">
+                    <TableCell colSpan={7} className="text-center py-16">
                         <div className="flex flex-col items-center gap-2 opacity-30">
                             <RotateCcw className="h-12 w-12" />
                             <p className="text-sm font-bold uppercase tracking-widest">Aucune ligne pour cet avoir</p>
@@ -477,19 +518,31 @@ export default function AvoirDetailsPage() {
             <CardContent className="p-6 space-y-4">
                 <div className="space-y-3">
                     <div className="flex justify-between items-center group text-sm">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-orange-600 transition-colors">TOTAL</span>
-                        <span className="font-bold text-foreground">{Number(avoir.montant_ht).toLocaleString("fr-FR")} DH</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-orange-600 transition-colors">Total HT</span>
+                        <span className="font-bold text-foreground tabular-nums">
+                            {Number(avoir.montant_ht).toLocaleString("fr-FR", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                            })}{" "}
+                            DH
+                        </span>
                     </div>
                     <div className="flex justify-between items-center group text-sm">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-orange-600 transition-colors">TVA</span>
-                        <span className="font-bold text-orange-500">+{Number(avoir.montant_tva).toLocaleString("fr-FR")} DH</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-orange-600 transition-colors">TVA appliquée</span>
+                        <span className="font-bold text-orange-500 tabular-nums">
+                            +{Number(avoir.montant_tva).toLocaleString("fr-FR", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                            })}{" "}
+                            DH
+                        </span>
                     </div>
                 </div>
                 
                 <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent my-4" />
                 
                 <div className="flex flex-col gap-1 items-end pt-1">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 mb-1">Montant Net à Payer</span>
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 mb-1">Total net à payer TTC</span>
                     <div className="flex items-baseline gap-1.5">
                         <span className="text-3xl font-black text-orange-700 tracking-tight">
                             {Number(avoir.montant_ttc).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

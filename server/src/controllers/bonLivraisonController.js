@@ -220,7 +220,17 @@ const blListSelect = `
                         LIMIT 1
                    ) AS facture_id,
                    (SELECT d.numero_devis FROM devis d WHERE d.id = COALESCE(bl.devis_id, c.devis_id) LIMIT 1) AS numero_devis,
-                   (SELECT f.numero_facture FROM factures f WHERE f.commande_id = c.id ORDER BY f.id DESC LIMIT 1) AS numero_facture
+                   (SELECT f.numero_facture FROM factures f WHERE f.commande_id = c.id ORDER BY f.id DESC LIMIT 1) AS numero_facture,
+                   (
+                        SELECT COALESCE(SUM(ci.quantite), 0)
+                        FROM commande_items ci
+                        WHERE ci.commande_id = c.id
+                   ) AS quantite_commandee,
+                   (
+                        SELECT COALESCE(SUM(bi.quantite), 0)
+                        FROM bon_de_livraison_items bi
+                        WHERE bi.bon_livraison_id = bl.id
+                   ) AS quantite_livree
             FROM bon_de_livraison bl
             LEFT JOIN commandes c ON c.id = bl.commande_id
             LEFT JOIN clients cl ON cl.id = bl.client_id
@@ -664,6 +674,25 @@ const blPdfConfig = {
     footerLeft: "Merci pour votre confiance.",
 };
 
+const blPdfItemsQuery = `
+    SELECT
+        bi.id,
+        bi.designation,
+        bi.quantite AS quantite_livree,
+        COALESCE(NULLIF(TRIM(p.reference), ''), NULLIF(TRIM(p.code_barre), ''), '—') AS reference,
+        COALESCE(ci.quantite, bi.quantite) AS quantite_commandee
+    FROM bon_de_livraison_items bi
+    INNER JOIN bon_de_livraison bl ON bl.id = bi.bon_livraison_id
+    LEFT JOIN products p ON p.id = bi.produit_id
+    LEFT JOIN commande_items ci ON ci.commande_id = bl.commande_id
+        AND (
+            (bi.produit_id IS NOT NULL AND ci.produit_id = bi.produit_id)
+            OR (bi.produit_id IS NULL AND TRIM(COALESCE(ci.designation, '')) = TRIM(COALESCE(bi.designation, '')))
+        )
+    WHERE bi.bon_livraison_id = ?
+    ORDER BY bi.id ASC
+`;
+
 const blPdfSelect = `
             SELECT bl.*,
                    COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
@@ -745,10 +774,7 @@ exports.sendBonLivraisonEmail = async (req, res) => {
             return res.status(404).json({ message: "Bon de livraison introuvable" });
         }
 
-        const [items] = await db.query(
-            `SELECT * FROM bon_de_livraison_items WHERE bon_livraison_id = ? ORDER BY id ASC`,
-            [id]
-        );
+        const [items] = await db.query(blPdfItemsQuery, [id]);
 
         const docData = rows[0];
         const { buildGenericPdf } = require("../services/pdfGeneratorService");
@@ -779,10 +805,7 @@ exports.downloadBonLivraisonPdf = async (req, res) => {
             return res.status(404).json({ message: "Bon de livraison introuvable" });
         }
 
-        const [items] = await db.query(
-            `SELECT * FROM bon_de_livraison_items WHERE bon_livraison_id = ? ORDER BY id ASC`,
-            [id]
-        );
+        const [items] = await db.query(blPdfItemsQuery, [id]);
 
         const docData = rows[0];
         const { buildGenericPdf } = require("../services/pdfGeneratorService");

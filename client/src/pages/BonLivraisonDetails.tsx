@@ -93,6 +93,18 @@ function formatDesignationWithReference(
     return label;
 }
 
+const roundMoney = (v: number) => Math.round(v * 100) / 100;
+
+const lineMontantHt = (item: BlItem) => roundMoney(Number(item.montant_ht) || 0);
+
+/** TTC ligne = montant HT × (1 + TVA % / 100) */
+const lineMontantTtc = (item: BlItem) => {
+    const ht = lineMontantHt(item);
+    const tvaPct = Number(item.tva) || 0;
+    if (Math.abs(tvaPct) < 0.005) return ht;
+    return roundMoney(ht * (1 + tvaPct / 100));
+};
+
 export default function BonLivraisonDetails() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
@@ -567,13 +579,16 @@ export default function BonLivraisonDetails() {
                                         P.U
                                     </TableHead>
                                     <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
+                                        Prix HT
+                                    </TableHead>
+                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
                                         TVA
                                     </TableHead>
                                     <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
                                         Remise
                                     </TableHead>
                                     <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">
-                                        Total HT
+                                        Total TTC
                                     </TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -608,8 +623,15 @@ export default function BonLivraisonDetails() {
                                                 maximumFractionDigits: 2,
                                             })}
                                         </TableCell>
-                                        <TableCell className="text-center tabular-nums">
+                                        <TableCell className="text-center tabular-nums font-medium text-slate-600 dark:text-slate-400">
                                             {Number(item.prix_unitaire || 0).toLocaleString("fr-FR", {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                            })}{" "}
+                                            DH
+                                        </TableCell>
+                                        <TableCell className="text-center font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+                                            {lineMontantHt(item).toLocaleString("fr-FR", {
                                                 minimumFractionDigits: 2,
                                                 maximumFractionDigits: 2,
                                             })}{" "}
@@ -632,14 +654,18 @@ export default function BonLivraisonDetails() {
                                                 {Number(item.reduction || 0).toFixed(1).replace(".", ",")}%
                                             </span>
                                         </TableCell>
-                                        <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200">
-                                            {Number(item.montant_ht || 0).toLocaleString("fr-FR")} DH
+                                        <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">
+                                            {lineMontantTtc(item).toLocaleString("fr-FR", {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                            })}{" "}
+                                            DH
                                         </TableCell>
                                     </TableRow>
                                 ))}
                                 {items.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="text-center py-16">
+                                        <TableCell colSpan={7} className="text-center py-16">
                                             <div className="flex flex-col items-center gap-2 opacity-30">
                                                 <Truck className="h-12 w-12" />
                                                 <p className="text-sm font-bold uppercase tracking-widest">Aucun article sur ce BL</p>
@@ -660,18 +686,26 @@ export default function BonLivraisonDetails() {
                         <div className="space-y-3">
                             <div className="flex justify-between items-center group text-sm">
                                 <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">
-                                    TOTAL HT
+                                    Total HT
                                 </span>
-                                <span className="font-bold text-foreground">
-                                    {Number(bl.montant_ht || 0).toLocaleString("fr-FR")} DH
+                                <span className="font-bold text-foreground tabular-nums">
+                                    {Number(bl.montant_ht || 0).toLocaleString("fr-FR", {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                    })}{" "}
+                                    DH
                                 </span>
                             </div>
                             <div className="flex justify-between items-center group text-sm">
                                 <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">
-                                    TVA
+                                    TVA appliquée
                                 </span>
-                                <span className="font-bold text-amber-500">
-                                    +{Number(bl.montant_tva || 0).toLocaleString("fr-FR")} DH
+                                <span className="font-bold text-amber-500 tabular-nums">
+                                    +{Number(bl.montant_tva || 0).toLocaleString("fr-FR", {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                    })}{" "}
+                                    DH
                                 </span>
                             </div>
                         </div>
@@ -679,7 +713,7 @@ export default function BonLivraisonDetails() {
                         <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent my-4" />
 
                         <div className="flex flex-col gap-1 items-end pt-1">
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500 mb-1">Montant TTC</span>
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500 mb-1">Total net à payer TTC</span>
                             <div className="flex items-baseline gap-1.5">
                                 <span className="text-3xl font-black text-indigo-700 tracking-tight">
                                     {Number(bl.montant_ttc || 0).toLocaleString("fr-FR", {
