@@ -36,6 +36,7 @@ import { toast } from "sonner";
 import { generateFacturePdf } from "@/components/pdf/FacturePdf";
 import { cn } from "@/lib/utils";
 import { buildReglementCode } from "@/lib/reglementCode";
+import { roundMoney } from "@/lib/documentLineTotal";
 
 interface FactureItem {
   id?: number;
@@ -59,19 +60,6 @@ function formatDesignationWithReference(
   if (ref) return `${label} (${ref})`;
   return label;
 }
-
-const roundMoney = (v: number) => Math.round(v * 100) / 100;
-
-const lineMontantHt = (item: FactureItem, htOverride?: number) =>
-  roundMoney(htOverride ?? (Number(item.montant_ht) || 0));
-
-/** TTC ligne = montant HT × (1 + TVA % / 100) */
-const lineMontantTtc = (item: FactureItem, htOverride?: number) => {
-  const ht = lineMontantHt(item, htOverride);
-  const tvaPct = Number(item.tva) || 0;
-  if (Math.abs(tvaPct) < 0.005) return ht;
-  return roundMoney(ht * (1 + tvaPct / 100));
-};
 
 interface FactureDetails {
   id: number;
@@ -383,13 +371,16 @@ export default function FactureDetailsPage() {
     });
 
     if (!isSplitFactureView) {
-      return baseRows.map((r) => ({
-        item: r.item,
-        displayQty: r.qty,
-        displayUnit: Number(r.item.prix_unitaire) || 0,
-        displayPrixHt: r.total,
-        displayTotalTtc: lineMontantTtc(r.item, r.total),
-      }));
+      return baseRows.map((r) => {
+        const displayUnit = Number(r.item.prix_unitaire) || 0;
+        const displayQty = r.qty;
+        return {
+          item: r.item,
+          displayQty,
+          displayUnit,
+          displayTotal: roundMoney(displayUnit * displayQty),
+        };
+      });
     }
 
     // In split context, show a single recap line:
@@ -399,7 +390,6 @@ export default function FactureDetailsPage() {
     const qtySum = round2(baseRows.reduce((sum, r) => sum + (Number(r.item.quantite) || 0), 0));
     const fallbackQty = baseRows.length;
     const displayQty = qtySum > 0 ? qtySum : fallbackQty;
-    const invoiceHt = round2(totalsView.displayMontantHt);
     const invoiceTotal = round2(totalsView.displayMontantTtc);
 
     return firstItem
@@ -407,9 +397,8 @@ export default function FactureDetailsPage() {
           {
             item: firstItem,
             displayQty,
-            displayUnit: invoiceTotal,
-            displayPrixHt: invoiceHt,
-            displayTotalTtc: invoiceTotal,
+            displayUnit: displayQty > 0 ? roundMoney(invoiceTotal / displayQty) : invoiceTotal,
+            displayTotal: invoiceTotal,
           },
         ]
       : [];
@@ -846,10 +835,9 @@ export default function FactureDetailsPage() {
                   <TableHead className="w-[40%] text-[10px] font-black uppercase tracking-widest py-5 pl-8 text-foreground">Désignation</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">Qté</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">P.U</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">Prix HT</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">TVA</TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">Remise</TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">Total TTC</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -897,13 +885,6 @@ export default function FactureDetailsPage() {
                         maximumFractionDigits: 2,
                       })} DH`}
                     </TableCell>
-                    <TableCell className="text-center font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
-                      {Number(row.displayPrixHt).toLocaleString("fr-FR", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{" "}
-                      DH
-                    </TableCell>
                     <TableCell className="text-center">
                       <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded text-[10px] font-bold text-slate-500">
                         {(Math.abs(Number(item.tva) || 0) < 0.005 ? 0 : Number(item.tva)).toFixed(0)}%
@@ -918,7 +899,7 @@ export default function FactureDetailsPage() {
                         </span>
                     </TableCell>
                     <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">
-                      {Number(row.displayTotalTtc).toLocaleString("fr-FR", {
+                      {Number(row.displayTotal).toLocaleString("fr-FR", {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{" "}
@@ -929,7 +910,7 @@ export default function FactureDetailsPage() {
                 })}
                 {detailRows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-16">
+                    <TableCell colSpan={6} className="text-center py-16">
                         <div className="flex flex-col items-center gap-2 opacity-30">
                             <Receipt className="h-12 w-12" />
                             <p className="text-sm font-bold uppercase tracking-widest">Aucune ligne facturée</p>

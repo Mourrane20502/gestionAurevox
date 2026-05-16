@@ -7,6 +7,7 @@ import { Banknote, ArrowLeft, CheckCircle2, Clock, XCircle, Download, Hash, Tag 
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { generateRecuRemboursementPdf } from "@/components/pdf/RecuRemboursementPdf";
+import { formatLineTotalPuQty } from "@/lib/documentLineTotal";
 
 interface RemboursementDetails {
   id: number;
@@ -44,17 +45,6 @@ type CommandeLiee = {
   montant_tva?: number;
   montant_ttc?: number;
   items?: CommandeItem[];
-};
-
-const roundMoney = (v: number) => Math.round(v * 100) / 100;
-
-const lineMontantHt = (item: CommandeItem) => roundMoney(Number(item.montant_ht) || 0);
-
-const lineMontantTtc = (item: CommandeItem) => {
-  const ht = lineMontantHt(item);
-  const tvaPct = Number(item.tva) || 0;
-  if (Math.abs(tvaPct) < 0.005) return ht;
-  return roundMoney(ht * (1 + tvaPct / 100));
 };
 
 function formatDesignationWithReference(
@@ -346,16 +336,13 @@ export default function RemboursementDetails() {
                     P.U
                   </TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
-                    Prix HT
-                  </TableHead>
-                  <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
                     TVA
                   </TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
                     Remise
                   </TableHead>
                   <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">
-                    Total TTC
+                    Total
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -393,13 +380,6 @@ export default function RemboursementDetails() {
                       })}{" "}
                       DH
                     </TableCell>
-                    <TableCell className="text-center font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
-                      {lineMontantHt(item).toLocaleString("fr-FR", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{" "}
-                      DH
-                    </TableCell>
                     <TableCell className="text-center">
                       <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded text-[10px] font-bold text-slate-500">
                         {Number(item.tva || 0).toFixed(0)}%
@@ -416,17 +396,13 @@ export default function RemboursementDetails() {
                       </span>
                     </TableCell>
                     <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">
-                      {lineMontantTtc(item).toLocaleString("fr-FR", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{" "}
-                      DH
+                      {formatLineTotalPuQty(item)}
                     </TableCell>
                   </TableRow>
                 ))}
                 {commandeItems.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-16">
+                    <TableCell colSpan={6} className="text-center py-16">
                       <div className="flex flex-col items-center gap-2 opacity-30">
                         <Banknote className="h-12 w-12" />
                         <p className="text-sm font-bold uppercase tracking-widest">
