@@ -52,6 +52,17 @@ import { cn } from "@/lib/utils";
 import { DeleteSvgIcon, EditSvgIcon } from "@/components/icons/actionSvgIcons";
 import { generateDevisPdf } from "@/components/pdf/DevisPdf";
 import { matchesSousSocieteListFilter } from "@/utils/sousSocieteListFilter";
+import {
+    formatListPdfDh,
+    formatListPdfMargeHt,
+    formatListPdfPrixAchatHt,
+    formatListPdfPrixTotal,
+    formatListPdfPrixVenteProduit,
+    formatListPdfTva,
+    LIST_DOC_PDF_COLUMN_STYLES,
+    LIST_DOC_PDF_HEAD,
+    resolveListPdfPrixTotalTtc,
+} from "@/utils/listDocumentPdfColumns";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -113,6 +124,8 @@ interface Devis {
     montant_ttc?: number;
     /** Marge HT estimée (lignes avec produit : Σ montant_ht − quantité × prix d'achat) */
     marge_ht?: number | string | null;
+    /** Σ qté × prix_de_vente catalogue (repli prix produit / ligne) */
+    prix_vente_ht?: number | string | null;
     point_de_vente_nom?: string;
     sous_societe_nom?: string | null;
     bon_livraison_id?: number | null;
@@ -817,59 +830,65 @@ function Devis() {
             doc.text(`Total : ${filteredDevis.length} devis`, pageWidth - 14, 24, { align: "right" });
 
             const tableData = filteredDevis.map((d) => {
-                const finalTTC = getDevisFinalTTC(d);
-                const formattedTTC = finalTTC.toFixed(2).replace(".", ",");
-
                 return [
                     d.numero_devis,
                     d.client_nom || "—",
                     getSousSocieteLabel(d),
-                    `${formattedTTC} DH`,
+                    formatListPdfPrixAchatHt(d.montant_ht, d.marge_ht),
+                    formatListPdfPrixVenteProduit(d.prix_vente_ht, d.montant_ht),
+                    formatListPdfTva(d.montant_tva, d.prix_vente_ht, d.taux_tva, d.montant_ht),
+                    formatListPdfPrixTotal(d.prix_vente_ht, d.montant_tva, d.montant_ht, d.taux_tva),
+                    formatListPdfMargeHt(d.marge_ht),
                     new Date(d.date_devis).toLocaleDateString("fr-FR"),
                     d.statuts_devis,
                     d.point_de_vente_nom || "—",
-                    d.user_nom || "—"
+                    d.user_nom || "—",
                 ];
             });
 
             autoTable(doc, {
                 startY: 45,
-                head: [["Numéro", "Client", "Société", "Montant", "Date", "Statut", "Point de vente", "Utilisateur"]],
+                head: [
+                    [
+                        ...LIST_DOC_PDF_HEAD,
+                        "Statut",
+                        "Point de vente",
+                        "Utilisateur",
+                    ],
+                ],
                 body: tableData,
                 theme: "grid",
                 headStyles: {
                     fillColor: [67, 56, 202],
                     textColor: 255,
-                    fontSize: 9,
+                    fontSize: 8,
                     fontStyle: "bold",
                     halign: "center",
                     cellPadding: 3,
                 },
                 bodyStyles: {
-                    fontSize: 8,
-                    cellPadding: 3,
+                    fontSize: 7,
+                    cellPadding: 2,
                 },
                 alternateRowStyles: {
                     fillColor: [248, 250, 252],
                 },
-                columnStyles: {
-                    3: { halign: "right", fontStyle: "bold" },
-                    4: { halign: "center" },
-                    5: { halign: "center" },
-                    6: { halign: "center" },
-                },
+                columnStyles: LIST_DOC_PDF_COLUMN_STYLES,
                 margin: { left: 14, right: 14 },
             });
 
-            const totalDevis = filteredDevis.reduce((acc, d) => acc + getDevisFinalTTC(d), 0);
+            const totalDevis = filteredDevis.reduce(
+                (acc, d) =>
+                    acc + resolveListPdfPrixTotalTtc(d.prix_vente_ht, d.montant_tva, d.montant_ht, d.taux_tva),
+                0
+            );
             const totalY = (doc as any).lastAutoTable?.finalY
                 ? (doc as any).lastAutoTable.finalY + 8
                 : 53;
-            const totalFormatted = totalDevis.toFixed(2).replace(".", ",");
             doc.setFont("helvetica", "bold");
             doc.setFontSize(10);
             doc.setTextColor(31, 41, 55);
-            doc.text(`Total : ${totalFormatted} DH`, pageWidth - 14, totalY, { align: "right" });
+            doc.text(`Total : ${formatListPdfDh(totalDevis)}`, pageWidth - 14, totalY, { align: "right" });
             doc.setFont("helvetica", "normal");
 
             // Footer

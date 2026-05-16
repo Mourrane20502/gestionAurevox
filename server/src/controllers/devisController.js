@@ -344,6 +344,24 @@ exports.getAllDevis = async (req, res) => {
                 COALESCE(d.reduction, 0) AS reduction,
                 (
                     SELECT COALESCE(SUM(
+                        COALESCE(di.quantite, 0) * (
+                            CASE
+                                WHEN di.produit_id IS NOT NULL
+                                     AND p.prix_de_vente IS NOT NULL
+                                     AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0
+                                    THEN CAST(p.prix_de_vente AS DECIMAL(14,4))
+                                WHEN di.produit_id IS NOT NULL
+                                    THEN COALESCE(CAST(p.prix AS DECIMAL(14,4)), CAST(di.prix_unitaire AS DECIMAL(14,4)), 0)
+                                ELSE COALESCE(CAST(di.prix_unitaire AS DECIMAL(14,4)), 0)
+                            END
+                        )
+                    ), 0)
+                    FROM devis_items di
+                    LEFT JOIN products p ON di.produit_id = p.id
+                    WHERE di.devis_id = d.id
+                ) AS prix_vente_ht,
+                (
+                    SELECT COALESCE(SUM(
                         CASE
                             WHEN p.prix_de_vente IS NOT NULL AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0 THEN
                                 COALESCE(di.quantite, 0) * (CAST(p.prix_de_vente AS DECIMAL(14,4)) - COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))

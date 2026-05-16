@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
+import {
+    formatListPdfDh,
+    formatListPdfMargeHt,
+    formatListPdfPrixAchatHt,
+    formatListPdfPrixTotal,
+    formatListPdfPrixVenteProduit,
+    formatListPdfTva,
+    LIST_DOC_PDF_COLUMN_STYLES,
+    LIST_DOC_PDF_HEAD,
+    resolveListPdfPrixTotalTtc,
+    resolveListPdfPrixVenteTtc,
+} from "@/utils/listDocumentPdfColumns";
 import { normalizeLineTvaPercent } from "@/lib/normalizeLineTva";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
@@ -173,6 +185,7 @@ interface Facture {
     bon_livraison_id?: number | null;
     /** Marge HT (lignes produit) */
     marge_ht?: number | string | null;
+    prix_vente_ht?: number | string | null;
 }
 type SousSocieteOption = { id: number; nom_sous_societe: string };
 
@@ -1227,10 +1240,7 @@ function Factures() {
             doc.text(`Total : ${filteredFactures.length} factures`, pageWidth - 14, 24, { align: "right" });
 
             const tableData = filteredFactures.map((f) => {
-                const montantHT = Number(f.montant_ht) || 0;
-                const montantTVA = Number(f.montant_tva) || 0;
-                const montantTTC = Number(f.montant_ttc) || (montantHT + montantTVA);
-                const formattedTTC = montantTTC.toFixed(2).replace(".", ",");
+                const montantTTC = resolveListPdfPrixVenteTtc(f.montant_ht, f.montant_tva, f.montant_ttc);
                 const totalRegle = Number(f.total_regle) || 0;
                 const resteCalcule =
                     typeof f.reste_a_payer !== "undefined"
@@ -1248,57 +1258,60 @@ function Factures() {
                     f.numero_facture,
                     f.client_nom || "—",
                     getSousSocieteLabel(f),
-                    `${formattedTTC} DH`,
+                    formatListPdfPrixAchatHt(f.montant_ht, f.marge_ht),
+                    formatListPdfPrixVenteProduit(f.prix_vente_ht, f.montant_ht),
+                    formatListPdfTva(f.montant_tva, f.prix_vente_ht, undefined, f.montant_ht),
+                    formatListPdfPrixTotal(f.prix_vente_ht, f.montant_tva, f.montant_ht),
+                    formatListPdfMargeHt(f.marge_ht),
                     new Date(f.date_facture).toLocaleDateString("fr-FR"),
                     statutReglement,
                     f.point_de_vente_nom || "—",
-                    f.user_nom || "—"
+                    f.user_nom || "—",
                 ];
             });
 
             autoTable(doc, {
                 startY: 45,
-                head: [["Numéro", "Client", "Société", "Montant", "Date", "Statut règlement", "Point de vente", "Utilisateur"]],
+                head: [
+                    [
+                        ...LIST_DOC_PDF_HEAD,
+                        "Statut règlement",
+                        "Point de vente",
+                        "Utilisateur",
+                    ],
+                ],
                 body: tableData,
                 theme: "grid",
                 headStyles: {
                     fillColor: [67, 56, 202],
                     textColor: 255,
-                    fontSize: 9,
+                    fontSize: 8,
                     fontStyle: "bold",
                     halign: "center",
                     cellPadding: 3,
                 },
                 bodyStyles: {
-                    fontSize: 8,
-                    cellPadding: 3,
+                    fontSize: 7,
+                    cellPadding: 2,
                 },
                 alternateRowStyles: {
                     fillColor: [248, 250, 252],
                 },
-                columnStyles: {
-                    3: { halign: "right", fontStyle: "bold" },
-                    4: { halign: "center" },
-                    5: { halign: "center" },
-                    6: { halign: "center" },
-                },
+                columnStyles: LIST_DOC_PDF_COLUMN_STYLES,
                 margin: { left: 14, right: 14 },
             });
 
-            const totalFactures = filteredFactures.reduce((acc, f) => {
-                const montantHT = Number(f.montant_ht) || 0;
-                const montantTVA = Number(f.montant_tva) || 0;
-                const montantTTC = Number(f.montant_ttc) || (montantHT + montantTVA);
-                return acc + montantTTC;
-            }, 0);
+            const totalFactures = filteredFactures.reduce(
+                (acc, f) => acc + resolveListPdfPrixTotalTtc(f.prix_vente_ht, f.montant_tva, f.montant_ht),
+                0
+            );
             const totalY = (doc as any).lastAutoTable?.finalY
                 ? (doc as any).lastAutoTable.finalY + 8
                 : 53;
-            const totalFormatted = totalFactures.toFixed(2).replace(".", ",");
             doc.setFont("helvetica", "bold");
             doc.setFontSize(10);
             doc.setTextColor(31, 41, 55);
-            doc.text(`Total : ${totalFormatted} DH`, pageWidth - 14, totalY, { align: "right" });
+            doc.text(`Total : ${formatListPdfDh(totalFactures)}`, pageWidth - 14, totalY, { align: "right" });
             doc.setFont("helvetica", "normal");
 
             // Footer

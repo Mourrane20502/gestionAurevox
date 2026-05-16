@@ -604,6 +604,24 @@ exports.getAllCommandes = async (req, res) => {
                 (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
                 (
                     SELECT COALESCE(SUM(
+                        COALESCE(ci.quantite, 0) * (
+                            CASE
+                                WHEN ci.produit_id IS NOT NULL
+                                     AND p.prix_de_vente IS NOT NULL
+                                     AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0
+                                    THEN CAST(p.prix_de_vente AS DECIMAL(14,4))
+                                WHEN ci.produit_id IS NOT NULL
+                                    THEN COALESCE(CAST(p.prix AS DECIMAL(14,4)), CAST(ci.prix_unitaire AS DECIMAL(14,4)), 0)
+                                ELSE COALESCE(CAST(ci.prix_unitaire AS DECIMAL(14,4)), 0)
+                            END
+                        )
+                    ), 0)
+                    FROM commande_items ci
+                    LEFT JOIN products p ON ci.produit_id = p.id
+                    WHERE ci.commande_id = c.id
+                ) AS prix_vente_ht,
+                (
+                    SELECT COALESCE(SUM(
                         CASE
                             WHEN p.prix_de_vente IS NOT NULL AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0 THEN
                                 COALESCE(ci.quantite, 0) * (CAST(p.prix_de_vente AS DECIMAL(14,4)) - COALESCE(CAST(p.prix AS DECIMAL(14,4)), 0))
