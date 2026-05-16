@@ -75,6 +75,22 @@ function toNum(value: unknown): number {
     return Number.isFinite(n) ? n : 0;
 }
 
+type AchatMontantInput = Pick<AchatFournisseur, "quantite" | "prix_unitaire" | "tva">;
+
+function achatMontantsFromRow(achat: AchatMontantInput) {
+    const qte = toNum(achat.quantite);
+    const pu = toNum(achat.prix_unitaire);
+    const tvaPct = toNum(achat.tva);
+    const ht = qte * pu;
+    const ttc = ht * (1 + tvaPct / 100);
+    const montantTva = ttc - ht;
+    return { ht, montantTva, ttc, tvaPct };
+}
+
+function sumAchatsTtc(achats: AchatFournisseur[]): number {
+    return achats.reduce((acc, a) => acc + achatMontantsFromRow(a).ttc, 0);
+}
+
 function exportFournisseurSituationToXls(fournisseur: Fournisseur, achats: AchatFournisseur[]) {
     const headers = [
         "N° Commande",
@@ -82,21 +98,21 @@ function exportFournisseurSituationToXls(fournisseur: Fournisseur, achats: Achat
         "Gestionnaire",
         "Qté",
         "Prix unitaire",
-        "Total",
+        "Total TTC",
         "TVA",
         "Statut",
     ];
     const rows = achats.map((a) => {
         const qte = toNum(a.quantite);
         const pu = a.prix_unitaire != null ? toNum(a.prix_unitaire) : 0;
-        const total = qte * pu;
+        const { ttc } = achatMontantsFromRow(a);
         return [
             a.numero || `#${a.id}`,
             a.produit_nom,
             a.gestionnaire_nom,
             String(qte),
             pu.toFixed(2),
-            total.toFixed(2),
+            ttc.toFixed(2),
             a.tva != null ? toNum(a.tva).toFixed(2) : "",
             a.statut || "en_attente",
         ];
@@ -152,7 +168,7 @@ function exportFournisseurSituationToPdf(fournisseur: Fournisseur, achats: Achat
 
     // Tableau des achats
     let y = 40;
-    const headers = ["N° Cmd", "Produit", "Qté", "Total"];
+    const headers = ["N° Cmd", "Produit", "Qté", "Total TTC"];
     const cols = [15, 65, 145, 185];
 
     const drawHeader = () => {
@@ -173,7 +189,7 @@ function exportFournisseurSituationToPdf(fournisseur: Fournisseur, achats: Achat
     drawHeader();
 
     let totalQuantity = 0;
-    let totalHt = 0;
+    let totalTtc = 0;
 
     achats.forEach((a) => {
         if (y > 270) {
@@ -182,16 +198,15 @@ function exportFournisseurSituationToPdf(fournisseur: Fournisseur, achats: Achat
             drawHeader();
         }
         const qte = toNum(a.quantite);
-        const pu = a.prix_unitaire != null ? toNum(a.prix_unitaire) : 0;
-        const total = qte * pu;
+        const { ttc } = achatMontantsFromRow(a);
 
         totalQuantity += qte;
-        totalHt += total;
+        totalTtc += ttc;
 
         doc.text(a.numero || `#${a.id}`, cols[0], y);
         doc.text(a.produit_nom || "", cols[1], y);
         doc.text(String(qte), cols[2], y, { align: "right" });
-        doc.text(`${total.toFixed(2)} DH`, cols[3], y, { align: "right" });
+        doc.text(`${ttc.toFixed(2)} DH`, cols[3], y, { align: "right" });
         y += 5;
     });
 
@@ -214,7 +229,7 @@ function exportFournisseurSituationToPdf(fournisseur: Fournisseur, achats: Achat
     doc.setFontSize(9);
     doc.text(`Nombre de lignes : ${achats.length}`, 16, boxTop + 12);
     doc.text(`Quantité totale : ${totalQuantity.toString()}`, 16, boxTop + 17);
-    doc.text(`Montant total : ${totalHt.toFixed(2)} DH`, pageWidth - 16, boxTop + 12, { align: "right" });
+    doc.text(`Montant total TTC : ${totalTtc.toFixed(2)} DH`, pageWidth - 16, boxTop + 12, { align: "right" });
 
     const safeName = (fournisseur.nom || "fournisseur").replace(/[^a-zA-Z0-9-_]/g, "_");
     doc.save(`situation_fournisseur_${safeName}.pdf`);
@@ -345,15 +360,7 @@ export default function FournisseursSituation() {
         return totalRegle >= montantTTC - 0.01;
     };
 
-    const achatMontants = (achat: AchatFournisseur) => {
-        const qte = toNum(achat.quantite);
-        const pu = toNum(achat.prix_unitaire);
-        const tvaPct = toNum(achat.tva);
-        const ht = qte * pu;
-        const ttc = ht * (1 + tvaPct / 100);
-        const montantTva = ttc - ht;
-        return { ht, montantTva, ttc, tvaPct };
-    };
+    const achatMontants = (achat: AchatFournisseur) => achatMontantsFromRow(achat);
 
     const reglementsForAchatSorted = (achatId: number) =>
         reglementsFournisseurs
@@ -725,16 +732,7 @@ export default function FournisseursSituation() {
                                             Total engagé
                                         </p>
                                         <p className="text-lg font-bold text-emerald-700 dark:text-emerald-300">
-                                            {fournisseurAchats
-                                                .reduce(
-                                                    (acc, a) =>
-                                                        acc +
-                                                        toNum(a.quantite) *
-                                                        (a.prix_unitaire != null ? toNum(a.prix_unitaire) : 0),
-                                                    0
-                                                )
-                                                .toFixed(2)}{" "}
-                                            DH
+                                            {sumAchatsTtc(fournisseurAchats).toFixed(2)} DH
                                         </p>
                                     </div>
                                 </div>
@@ -761,7 +759,7 @@ export default function FournisseursSituation() {
                                             Prix unitaire
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-right">
-                                            Total
+                                            Total TTC
                                         </TableHead>
                                         <TableHead className="text-xs font-bold text-muted-foreground uppercase py-3 text-center">
                                             TVA
@@ -808,12 +806,11 @@ export default function FournisseursSituation() {
                                         </TableRow>
                                     ) : (
                                         fournisseurAchats.map((achat) => {
-                                            const totalLigne =
-                                                toNum(achat.quantite) *
-                                                (achat.prix_unitaire != null ? toNum(achat.prix_unitaire) : 0);
-
                                             const isEditing = editingAchatId === achat.id;
                                             const draft = isEditing && editingDraft ? editingDraft : achat;
+                                            const totalLigne = achatMontantsFromRow(
+                                                isEditing ? { ...achat, ...draft } : achat
+                                            ).ttc;
 
                                             return (
                                                 <TableRow
@@ -1003,16 +1000,7 @@ export default function FournisseursSituation() {
                                                 Total complet pour ce fournisseur
                                             </TableCell>
                                             <TableCell className="text-right px-4 py-4 text-emerald-600 dark:text-emerald-400">
-                                                {fournisseurAchats
-                                                    .reduce(
-                                                        (acc, a) =>
-                                                            acc +
-                                                            toNum(a.quantite) *
-                                                            (a.prix_unitaire != null ? toNum(a.prix_unitaire) : 0),
-                                                        0
-                                                    )
-                                                    .toFixed(2)}{" "}
-                                                DH
+                                                {sumAchatsTtc(fournisseurAchats).toFixed(2)} DH
                                             </TableCell>
                                             <TableCell colSpan={4} />
                                         </TableRow>

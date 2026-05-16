@@ -2,7 +2,7 @@ const db = require("../config/db").promise();
 const { logProductMovement } = require("../utils/productMovementLogger");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
-const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const parseDateOnlySafe = (value) => {
     const raw = String(value || "").trim();
@@ -106,11 +106,11 @@ exports.createAvoir = async (req, res) => {
             throw new Error("client_id is required");
         }
 
-        // Non-admin/non-responsable users must go through approval unless auto-approval conditions are met
-        const allowedToApprove = await canApprove(req.user.role, 'avoir');
-        const autoApprove = await shouldAutoApprove(req.user);
-        // Force 'valide' if autoApprove is true
-        const final_statut = autoApprove ? 'valide' : (allowedToApprove ? (statut || status || 'valide') : 'en_attente');
+        const final_statut = await resolveCreationApprovalStatut(req.user, "avoir", {
+            pending: "en_attente",
+            approved: "valide",
+            requested: statut || status,
+        });
         const canAutoApprove = (final_statut === 'valide');
         const final_facture_id = (facture_id === "" || facture_id === "none" || !facture_id) ? null : facture_id;
         const final_commande_id = (commande_id === "" || commande_id === "none" || !commande_id) ? null : commande_id;

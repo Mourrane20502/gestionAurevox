@@ -2,7 +2,7 @@ const db = require("../config/db").promise();
 const { logProductMovement } = require("../utils/productMovementLogger");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
-const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const parseDateOnlySafe = (value) => {
     const raw = String(value || "").trim();
@@ -281,15 +281,11 @@ exports.createCommande = async (req, res) => {
             }
         }
 
-        // 2. Handle statut (Column is 'statut' in DB)
-        const allowedToApprove = await canApprove(req.user.role, 'commande');
-        const autoApprove = await shouldAutoApprove(req.user);
-        
-        // If role is 'user' (Commercial), default to 'en_attente' unless it's after hours
-        const defaultStatut = (req.user.role === 'user' && !autoApprove) ? 'en_attente' : 'validee';
-        
-        // CRITICAL: If autoApprove is true, we FORCE 'validee' even if the frontend sends 'en_attente'
-        const final_statut = autoApprove ? 'validee' : (allowedToApprove ? (statut || status || defaultStatut) : 'en_attente');
+        const final_statut = await resolveCreationApprovalStatut(req.user, "commande", {
+            pending: "en_attente",
+            approved: "validee",
+            requested: statut || status,
+        });
         let final_devis_id = devis_id || null;
 
         const insertCommandeQuery = `
@@ -606,6 +602,24 @@ exports.getAllCommandes = async (req, res) => {
                 ) AS total_regle_combined,
                 (SELECT f3.montant_ttc FROM factures f3 WHERE f3.commande_id = c.id LIMIT 1) AS facture_montant_ttc,
                 (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = c.id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
+                (
+                    SELECT COALESCE(SUM(
+                        COALESCE(ci.quantite, 0) * (
+                            CASE
+                                WHEN ci.produit_id IS NOT NULL
+                                     AND p.prix_de_vente IS NOT NULL
+                                     AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0
+                                    THEN CAST(p.prix_de_vente AS DECIMAL(14,4))
+                                WHEN ci.produit_id IS NOT NULL
+                                    THEN COALESCE(CAST(p.prix AS DECIMAL(14,4)), CAST(ci.prix_unitaire AS DECIMAL(14,4)), 0)
+                                ELSE COALESCE(CAST(ci.prix_unitaire AS DECIMAL(14,4)), 0)
+                            END
+                        )
+                    ), 0)
+                    FROM commande_items ci
+                    LEFT JOIN products p ON ci.produit_id = p.id
+                    WHERE ci.commande_id = c.id
+                ) AS prix_vente_ht,
                 (
                     SELECT COALESCE(SUM(
                         CASE

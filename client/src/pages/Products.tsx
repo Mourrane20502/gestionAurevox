@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Plus, Search, Package, AlertTriangle, Tag, Store, QrCode, ShoppingCart, Bell, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, SlidersHorizontal, X, RotateCcw, Download, FileSpreadsheet, Camera, MoreVertical, Trash2, LayoutGrid, Upload, Table as TableIcon } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
@@ -104,14 +104,6 @@ function isNatureGros(productOrNature: Product | string | undefined | null): boo
     return isProductWholesaleGros(productOrNature as Product);
 }
 
-function formatProductPrice(product: Product): string {
-    const prix = Number(product.prix);
-    if (!Number.isFinite(prix)) return "—";
-    return isNatureGros(product)
-        ? `${prix.toFixed(2)} DH/g`
-        : `${prix.toFixed(2)} DH`;
-}
-
 function formatPriceAsInteger(
     value: number | string | null | undefined,
     options?: { suffix?: string }
@@ -120,6 +112,10 @@ function formatPriceAsInteger(
     if (!Number.isFinite(n)) return "—";
     const suffix = options?.suffix ?? " DH";
     return `${Math.round(n).toLocaleString("fr-FR")}${suffix}`;
+}
+
+function formatProductPrice(product: Product): string {
+    return formatPriceAsInteger(product.prix);
 }
 
 /** Colonne « Type » : libellé `product_types.name` si renseigné, sinon or/silver depuis `pricing_metal`. */
@@ -299,8 +295,19 @@ function inferPricingFromPrice(
     return { metal: best.metal, variant: best.variant };
 }
 
+type ProductsLocationState = {
+    openCreateForm?: boolean;
+    draftProduct?: {
+        nom?: string;
+        prix?: string;
+        prix_de_vente?: string;
+        fournisseur_id?: string;
+    };
+};
+
 export default function Products() {
     const navigate = useNavigate();
+    const location = useLocation();
     const [products, setProducts] = useState<Product[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [pointsDeVente, setPointsDeVente] = useState<PointDeVente[]>([]);
@@ -459,6 +466,40 @@ export default function Products() {
         }
         setPricingMetal(defaultMetalFromConfig(metalPricing));
     }, [isDialogOpen, formData.pricing_metal, metalPricing, editingProduct]);
+
+    useEffect(() => {
+        const state = location.state as ProductsLocationState | null;
+        if (!state?.openCreateForm) return;
+
+        setEditingProduct(null);
+        const draft = state.draftProduct;
+        if (draft) {
+            setFormData({
+                nom: draft.nom ?? "",
+                description: "",
+                prix: draft.prix ?? "",
+                stock: "0",
+                id_categorie: "",
+                id_point_de_vente: "",
+                fournisseur_id: draft.fournisseur_id ?? "",
+                code_barre: "",
+                stock_alert: "1",
+                reference: "",
+                etat: "1",
+                disponible: "true",
+                grammage: "",
+                product_type_id: "",
+                pricing_metal: "",
+                pricing_variant: "",
+                photo: null,
+                prix_de_vente: draft.prix_de_vente ?? draft.prix ?? "",
+            });
+        } else {
+            resetForm();
+        }
+        setIsDialogOpen(true);
+        window.history.replaceState({}, document.title);
+    }, [location.state]);
 
     // Barcode listener for hardware scanner or fast input
     useEffect(() => {
@@ -2158,7 +2199,7 @@ export default function Products() {
                                             <p className="font-bold text-foreground text-sm">{product.nom}</p>
                                             {product.reference && <p className="text-xs text-muted-foreground">{product.reference}</p>}
                                             {!isNatureGros(product) && (
-                                                <p className="text-sm font-semibold text-foreground mt-1">{Number(product.prix).toFixed(2)} DH</p>
+                                                <p className="text-sm font-semibold text-foreground mt-1">{formatProductPrice(product)}</p>
                                             )}
                                         </div>
                                     </div>
@@ -2693,11 +2734,8 @@ export default function Products() {
                                         const vpGro = isNatureGros(viewingProduct);
                                         return [
                                             {
-                                                label: "Prix",
-                                                value: formatPriceAsInteger(
-                                                    viewingProduct.prix,
-                                                    vpGro ? { suffix: " DH/g" } : undefined
-                                                ),
+                                                label: "Prix d'achat",
+                                                value: formatPriceAsInteger(viewingProduct.prix),
                                             },
                                             ...(viewingProduct.prix_de_vente != null &&
                                             String(viewingProduct.prix_de_vente).trim() !== "" &&
@@ -2710,21 +2748,36 @@ export default function Products() {
                                                   ]
                                                 : []),
                                             {
+                                                label: "Marge",
+                                                value: (() => {
+                                                    const m = getProductMargeValue(viewingProduct);
+                                                    return m != null ? formatPriceAsInteger(m) : "—";
+                                                })(),
+                                            },
+                                            {
+                                                label: "Fournisseur",
+                                                value: viewingProduct.fournisseur_nom?.trim() || "—",
+                                            },
+                                            {
                                                 label: "Type",
                                                 value: getProductTypeDisplayLabel(viewingProduct) || "—",
+                                            },
+                                            {
+                                                label: "Stock",
+                                                value: String(viewingProduct.stock ?? 0),
+                                            },
+                                            {
+                                                label: "Catégorie",
+                                                value: viewingProduct.category_name || "—",
                                             },
                                             ...(vpGro
                                                 ? []
                                                 : [
-                                                      { label: "Stock", value: viewingProduct.stock.toString() },
                                                       {
                                                           label: "Alerte stock",
                                                           value: viewingProduct.stock_alert?.toString() || "—",
                                                       },
                                                   ]),
-                                            ...(vpGro
-                                                ? []
-                                                : [{ label: "Catégorie", value: viewingProduct.category_name || "—" }]),
                                             ...(vpGro
                                                 ? []
                                                 : [{ label: "Point de vente", value: viewingProduct.point_de_vente_name || "—" }]),

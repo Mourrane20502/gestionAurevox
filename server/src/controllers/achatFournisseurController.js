@@ -1,4 +1,43 @@
 const db = require("../config/db").promise();
+const { resolveCreationApprovalStatut } = require("../utils/approvalSettings");
+const { logProductMovement } = require("../utils/productMovementLogger");
+
+async function applyAchatStockOnApproval(connection, achat, userId, achatId) {
+    const productId = achat.product_id;
+    const qty = Number(achat.quantite) || 0;
+    if (!productId || qty <= 0) return;
+
+    const [prodRows] = await connection.execute(
+        "SELECT stock, nom FROM products WHERE id = ?",
+        [productId]
+    );
+    if (prodRows.length === 0) return;
+
+    const currentStock = prodRows[0].stock || 0;
+    await connection.execute(
+        "UPDATE products SET stock = stock + ? WHERE id = ?",
+        [qty, productId]
+    );
+
+    try {
+        await logProductMovement(
+            {
+                productId,
+                type: "achat_entree",
+                quantityBefore: currentStock,
+                quantityAfter: currentStock + qty,
+                description: "Entrée stock (validation achat fournisseur)",
+                userId,
+                referenceType: "achat_fournisseur",
+                referenceId: Number(achatId),
+                referenceNumero: null,
+            },
+            connection
+        );
+    } catch (e) {
+        console.error("Erreur log mouvement stock achat fournisseur:", e.message);
+    }
+}
 
 let achatFactureColumnReady = false;
 const ensureAchatFactureColumn = async () => {
@@ -148,6 +187,11 @@ exports.createAchat = async (req, res) => {
         }
 
         const created_by = req.user && req.user.id ? req.user.id : null;
+        const finalStatut = await resolveCreationApprovalStatut(req.user, "achats_fournisseurs", {
+            pending: "en_attente",
+            approved: "accepte",
+            requested: statut,
+        });
         const [result] = await db.query(`
             INSERT INTO achats_fournisseurs
             (numero, gestionnaire_id, fournisseur_id, product_id, quantite, prix_unitaire, statut, tva, designation_libre, created_by)
@@ -159,11 +203,31 @@ exports.createAchat = async (req, res) => {
             product_id || null,
             quantite,
             prix_unitaire || null,
-            statut || "en_attente",
+            finalStatut,
             tva || null,
             designation_libre || null,
             created_by,
         ]);
+
+        if (finalStatut === "accepte") {
+            const connection = await db.getConnection();
+            try {
+                await connection.beginTransaction();
+                const [rows] = await connection.execute(
+                    "SELECT * FROM achats_fournisseurs WHERE id = ?",
+                    [result.insertId]
+                );
+                if (rows.length > 0) {
+                    await applyAchatStockOnApproval(connection, rows[0], created_by, result.insertId);
+                }
+                await connection.commit();
+            } catch (e) {
+                await connection.rollback();
+                console.error("Auto-approval stock achat:", e);
+            } finally {
+                connection.release();
+            }
+        }
 
         res.status(201).json({
             message: "Achat fournisseur created successfully",
@@ -203,6 +267,11 @@ exports.createAchatBatch = async (req, res) => {
 
         await connection.beginTransaction();
 
+        const batchStatut = await resolveCreationApprovalStatut(req.user, "achats_fournisseurs", {
+            pending: "en_attente",
+            approved: "accepte",
+        });
+
         const insertedIds = [];
         for (const line of lignes) {
             const { product_id, quantite, prix_unitaire, tva, designation_libre } = line;
@@ -220,12 +289,21 @@ exports.createAchatBatch = async (req, res) => {
                 product_id || null,
                 Number(quantite),
                 prix_unitaire != null ? Number(prix_unitaire) : null,
-                "en_attente",
+                batchStatut,
                 tva != null ? Number(tva) : null,
                 designation_libre && String(designation_libre).trim() ? String(designation_libre).trim() : null,
                 created_by,
             ]);
             insertedIds.push(result.insertId);
+            if (batchStatut === "accepte") {
+                const [rows] = await connection.execute(
+                    "SELECT * FROM achats_fournisseurs WHERE id = ?",
+                    [result.insertId]
+                );
+                if (rows.length > 0) {
+                    await applyAchatStockOnApproval(connection, rows[0], created_by, result.insertId);
+                }
+            }
         }
 
         if (insertedIds.length === 0) {
@@ -439,49 +517,18 @@ exports.approveAchat = async (req, res) => {
             return res.status(400).json({ message: "Cet achat fournisseur est déjà traité" });
         }
 
-        const productId = achat.product_id;
         const qty = Number(achat.quantite) || 0;
 
-        // Si l'achat est lié à un produit BDD, on met à jour le stock.
-        // Sinon (saisie manuelle sans product_id), on accepte juste l'achat sans toucher au stock.
-        if (productId && qty > 0) {
+        if (achat.product_id && qty > 0) {
             const [prodRows] = await connection.execute(
                 "SELECT stock, nom FROM products WHERE id = ?",
-                [productId]
+                [achat.product_id]
             );
-
             if (prodRows.length === 0) {
                 await connection.rollback();
                 return res.status(404).json({ message: "Produit associé non trouvé" });
             }
-
-            const currentStock = prodRows[0].stock || 0;
-
-            await connection.execute(
-                "UPDATE products SET stock = stock + ? WHERE id = ?",
-                [qty, productId]
-            );
-
-            try {
-                const { logProductMovement } = require("../utils/productMovementLogger");
-
-                await logProductMovement(
-                    {
-                        productId,
-                        type: "achat_entree",
-                        quantityBefore: currentStock,
-                        quantityAfter: currentStock + qty,
-                        description: "Entrée stock (validation achat fournisseur)",
-                        userId: req.user.id,
-                        referenceType: "achat_fournisseur",
-                        referenceId: Number(id),
-                        referenceNumero: null,
-                    },
-                    connection
-                );
-            } catch (e) {
-                console.error("Erreur log mouvement stock achat fournisseur:", e.message);
-            }
+            await applyAchatStockOnApproval(connection, achat, req.user.id, id);
         } else if (qty <= 0) {
             await connection.rollback();
             return res.status(400).json({ message: "Quantité invalide pour cet achat fournisseur" });

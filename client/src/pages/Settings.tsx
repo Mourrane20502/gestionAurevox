@@ -1705,7 +1705,7 @@ export default function Settings() {
                                         </span>
                                         <span className="text-xs text-muted-foreground">
                                             {autoApprovalEnabled
-                                                ? "Approbation auto des ventes après l'heure configurée (rôle Commercial)."
+                                                ? "Approbation auto de tous les documents après l'heure configurée (tous les utilisateurs)."
                                                 : "Aucune validation automatique : les commerciaux passent toujours par les approbations."}
                                         </span>
                                     </div>
@@ -1813,7 +1813,9 @@ export default function Settings() {
                                                                     "Content-Type": "application/json",
                                                                     Authorization: `Bearer ${token}`,
                                                                 },
-                                                                body: JSON.stringify({ auto_approval_hour: autoApprovalHour }),
+                                                                body: JSON.stringify({
+                                                                    auto_approval_hour: autoApprovalHour,
+                                                                }),
                                                             });
                                                             if (res.ok) {
                                                                 toast.success("Heure de validation automatique mise à jour.");
@@ -1834,8 +1836,9 @@ export default function Settings() {
                                                 )}
                                             </div>
                                             <p className="text-[10px] text-muted-foreground mt-1">
-                                                * Uniquement pour les utilisateurs avec le rôle &quot;Commercial&quot; (user), et uniquement si la validation automatique est activée (bouton ci-dessus).
-                                                Les documents créés après cette heure peuvent être validés par défaut selon les règles métier (devis, commandes, etc.).
+                                                * Tous les utilisateurs, après l&apos;heure configurée. Documents validés automatiquement :
+                                                devis, commandes, factures, bons de livraison, avoirs, achats fournisseurs, règlements et remboursements.
+                                                L&apos;enregistrement d&apos;une heure réactive la validation automatique.
                                             </p>
                                         </div>
                                     </div>

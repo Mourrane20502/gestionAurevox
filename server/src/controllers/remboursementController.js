@@ -1,5 +1,5 @@
 const db = require("../config/db").promise();
-const { canApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 /**
  * List remboursements with commande and user info
@@ -221,13 +221,16 @@ exports.store = async (req, res) => {
             });
         }
 
-        // Toujours créer un remboursement en attente pour validation explicite dans Approvals.
-        const final_statut = "en_attente";
+        const final_statut = await resolveCreationApprovalStatut(req.user, "remboursements", {
+            pending: "en_attente",
+            approved: "valide",
+        });
+        const validePar = final_statut === "valide" ? created_by : null;
 
         await db.execute(
             `INSERT INTO remboursements (commande_id, montant, motif, statut, created_by, valide_par)
              VALUES (?, ?, ?, ?, ?, ?)`,
-            [commande_id, montantNum, String(motif).trim(), final_statut, created_by, null]
+            [commande_id, montantNum, String(motif).trim(), final_statut, created_by, validePar]
         );
         const [inserted] = await db.query("SELECT * FROM remboursements ORDER BY id DESC LIMIT 1");
         res.status(201).json(inserted[0]);

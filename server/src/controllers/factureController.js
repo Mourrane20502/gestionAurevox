@@ -1,7 +1,7 @@
 const db = require("../config/db").promise();
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getNextNumber } = require("../utils/numberingSettings");
-const { canApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 const { logFactureCreation, logFactureSortie } = require("../utils/documentStockMovementHelpers");
 const fs = require("fs");
 const path = require("path");
@@ -434,8 +434,11 @@ exports.createFacture = async (req, res) => {
             }
         }
 
-        // 2. Toute facture créée doit passer par validation Approvals.
-        const final_statut = "en_attente";
+        const final_statut = await resolveCreationApprovalStatut(req.user, "facture", {
+            pending: "en_attente",
+            approved: "non_payee",
+            requested: statut || status,
+        });
 
         // Clean other nullable fields
         let final_commande_id = (commande_id === "" || commande_id === "none" || !commande_id) ? null : commande_id;
@@ -1152,6 +1155,24 @@ exports.getAllFactures = async (req, res) => {
                     0
                 ) AS reste_a_payer,
                 (SELECT bl.id FROM bon_de_livraison bl WHERE bl.commande_id = f.commande_id AND (bl.statut IS NULL OR LOWER(TRIM(bl.statut)) NOT IN ('annulé', 'annulée', 'annulee', 'annule')) ORDER BY bl.id DESC LIMIT 1) AS bon_livraison_id,
+                (
+                    SELECT COALESCE(SUM(
+                        COALESCE(fi.quantite, 0) * (
+                            CASE
+                                WHEN fi.produit_id IS NOT NULL
+                                     AND p.prix_de_vente IS NOT NULL
+                                     AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0
+                                    THEN CAST(p.prix_de_vente AS DECIMAL(14,4))
+                                WHEN fi.produit_id IS NOT NULL
+                                    THEN COALESCE(CAST(p.prix AS DECIMAL(14,4)), CAST(fi.prix_unitaire AS DECIMAL(14,4)), 0)
+                                ELSE COALESCE(CAST(fi.prix_unitaire AS DECIMAL(14,4)), 0)
+                            END
+                        )
+                    ), 0)
+                    FROM facture_items fi
+                    LEFT JOIN products p ON fi.produit_id = p.id
+                    WHERE fi.facture_id = f.id
+                ) AS prix_vente_ht,
                 (
                     SELECT COALESCE(SUM(
                         CASE

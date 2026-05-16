@@ -2,7 +2,7 @@ const db = require("../config/db").promise();
 const { logDevisCreation, logDevisSortie } = require("../utils/documentStockMovementHelpers");
 const { formatDocumentNumber } = require("../utils/documentFormatter");
 const { getOffset, getNextNumber } = require("../utils/numberingSettings");
-const { canApprove, shouldAutoApprove } = require("../utils/approvalSettings");
+const { canApprove, resolveCreationApprovalStatut } = require("../utils/approvalSettings");
 
 const parseDateOnlySafe = (value) => {
     const raw = String(value || "").trim();
@@ -137,14 +137,11 @@ exports.createDevis = async (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        // For non-admin users, force status to "en attente"
-        // Non-admin/non-responsable users must go through approval unless auto-approval conditions are met
-        const allowedToApprove = await canApprove(req.user.role, 'devis');
-        const autoApprove = await shouldAutoApprove(req.user);
-        const defaultStatus = (req.user.role === 'user' && !autoApprove) ? "en attente" : "accepté";
-        
-        // Force 'accepté' if autoApprove is true
-        const finalStatus = autoApprove ? "accepté" : (allowedToApprove ? (statuts_devis || defaultStatus) : "en attente");
+        const finalStatus = await resolveCreationApprovalStatut(req.user, "devis", {
+            pending: "en attente",
+            approved: "accepté",
+            requested: statuts_devis,
+        });
 
         const [result] = await connection.query(queryDevis, [
             `TEMP-${Date.now()}`,
@@ -345,6 +342,24 @@ exports.getAllDevis = async (req, res) => {
                     LIMIT 1
                 ) AS bon_livraison_id,
                 COALESCE(d.reduction, 0) AS reduction,
+                (
+                    SELECT COALESCE(SUM(
+                        COALESCE(di.quantite, 0) * (
+                            CASE
+                                WHEN di.produit_id IS NOT NULL
+                                     AND p.prix_de_vente IS NOT NULL
+                                     AND CAST(p.prix_de_vente AS DECIMAL(14,4)) > 0
+                                    THEN CAST(p.prix_de_vente AS DECIMAL(14,4))
+                                WHEN di.produit_id IS NOT NULL
+                                    THEN COALESCE(CAST(p.prix AS DECIMAL(14,4)), CAST(di.prix_unitaire AS DECIMAL(14,4)), 0)
+                                ELSE COALESCE(CAST(di.prix_unitaire AS DECIMAL(14,4)), 0)
+                            END
+                        )
+                    ), 0)
+                    FROM devis_items di
+                    LEFT JOIN products p ON di.produit_id = p.id
+                    WHERE di.devis_id = d.id
+                ) AS prix_vente_ht,
                 (
                     SELECT COALESCE(SUM(
                         CASE

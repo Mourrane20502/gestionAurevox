@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/common/ui/card";
 import { Button } from "@/components/common/ui/button";
@@ -12,6 +12,16 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/common/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/common/ui/alert-dialog";
 import {
     Table,
     TableBody,
@@ -56,6 +66,42 @@ interface AchatItem {
     tva: number;
 }
 
+const TVA_OPTIONS = [0, 7, 10, 14, 20] as const;
+const DEFAULT_TVA = 20;
+const ACHAT_FORM_DRAFT_KEY = "gestionaurevox_achat_fournisseur_draft";
+
+function isManualAchatLine(item: AchatItem): boolean {
+    return !(item.produit_id && item.produit_id > 0) && item.designation.trim() !== "";
+}
+
+function getValidAchatItems(items: AchatItem[]): AchatItem[] {
+    return items.filter(
+        (it) =>
+            it.quantite > 0 &&
+            ((it.produit_id && it.produit_id > 0) || it.designation.trim() !== "")
+    );
+}
+
+const emptyAchatItem = (): AchatItem => ({
+    designation: "",
+    quantite: 1,
+    prix_unitaire: 0,
+    tva: DEFAULT_TVA,
+});
+
+function computeLineHt(item: AchatItem): number {
+    return (Number(item.quantite) || 0) * (Number(item.prix_unitaire) || 0);
+}
+
+function computeOrderTotals(lines: AchatItem[]) {
+    const totalHT = lines.reduce((acc, it) => acc + computeLineHt(it), 0);
+    const totalTVA = lines.reduce(
+        (acc, it) => acc + computeLineHt(it) * ((Number(it.tva) || 0) / 100),
+        0
+    );
+    return { totalHT, totalTVA, totalTTC: totalHT + totalTVA };
+}
+
 export default function Achats() {
     const navigate = useNavigate();
     const token = localStorage.getItem("token");
@@ -65,12 +111,30 @@ export default function Achats() {
     const [gestionnaires, setGestionnaires] = useState<Gestionnaire[]>([]);
     const [selectedFournisseurId, setSelectedFournisseurId] = useState<string>("");
     const [selectedGestionnaireId, setSelectedGestionnaireId] = useState<string>("");
-    const [items, setItems] = useState<AchatItem[]>([
-        { designation: "", quantite: 1, prix_unitaire: 0, tva: 0 },
-    ]);
+    const [items, setItems] = useState<AchatItem[]>([emptyAchatItem()]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [reglementDialogOpen, setReglementDialogOpen] = useState(false);
     const [pendingAchatId, setPendingAchatId] = useState<number | null>(null);
+    const [manualProductPrompt, setManualProductPrompt] = useState<AchatItem[] | null>(null);
+
+    useEffect(() => {
+        const raw = sessionStorage.getItem(ACHAT_FORM_DRAFT_KEY);
+        if (!raw) return;
+        try {
+            const draft = JSON.parse(raw) as {
+                items?: AchatItem[];
+                selectedFournisseurId?: string;
+                selectedGestionnaireId?: string;
+            };
+            if (draft.items?.length) setItems(draft.items);
+            if (draft.selectedFournisseurId) setSelectedFournisseurId(draft.selectedFournisseurId);
+            if (draft.selectedGestionnaireId) setSelectedGestionnaireId(draft.selectedGestionnaireId);
+            sessionStorage.removeItem(ACHAT_FORM_DRAFT_KEY);
+            toast.message("Brouillon de commande fournisseur restauré.");
+        } catch {
+            sessionStorage.removeItem(ACHAT_FORM_DRAFT_KEY);
+        }
+    }, []);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -102,6 +166,9 @@ export default function Achats() {
         if (field === "quantite" || field === "prix_unitaire" || field === "tva") {
             const n = Number(value);
             (next[index] as any)[field] = Number.isFinite(n) ? n : 0;
+        } else if (field === "designation") {
+            next[index].designation = String(value);
+            delete next[index].produit_id;
         } else {
             (next[index] as any)[field] = value;
         }
@@ -121,16 +188,17 @@ export default function Achats() {
     };
 
     const addItemRow = () => {
-        setItems(prev => [...prev, { designation: "", quantite: 1, prix_unitaire: 0, tva: 0 }]);
+        setItems((prev) => [...prev, emptyAchatItem()]);
     };
+
+    const orderTotals = useMemo(() => computeOrderTotals(items), [items]);
 
     const removeItemRow = (index: number) => {
         if (items.length === 1) return;
         setItems(prev => prev.filter((_, i) => i !== index));
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const submitAchats = useCallback(async () => {
         if (!selectedGestionnaireId) {
             toast.error("Aucun gestionnaire sélectionné");
             return;
@@ -139,14 +207,7 @@ export default function Achats() {
             toast.error("Veuillez choisir un fournisseur");
             return;
         }
-        const cleanItems = items.filter(
-            (it) =>
-                it.quantite > 0 &&
-                (
-                    (it.produit_id && it.produit_id > 0) ||
-                    it.designation.trim() !== ""
-                )
-        );
+        const cleanItems = getValidAchatItems(items);
         if (cleanItems.length === 0) {
             toast.error("Veuillez ajouter au moins une ligne produit valide");
             return;
@@ -210,7 +271,7 @@ export default function Achats() {
                 console.error(pdfErr);
                 toast.success("Achat fournisseur enregistré");
             }
-            setItems([{ designation: "", quantite: 1, prix_unitaire: 0, tva: 0 }]);
+            setItems([emptyAchatItem()]);
 
             // Notifier le sidebar pour rafraîchir le compteur d'approbations
             window.dispatchEvent(new CustomEvent("approvals-updated"));
@@ -225,7 +286,42 @@ export default function Achats() {
         } finally {
             setIsSubmitting(false);
         }
+    }, [items, selectedFournisseurId, selectedGestionnaireId, fournisseurs, gestionnaires, catalogProducts, token]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const cleanItems = getValidAchatItems(items);
+        const manualLines = cleanItems.filter(isManualAchatLine);
+        if (manualLines.length > 0) {
+            setManualProductPrompt(manualLines);
+            return;
+        }
+        void submitAchats();
     };
+
+    const goToCreateProduct = () => {
+        const first = manualProductPrompt?.[0];
+        sessionStorage.setItem(
+            ACHAT_FORM_DRAFT_KEY,
+            JSON.stringify({ items, selectedFournisseurId, selectedGestionnaireId })
+        );
+        setManualProductPrompt(null);
+        navigate("/dashboard/products", {
+            state: {
+                openCreateForm: true,
+                draftProduct: {
+                    nom: first?.designation?.trim() ?? "",
+                    prix: String(first?.prix_unitaire ?? 0),
+                    fournisseur_id: selectedFournisseurId || "",
+                },
+            },
+        });
+    };
+
+    const manualPromptLabel =
+        manualProductPrompt && manualProductPrompt.length > 0
+            ? manualProductPrompt.map((it) => it.designation.trim()).filter(Boolean).join(", ")
+            : "";
 
     return (
         <div className="space-y-6">
@@ -371,15 +467,23 @@ export default function Achats() {
                                                 />
                                             </TableCell>
                                             <TableCell className="text-center">
-                                                <Input
-                                                    type="number"
-                                                    className="h-9 w-20 mx-auto text-xs text-center"
-                                                    value={item.tva}
-                                                    onChange={e =>
-                                                        handleItemChange(index, "tva", e.target.value)
+                                                <Select
+                                                    value={String(item.tva ?? DEFAULT_TVA)}
+                                                    onValueChange={(v) =>
+                                                        handleItemChange(index, "tva", v)
                                                     }
-                                                    step="0.01"
-                                                />
+                                                >
+                                                    <SelectTrigger className="h-9 w-[88px] mx-auto text-xs">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {TVA_OPTIONS.map((rate) => (
+                                                            <SelectItem key={rate} value={String(rate)}>
+                                                                {rate} %
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
                                             </TableCell>
                                             <TableCell className="text-right pr-3">
                                                 <button
@@ -400,29 +504,110 @@ export default function Achats() {
                             </Table>
                         </div>
 
-                        <div className="flex justify-between items-center">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                             <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="gap-2"
+                                className="gap-2 w-fit"
                                 onClick={addItemRow}
                             >
                                 <Plus className="h-4 w-4" />
                                 Ajouter une ligne
                             </Button>
 
-                            <Button
-                                type="submit"
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                                disabled={isSubmitting}
-                            >
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
+                                <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm space-y-1.5 min-w-[220px]">
+                                    <div className="flex justify-between gap-4 text-muted-foreground">
+                                        <span>Total HT</span>
+                                        <span className="font-medium text-foreground tabular-nums">
+                                            {orderTotals.totalHT.toLocaleString("fr-FR", {
+                                                maximumFractionDigits: 2,
+                                            })}{" "}
+                                            DH
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between gap-4 text-muted-foreground">
+                                        <span>TVA</span>
+                                        <span className="font-medium text-foreground tabular-nums">
+                                            {orderTotals.totalTVA.toLocaleString("fr-FR", {
+                                                maximumFractionDigits: 2,
+                                            })}{" "}
+                                            DH
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between gap-4 pt-1 border-t border-border font-semibold text-foreground">
+                                        <span>Total TTC</span>
+                                        <span className="tabular-nums text-emerald-700 dark:text-emerald-400">
+                                            {orderTotals.totalTTC.toLocaleString("fr-FR", {
+                                                maximumFractionDigits: 2,
+                                            })}{" "}
+                                            DH
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <Button
+                                    type="submit"
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white w-full sm:w-auto shrink-0"
+                                    disabled={isSubmitting}
+                                >
                                 {isSubmitting ? "Enregistrement..." : "Enregistrer l'achat"}
-                            </Button>
+                                </Button>
+                            </div>
                         </div>
                     </form>
                 </CardContent>
             </Card>
+
+            <AlertDialog
+                open={manualProductPrompt != null && manualProductPrompt.length > 0}
+                onOpenChange={(open) => {
+                    if (!open) setManualProductPrompt(null);
+                }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Produit absent du catalogue</AlertDialogTitle>
+                        <AlertDialogDescription className="space-y-2">
+                            <span className="block">
+                                {manualProductPrompt && manualProductPrompt.length > 1
+                                    ? `${manualProductPrompt.length} lignes sont saisies manuellement et ne sont pas liées à un produit du stock.`
+                                    : "Ce produit est saisi manuellement et n'est pas encore dans le catalogue."}
+                            </span>
+                            {manualPromptLabel ? (
+                                <span className="block font-medium text-foreground">{manualPromptLabel}</span>
+                            ) : null}
+                            <span className="block">
+                                Souhaitez-vous l&apos;ajouter d&apos;abord dans les produits, puis revenir
+                                enregistrer cette commande ?
+                            </span>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+                        <AlertDialogCancel>Annuler</AlertDialogCancel>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                                setManualProductPrompt(null);
+                                void submitAchats();
+                            }}
+                        >
+                            Continuer sans ajouter
+                        </Button>
+                        <AlertDialogAction
+                            className="bg-indigo-600 hover:bg-indigo-700"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                goToCreateProduct();
+                            }}
+                        >
+                            Créer le produit
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <Dialog open={reglementDialogOpen} onOpenChange={setReglementDialogOpen}>
                 <DialogContent className="max-w-lg">
