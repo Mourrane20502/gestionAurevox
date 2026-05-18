@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { exportToExcel } from "@/utils/exportExcel";
+import { isManualCatalogLine } from "@/lib/catalogProductMatch";
 import { normalizeLineTvaPercent } from "@/lib/normalizeLineTva";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
@@ -29,6 +30,16 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/common/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/common/ui/alert-dialog";
 import {
     Tabs,
     TabsContent,
@@ -193,6 +204,12 @@ function Devis() {
     const [clientSearch, setClientSearch] = useState("");
     const [showClientDropdown, setShowClientDropdown] = useState(false);
     const [activeProductSearchIndex, setActiveProductSearchIndex] = useState<number | null>(null);
+    const selectingProductRef = useRef(false);
+    const [manualCatalogPrompt, setManualCatalogPrompt] = useState<{
+        index: number;
+        designation: string;
+        prix: number;
+    } | null>(null);
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [editingDevis, setEditingDevis] = useState<Devis | null>(null);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -493,7 +510,35 @@ function Devis() {
         calculateTotals(newItems);
     };
 
+    const handleDesignationBlur = (index: number) => {
+        const item = items[index];
+        if (!item) return;
+        if (isManualCatalogLine(products, item.designation || "", item.produit_id)) {
+            setManualCatalogPrompt({
+                index,
+                designation: item.designation.trim(),
+                prix: Number(item.prix_unitaire) || 0,
+            });
+        }
+    };
+
+    const goToCreateCatalogProduct = () => {
+        const prompt = manualCatalogPrompt;
+        setManualCatalogPrompt(null);
+        navigate("/dashboard/products", {
+            state: {
+                openCreateForm: true,
+                draftProduct: {
+                    nom: prompt?.designation ?? "",
+                    prix: String(prompt?.prix ?? 0),
+                    prix_de_vente: String(prompt?.prix ?? 0),
+                },
+            },
+        });
+    };
+
     const handleProductSelect = (index: number, product: Product) => {
+        selectingProductRef.current = true;
         const qte = items[index].quantite || 1;
         if (qte > product.stock) {
             toast.error(`Stock insuffisant pour ${product.nom}. Disponible: ${product.stock}`);
@@ -1725,7 +1770,16 @@ function Devis() {
                                                                     value={item.designation || ""}
                                                                     onChange={(e) => handleItemChange(index, 'designation', e.target.value)}
                                                                     onFocus={() => setActiveProductSearchIndex(index)}
-                                                                    onBlur={() => setTimeout(() => setActiveProductSearchIndex(null), 200)}
+                                                                    onBlur={() => {
+                                                                        setTimeout(() => {
+                                                                            setActiveProductSearchIndex(null);
+                                                                            if (selectingProductRef.current) {
+                                                                                selectingProductRef.current = false;
+                                                                                return;
+                                                                            }
+                                                                            handleDesignationBlur(index);
+                                                                        }, 200);
+                                                                    }}
                                                                     className="border-transparent bg-transparent focus:bg-card focus:border-indigo-400 h-10 text-sm w-full font-medium"
                                                                 />
                                                                 {activeProductSearchIndex === index &&
@@ -1750,7 +1804,10 @@ function Devis() {
                                                                                 String(p.reference || "").toLowerCase().includes(query)
                                                                             );
                                                                         }).map((p) => (
-                                                                            <div key={p.id} onMouseDown={() => handleProductSelect(index, p)} className="px-4 py-3 hover:bg-indigo-500/10 cursor-pointer text-sm font-medium text-foreground flex items-center justify-between group border-b border-border last:border-0 transition-colors">
+                                                                            <div key={p.id} onMouseDown={() => {
+                                                                                    selectingProductRef.current = true;
+                                                                                    handleProductSelect(index, p);
+                                                                                }} className="px-4 py-3 hover:bg-indigo-500/10 cursor-pointer text-sm font-medium text-foreground flex items-center justify-between group border-b border-border last:border-0 transition-colors">
                                                                                 <div className="flex flex-col gap-0.5">
                                                                                     <span className="font-bold group-hover:text-indigo-600 dark:group-hover:text-indigo-400">{p.nom}</span>
                                                                                     {p.reference && (
@@ -2121,6 +2178,41 @@ function Devis() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog
+                open={manualCatalogPrompt != null}
+                onOpenChange={(open) => {
+                    if (!open) setManualCatalogPrompt(null);
+                }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Produit absent du catalogue</AlertDialogTitle>
+                        <AlertDialogDescription className="space-y-2">
+                            <span className="block">
+                                Ce produit n&apos;est pas dans le catalogue. Souhaitez-vous l&apos;ajouter ?
+                            </span>
+                            {manualCatalogPrompt?.designation ? (
+                                <span className="block font-medium text-foreground">
+                                    {manualCatalogPrompt.designation}
+                                </span>
+                            ) : null}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+                        <AlertDialogCancel>Fermer</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="bg-indigo-600 hover:bg-indigo-700"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                goToCreateCatalogProduct();
+                            }}
+                        >
+                            Ajouter au catalogue
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* Quick Add Client Dialog */}
             <Dialog open={showQuickAddClientDialog} onOpenChange={setShowQuickAddClientDialog}>
