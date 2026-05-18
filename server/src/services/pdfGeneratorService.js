@@ -515,7 +515,7 @@ const generateHtmlTemplate = (docData, items, pdv, config) => {
             <div class="totals-box">
                 <div class="totals-title">Récapitulatif</div>
                 <div class="totals-row">
-                    <span>Montant HT :</span>
+                    <span>Montant :</span>
                     <span>${formatter(computedHT)} DH</span>
                 </div>
                 <div class="totals-row">

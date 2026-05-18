@@ -677,7 +677,7 @@ export default function Avoirs() {
             toast.error("Aucun avoir à exporter");
             return;
         }
-        const headers = ["Numero Avoir", "Date", "Client", "Montant HT", "Montant", "Banque", "Statut"];
+        const headers = ["Numero Avoir", "Date", "Client", "Montant", "Montant TTC", "Banque", "Statut"];
         const rows = filteredAvoirs.map(a => [
             a.numero_avoir || '',
             new Date(a.date_avoir).toLocaleDateString(),
@@ -1657,7 +1657,7 @@ export default function Avoirs() {
                                 <div className="bg-muted/50 rounded-2xl p-6 border border-border flex flex-col md:flex-row gap-8 justify-between items-center bg-card/50">
                                     <div className="flex gap-10 text-center md:text-left">
                                         <div>
-                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant HT de l'avoir</p>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Montant  de l'avoir</p>
                                             <p className="text-xl font-bold text-foreground">{currentTotalHT.toLocaleString()} DH</p>
                                         </div>
                                         <div>

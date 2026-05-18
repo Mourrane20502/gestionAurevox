@@ -177,7 +177,7 @@ export default function Tva() {
             "Point de vente",
             "Créé par",
             "Statut",
-            "Montant HT",
+            "Montant",
             "Montant TVA",
             "Montant TTC",
         ];
@@ -287,7 +287,7 @@ export default function Tva() {
                     <p className="text-2xl font-bold mt-1 tabular-nums">{totals.count}</p>
                 </div>
                 <div className="bg-card rounded-xl border border-border shadow-sm p-4">
-                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Total HT</p>
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Total</p>
                     <p className="text-2xl font-bold mt-1 tabular-nums">{formatDH(totals.ht)} DH</p>
                 </div>
                 <div className="bg-card rounded-xl border border-border shadow-sm p-4">

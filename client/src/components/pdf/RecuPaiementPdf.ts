@@ -485,7 +485,6 @@ export const drawSingleReceipt = (
         );
     }
 
-    // Tableau PHOTO / DÉSIGNATION / TYPE / QTÉ / MONTANT — pagination auto
     const pageH = doc.internal.pageSize.getHeight();
     const marginX = 18;
     const marginRight = 18;
