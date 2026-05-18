@@ -40,8 +40,8 @@ const escapeHtml = (value) =>
 
 const formatQtyBl = (value) => {
     const n = Number(value);
-    if (!Number.isFinite(n)) return "0,0";
-    return n.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+    if (!Number.isFinite(n)) return "0";
+    return Math.round(n).toLocaleString("fr-FR");
 };
 
 const generateBonLivraisonHtmlTemplate = (docData, items, pdv, config) => {
@@ -371,7 +371,6 @@ const generateHtmlTemplate = (docData, items, pdv, config) => {
             <thead>
                 <tr>
                     <th style="text-align:left;">Désignation</th>
-                    <th>Gramme</th>
                     <th>Qté</th>
                     <th>PU</th>
                     <th>Reduction</th>
@@ -387,14 +386,13 @@ const generateHtmlTemplate = (docData, items, pdv, config) => {
                     const designationWithRef = reference ? `${designation} (${reference})` : designation;
                     return `<tr>
                         <td style="text-align:left;">${designationWithRef}</td>
-                        <td>${formatter(item.grammage || 0)}</td>
-                        <td>${formatter(item.quantite || 0)}</td>
+                        <td>${formatQtyBl(item.quantite || 0)}</td>
                         <td>${formatter(item.prix_unitaire || 0)}</td>
                         <td>${formatter(item.reduction || 0)}</td>
                         <td>${formatter(item.tva || 0)}</td>
                         <td>${formatter(totalHTLigne)}</td>
                     </tr>`;
-                }).join("") : `<tr><td colspan="7" style="text-align:center;color:#888;">Aucune ligne d'article.</td></tr>`}
+                }).join("") : `<tr><td colspan="6" style="text-align:center;color:#888;">Aucune ligne d'article.</td></tr>`}
             </tbody>
         </table>
         <div class="totals">
