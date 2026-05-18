@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { factureHeaderTvaPercent, factureLineTvaPercent } from "@/lib/normalizeLineTva";
 import { exportToExcel } from "@/utils/exportExcel";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/common/ui/button";
@@ -339,38 +340,45 @@ export default function Avoirs() {
                     setClientSearch(client.nom_complet);
                 }
 
-                // Calculer le reste à payer pour proposer un avoir du montant restant
+                const factureTvaRate = factureHeaderTvaPercent(data);
+
+                // Calculer le reste à payer pour proposer un avoir du montant restant (TTC)
                 const totalTTCFacture = Number(data.montant_ttc) || 0;
                 const totalRegle = Number(data.total_regle) || 0;
                 const resteAPayer = totalTTCFacture - totalRegle;
 
                 // Si la facture est partiellement payée, on propose un avoir du reste à payer
                 if (totalRegle > 0 && resteAPayer > 0) {
+                    const htReste = resteAPayer / (1 + factureTvaRate / 100);
                     setItems([{
                         designation: `Avoir sur facture ${data.numero_facture} (solde restant)`,
                         quantite: 1,
-                        prix_unitaire: resteAPayer / (1 + (Number(data.items?.[0]?.tva || 20) / 100)),
-                        tva: Number(data.items?.[0]?.tva || 20),
+                        prix_unitaire: htReste,
+                        tva: factureTvaRate,
                         reduction: 0,
-                        montant_ht: resteAPayer / (1 + (Number(data.items?.[0]?.tva || 20) / 100))
+                        montant_ht: htReste,
                     }]);
-                    toast.info(`Facture partiellement payée (${totalRegle.toLocaleString()} DH réglés). L'avoir est initialisé avec le solde restant : ${resteAPayer.toLocaleString()} DH.`);
+                    toast.info(`Facture partiellement payée (${totalRegle.toLocaleString()} DH réglés). L'avoir est initialisé avec le solde restant : ${resteAPayer.toLocaleString()} DH TTC.`);
                 } else if (data.items && data.items.length > 0) {
-                    // Copy items (avec réduction comme sur la facture)
-                    setItems(data.items.map((it: any) => {
-                        const red = Number(it.reduction) || 0;
-                        const brut = (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0);
-                        const net = brut * (1 - red / 100);
-                        return {
-                            produit_id: it.produit_id,
-                            designation: it.designation,
-                            quantite: it.quantite,
-                            prix_unitaire: it.prix_unitaire,
-                            tva: it.tva,
-                            reduction: red,
-                            montant_ht: net
-                        };
-                    }));
+                    setItems(
+                        data.items.map((it: { produit_id?: number; designation?: string; quantite?: number; prix_unitaire?: number; tva?: number; reduction?: number; montant_ht?: number }) => {
+                            const red = Number(it.reduction) || 0;
+                            const brut = (Number(it.quantite) || 0) * (Number(it.prix_unitaire) || 0);
+                            const net =
+                                Number(it.montant_ht) ||
+                                brut * (1 - red / 100);
+                            const tva = factureLineTvaPercent(it.tva, factureTvaRate);
+                            return {
+                                produit_id: it.produit_id,
+                                designation: it.designation,
+                                quantite: it.quantite,
+                                prix_unitaire: it.prix_unitaire,
+                                tva,
+                                reduction: red,
+                                montant_ht: net,
+                            };
+                        })
+                    );
                 }
             }
         } catch (error) {
@@ -1607,7 +1615,10 @@ export default function Avoirs() {
                                                         </TableCell>
                                                         <TableCell className="py-2">
                                                             <Select
-                                                                value={item.tva.toString()}
+                                                                value={(() => {
+                                                                    const n = Math.round(Number(item.tva) || 0);
+                                                                    return [0, 7, 10, 20].includes(n) ? String(n) : "20";
+                                                                })()}
                                                                 onValueChange={(v) => handleItemChange(index, 'tva', parseFloat(v))}
                                                             >
                                                                 <SelectTrigger className="border-transparent bg-transparent h-9 text-sm">
