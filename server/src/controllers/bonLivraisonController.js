@@ -173,6 +173,19 @@ const ensureBonLivraisonSchema = async () => {
         console.warn("[bonLivraison] point_de_vente_id backfill:", e?.message || e);
     }
 
+    // Aligner le PDV stocké sur le BL avec celui de la commande (évite un PDV produit obsolète)
+    try {
+        await db.query(`
+            UPDATE bon_de_livraison bl
+            INNER JOIN commandes c ON c.id = bl.commande_id
+            SET bl.point_de_vente_id = c.point_de_vente_id
+            WHERE c.point_de_vente_id IS NOT NULL
+              AND COALESCE(bl.point_de_vente_id, 0) <> c.point_de_vente_id
+        `);
+    } catch (e) {
+        console.warn("[bonLivraison] point_de_vente_id sync from commande:", e?.message || e);
+    }
+
     try {
         await db.query(`
             UPDATE bon_de_livraison bl
@@ -200,6 +213,27 @@ const hasColumn = async (table, column) => {
     return Array.isArray(rows) && rows.length > 0;
 };
 
+/** Même logique que getAllCommandes : PDV commande, sinon premier PDV article. */
+const resolveBlPointDeVenteNom = (row) => {
+    const pdvCount = Number(row.pdv_count_from_items) || 0;
+    if (pdvCount > 1) return "Plusieurs points de vente";
+    return row.point_de_vente_nom_from_items || row.point_de_vente_nom_commande || null;
+};
+
+const sanitizeBlListRow = (row) => {
+    const {
+        point_de_vente_nom_from_items: _pdvItems,
+        point_de_vente_nom_commande: _pdvCmd,
+        pdv_count_from_items: _pdvCnt,
+        point_de_vente_nom: _pdvLegacy,
+        ...rest
+    } = row;
+    return {
+        ...rest,
+        point_de_vente_nom: resolveBlPointDeVenteNom(row),
+    };
+};
+
 const blListSelect = `
             SELECT bl.*,
                    COALESCE(bl.numero_bon_livraison, bl.numero_bl) AS numero_bon_livraison,
@@ -208,7 +242,29 @@ const blListSelect = `
                    cl.nom_complet AS client_nom,
                    cl.email AS client_email,
                    CONCAT(u.prenom, ' ', u.nom) AS user_nom,
-                   pv.nom AS point_de_vente_nom,
+                   (
+                        SELECT COUNT(DISTINCT p.id_point_de_vente)
+                        FROM commande_items ci
+                        INNER JOIN products p ON p.id = ci.produit_id
+                        WHERE ci.commande_id = c.id
+                          AND p.id_point_de_vente IS NOT NULL
+                   ) AS pdv_count_from_items,
+                   (
+                        SELECT pv2.nom
+                        FROM commande_items ci
+                        INNER JOIN products p ON p.id = ci.produit_id
+                        INNER JOIN point_de_vente pv2 ON pv2.id = p.id_point_de_vente
+                        WHERE ci.commande_id = c.id
+                          AND p.id_point_de_vente IS NOT NULL
+                        ORDER BY ci.id
+                        LIMIT 1
+                   ) AS point_de_vente_nom_from_items,
+                   (
+                        SELECT pv_cmd.nom
+                        FROM point_de_vente pv_cmd
+                        WHERE pv_cmd.id = c.point_de_vente_id
+                        LIMIT 1
+                   ) AS point_de_vente_nom_commande,
                    COALESCE(
                         (
                             SELECT ss_items.NOM_SOUS_SOCIETE
@@ -253,19 +309,7 @@ const blListSelect = `
             LEFT JOIN commandes c ON c.id = bl.commande_id
             LEFT JOIN clients cl ON cl.id = bl.client_id
             LEFT JOIN users u ON u.id = COALESCE(bl.user_id, c.user_id)
-            LEFT JOIN point_de_vente pv ON pv.id = COALESCE(
-                bl.point_de_vente_id,
-                c.point_de_vente_id,
-                (
-                    SELECT p.id_point_de_vente
-                    FROM commande_items ci
-                    INNER JOIN products p ON p.id = ci.produit_id
-                    WHERE ci.commande_id = c.id
-                      AND p.id_point_de_vente IS NOT NULL
-                    ORDER BY ci.id
-                    LIMIT 1
-                )
-            )
+            LEFT JOIN point_de_vente pv ON pv.id = c.point_de_vente_id
             LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
 `;
 
@@ -293,7 +337,7 @@ exports.getAllBonsLivraison = async (_req, res) => {
     try {
         await ensureBonLivraisonSchema();
         const [rows] = await db.query(`${blListSelect} ORDER BY bl.id DESC`);
-        res.json(rows);
+        res.json((Array.isArray(rows) ? rows : []).map(sanitizeBlListRow));
     } catch (error) {
         console.error("Error fetching bons de livraison:", error);
         res.status(500).json({ message: "Server error" });
@@ -329,7 +373,7 @@ exports.getBonLivraisonById = async (req, res) => {
             }
         }
 
-        res.json({ ...row, items, reglement_lie });
+        res.json({ ...sanitizeBlListRow(row), items, reglement_lie });
     } catch (error) {
         console.error("Error fetching bon de livraison by id:", error);
         res.status(500).json({ message: "Server error" });
