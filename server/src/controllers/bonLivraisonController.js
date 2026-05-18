@@ -269,6 +269,26 @@ const blListSelect = `
             LEFT JOIN sous_societe ss ON ss.ID = pv.id_sous_gestionnaire
 `;
 
+const blDetailItemsQuery = `
+    SELECT
+        bi.id,
+        bi.designation,
+        bi.quantite AS quantite_livree,
+        COALESCE(NULLIF(TRIM(p.reference), ''), NULLIF(TRIM(p.code_barre), ''), '—') AS reference,
+        COALESCE(ci.quantite, bi.quantite) AS quantite_commandee,
+        p.photo
+    FROM bon_de_livraison_items bi
+    INNER JOIN bon_de_livraison bl ON bl.id = bi.bon_livraison_id
+    LEFT JOIN products p ON p.id = bi.produit_id
+    LEFT JOIN commande_items ci ON ci.commande_id = bl.commande_id
+        AND (
+            (bi.produit_id IS NOT NULL AND ci.produit_id = bi.produit_id)
+            OR (bi.produit_id IS NULL AND TRIM(COALESCE(ci.designation, '')) = TRIM(COALESCE(bi.designation, '')))
+        )
+    WHERE bi.bon_livraison_id = ?
+    ORDER BY bi.id ASC
+`;
+
 exports.getAllBonsLivraison = async (_req, res) => {
     try {
         await ensureBonLivraisonSchema();
@@ -289,14 +309,7 @@ exports.getBonLivraisonById = async (req, res) => {
 
         if (!row) return res.status(404).json({ message: "Bon de livraison introuvable" });
 
-        const [items] = await db.query(
-            `SELECT bi.*, p.photo, p.reference
-             FROM bon_de_livraison_items bi
-             LEFT JOIN products p ON p.id = bi.produit_id
-             WHERE bi.bon_livraison_id = ?
-             ORDER BY bi.id ASC`,
-            [id]
-        );
+        const [items] = await db.query(blDetailItemsQuery, [id]);
 
         let reglement_lie = null;
         const commandeId = row.commande_id != null ? Number(row.commande_id) : null;
@@ -813,24 +826,7 @@ const blPdfConfig = {
     footerLeft: "Merci pour votre confiance.",
 };
 
-const blPdfItemsQuery = `
-    SELECT
-        bi.id,
-        bi.designation,
-        bi.quantite AS quantite_livree,
-        COALESCE(NULLIF(TRIM(p.reference), ''), NULLIF(TRIM(p.code_barre), ''), '—') AS reference,
-        COALESCE(ci.quantite, bi.quantite) AS quantite_commandee
-    FROM bon_de_livraison_items bi
-    INNER JOIN bon_de_livraison bl ON bl.id = bi.bon_livraison_id
-    LEFT JOIN products p ON p.id = bi.produit_id
-    LEFT JOIN commande_items ci ON ci.commande_id = bl.commande_id
-        AND (
-            (bi.produit_id IS NOT NULL AND ci.produit_id = bi.produit_id)
-            OR (bi.produit_id IS NULL AND TRIM(COALESCE(ci.designation, '')) = TRIM(COALESCE(bi.designation, '')))
-        )
-    WHERE bi.bon_livraison_id = ?
-    ORDER BY bi.id ASC
-`;
+const blPdfItemsQuery = blDetailItemsQuery;
 
 const blPdfSelect = `
             SELECT bl.*,

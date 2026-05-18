@@ -200,7 +200,12 @@ const drawSingleRemboursementReceipt = (
     const dejaRegle = Number(data.commande_total_regle || 0);
     const montantRembourse = Number(data.montant || 0);
     const regleNetApresRemboursement = Math.max(dejaRegle - montantRembourse, 0);
-    const resteApresRemboursement = Math.max(totalCommande - regleNetApresRemboursement, 0);
+    const resteDuApresReglementNet = Math.max(totalCommande - regleNetApresRemboursement, 0);
+    // Remboursement couvrant tout le TTC commande → solde nul (ex. 600 DH remboursés sur 600 DH)
+    const resteApresRemboursement =
+        montantRembourse >= totalCommande - 0.01
+            ? 0
+            : resteDuApresReglementNet;
 
     const boxY = currentY;
     doc.setDrawColor(220, 223, 230);

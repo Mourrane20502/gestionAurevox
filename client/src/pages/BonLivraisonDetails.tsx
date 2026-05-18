@@ -50,10 +50,8 @@ type BlItem = {
     produit_reference?: string | null;
     product_reference?: string | null;
     quantite?: number;
-    prix_unitaire?: number;
-    tva?: number;
-    reduction?: number;
-    montant_ht?: number;
+    quantite_commandee?: number;
+    quantite_livree?: number;
     photo?: string | null;
 };
 
@@ -91,17 +89,11 @@ function formatDesignationWithReference(
     return label;
 }
 
-const roundMoney = (v: number) => Math.round(v * 100) / 100;
-
-const lineMontantHt = (item: BlItem) => roundMoney(Number(item.montant_ht) || 0);
-
-/** TTC ligne = montant HT × (1 + TVA % / 100) */
-const lineMontantTtc = (item: BlItem) => {
-    const ht = lineMontantHt(item);
-    const tvaPct = Number(item.tva) || 0;
-    if (Math.abs(tvaPct) < 0.005) return ht;
-    return roundMoney(ht * (1 + tvaPct / 100));
-};
+const fmtQty = (v: number | string | null | undefined) =>
+    Number(v || 0).toLocaleString("fr-FR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+    });
 
 export default function BonLivraisonDetails() {
     const { id } = useParams<{ id: string }>();
@@ -567,26 +559,14 @@ export default function BonLivraisonDetails() {
                         <Table>
                             <TableHeader>
                                 <TableRow className="bg-muted/10 border-b border-border">
-                                    <TableHead className="w-[40%] text-[10px] font-black uppercase tracking-widest py-5 pl-8 text-foreground">
+                                    <TableHead className="w-[50%] text-[10px] font-black uppercase tracking-widest py-5 pl-8 text-foreground">
                                         Désignation
                                     </TableHead>
                                     <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
-                                        Qté
+                                        Qté commandé
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
-                                        P.U
-                                    </TableHead>
-                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
-                                        Prix HT
-                                    </TableHead>
-                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
-                                        TVA
-                                    </TableHead>
-                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 text-foreground">
-                                        Remise
-                                    </TableHead>
-                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-right py-5 pr-8 text-foreground">
-                                        Total TTC
+                                    <TableHead className="text-[10px] font-black uppercase tracking-widest text-center py-5 pr-8 text-foreground">
+                                        Qté livré
                                     </TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -615,54 +595,16 @@ export default function BonLivraisonDetails() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-center font-bold tabular-nums">
-                                            {Number(item.quantite || 0).toLocaleString("fr-FR", {
-                                                minimumFractionDigits: 0,
-                                                maximumFractionDigits: 2,
-                                            })}
+                                            {fmtQty(item.quantite_commandee ?? item.quantite)}
                                         </TableCell>
-                                        <TableCell className="text-center tabular-nums font-medium text-slate-600 dark:text-slate-400">
-                                            {Number(item.prix_unitaire || 0).toLocaleString("fr-FR", {
-                                                minimumFractionDigits: 2,
-                                                maximumFractionDigits: 2,
-                                            })}{" "}
-                                            DH
-                                        </TableCell>
-                                        <TableCell className="text-center font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
-                                            {lineMontantHt(item).toLocaleString("fr-FR", {
-                                                minimumFractionDigits: 2,
-                                                maximumFractionDigits: 2,
-                                            })}{" "}
-                                            DH
-                                        </TableCell>
-                                        <TableCell className="text-center">
-                                            <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded text-[10px] font-bold text-slate-500">
-                                                {Number(item.tva || 0).toFixed(0)}%
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-center">
-                                            <span
-                                                className={cn(
-                                                    "px-2.5 py-1 rounded text-[10px] font-bold",
-                                                    Number(item.reduction) > 0
-                                                        ? "bg-amber-100 text-amber-600"
-                                                        : "bg-slate-50 text-slate-300"
-                                                )}
-                                            >
-                                                {Number(item.reduction || 0).toFixed(1).replace(".", ",")}%
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className="text-right pr-8 font-extrabold text-slate-800 dark:text-slate-200 tabular-nums">
-                                            {lineMontantTtc(item).toLocaleString("fr-FR", {
-                                                minimumFractionDigits: 2,
-                                                maximumFractionDigits: 2,
-                                            })}{" "}
-                                            DH
+                                        <TableCell className="text-center pr-8 font-bold tabular-nums text-indigo-700">
+                                            {fmtQty(item.quantite_livree ?? item.quantite)}
                                         </TableCell>
                                     </TableRow>
                                 ))}
                                 {items.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-16">
+                                        <TableCell colSpan={3} className="text-center py-16">
                                             <div className="flex flex-col items-center gap-2 opacity-30">
                                                 <Truck className="h-12 w-12" />
                                                 <p className="text-sm font-bold uppercase tracking-widest">Aucun article sur ce BL</p>
@@ -675,56 +617,6 @@ export default function BonLivraisonDetails() {
                     </div>
                 </CardContent>
             </Card>
-
-            <div className="flex flex-col items-end gap-4">
-                <Card className="w-full md:w-[320px] border border-border overflow-hidden bg-white dark:bg-zinc-900 shadow-xl relative">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-600/5 rounded-full -mr-16 -mt-16 transition-transform hover:scale-125" />
-                    <CardContent className="p-6 space-y-4">
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center group text-sm">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">
-                                    Total HT
-                                </span>
-                                <span className="font-bold text-foreground tabular-nums">
-                                    {Number(bl.montant_ht || 0).toLocaleString("fr-FR", {
-                                        minimumFractionDigits: 2,
-                                        maximumFractionDigits: 2,
-                                    })}{" "}
-                                    DH
-                                </span>
-                            </div>
-                            <div className="flex justify-between items-center group text-sm">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground group-hover:text-indigo-600 transition-colors">
-                                    TVA appliquée
-                                </span>
-                                <span className="font-bold text-amber-500 tabular-nums">
-                                    +{Number(bl.montant_tva || 0).toLocaleString("fr-FR", {
-                                        minimumFractionDigits: 2,
-                                        maximumFractionDigits: 2,
-                                    })}{" "}
-                                    DH
-                                </span>
-                            </div>
-                        </div>
-
-                        <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent my-4" />
-
-                        <div className="flex flex-col gap-1 items-end pt-1">
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500 mb-1">Total net à payer TTC</span>
-                            <div className="flex items-baseline gap-1.5">
-                                <span className="text-3xl font-black text-indigo-700 tracking-tight">
-                                    {Number(bl.montant_ttc || 0).toLocaleString("fr-FR", {
-                                        minimumFractionDigits: 2,
-                                        maximumFractionDigits: 2,
-                                    })}
-                                </span>
-                                <span className="text-sm font-black text-indigo-600/60 uppercase">DH</span>
-                            </div>
-                        </div>
-                    </CardContent>
-                    <div className="bg-indigo-600 h-1.5 w-full" />
-                </Card>
-            </div>
 
             <Dialog open={isEmailModalOpen} onOpenChange={setIsEmailModalOpen}>
                 <DialogContent className="sm:max-w-md">
