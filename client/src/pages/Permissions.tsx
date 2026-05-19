@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Shield, Save, RefreshCcw, Check } from "lucide-react";
 import { Button } from "@/components/common/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/common/ui/card";
@@ -33,6 +33,26 @@ const defaultProductActionConfigByRole = (): ProductActionConfigByRole => ({
     user: { canEdit: false, canDelete: false },
 });
 
+const GROS_APPROVAL_KEYS = ["devis_gros", "commande_gros", "facture_gros", "avoir_gros"] as const;
+
+const isGrosPermission = (p: Permission) => /gros/i.test(p.name) || /gros/i.test(p.description);
+
+const stripGrosFromApprovalConfigs = (configs: Record<string, string[]>) => {
+    const next = { ...configs };
+    for (const key of GROS_APPROVAL_KEYS) delete next[key];
+    return next;
+};
+
+const APPROVAL_DOC_TYPES = [
+    { key: "devis", label: "Devis" },
+    { key: "facture", label: "Factures" },
+    { key: "commande", label: "Commandes" },
+    { key: "avoir", label: "Avoirs" },
+    { key: "inventaire", label: "Inventaire" },
+    { key: "achats_fournisseurs", label: "Achats fournisseurs" },
+    { key: "reglements", label: "Règlements" },
+    { key: "remboursements", label: "Remboursements" },
+] as const;
 
 export default function Permissions() {
     const [roles, setRoles] = useState<Role[]>([]);
@@ -49,6 +69,16 @@ export default function Permissions() {
     );
 
     const token = localStorage.getItem("token");
+
+    const visiblePermissions = useMemo(
+        () => permissions.filter((p) => !isGrosPermission(p)),
+        [permissions],
+    );
+
+    const activeVisiblePermissionIds = useMemo(
+        () => rolePermissionIds.filter((id) => visiblePermissions.some((p) => p.id === id)),
+        [rolePermissionIds, visiblePermissions],
+    );
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -91,7 +121,7 @@ export default function Permissions() {
             });
             if (res.ok) {
                 const data = await res.json();
-                setApprovalConfigs(data);
+                setApprovalConfigs(stripGrosFromApprovalConfigs(data));
             }
         } catch (error) {
             console.error("Error fetching approval configs:", error);
@@ -204,7 +234,7 @@ export default function Permissions() {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify(approvalConfigs),
+                body: JSON.stringify(stripGrosFromApprovalConfigs(approvalConfigs)),
             });
             if (res.ok) {
                 toast.success("Configurations d'approbation enregistrées");
@@ -279,7 +309,7 @@ export default function Permissions() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {permissions.map((permission) => (
+                        {visiblePermissions.map((permission) => (
                             <div
                                 key={permission.id}
                                 className={cn(
@@ -314,18 +344,18 @@ export default function Permissions() {
                     </CardHeader>
                     <CardContent>
                         <ul className="space-y-2">
-                            {permissions.filter(p => rolePermissionIds.includes(p.id)).slice(0, 5).map(p => (
+                            {visiblePermissions.filter(p => rolePermissionIds.includes(p.id)).slice(0, 5).map(p => (
                                 <li key={p.id} className="text-xs text-muted-foreground flex items-center gap-2">
                                     <div className="h-1 w-1 bg-emerald-500 rounded-full" />
                                     {p.description}
                                 </li>
                             ))}
-                            {rolePermissionIds.length > 5 && (
+                            {activeVisiblePermissionIds.length > 5 && (
                                 <li className="text-[10px] italic text-muted-foreground ml-3">
-                                    + {rolePermissionIds.length - 5} autres permissions...
+                                    + {activeVisiblePermissionIds.length - 5} autres permissions...
                                 </li>
                             )}
-                            {rolePermissionIds.length === 0 && (
+                            {activeVisiblePermissionIds.length === 0 && (
                                 <li className="text-xs text-muted-foreground italic">Aucune permission activée</li>
                             )}
                         </ul>
@@ -351,9 +381,9 @@ export default function Permissions() {
                                     </span>{" "}
                             a accès à{" "}
                             <span className="text-indigo-600 dark:text-indigo-400 font-bold">
-                                {rolePermissionIds.length}
+                                {activeVisiblePermissionIds.length}
                             </span>{" "}
-                            fonctionnalités du système sur un total de {permissions.length}.
+                            fonctionnalités du système sur un total de {visiblePermissions.length}.
                         </p>
                     </CardContent>
                 </Card>
@@ -434,7 +464,7 @@ export default function Permissions() {
                     <div>
                         <CardTitle className="text-xl">Niveaux d&apos;approbation</CardTitle>
                         <CardDescription>
-                            Définissez qui peut approuver les documents (Devis, Factures, Commandes, Avoirs, Devis gros, Commandes gros, Factures gros, Avoirs gros, Inventaire, Achats fournisseurs, Règlements, Remboursements).
+                            Définissez qui peut approuver les documents (Devis, Factures, Commandes, Avoirs, Inventaire, Achats fournisseurs, Règlements, Remboursements).
                         </CardDescription>
                     </div>
                     <Button 
@@ -453,20 +483,7 @@ export default function Permissions() {
                 </CardHeader>
                 <CardContent className="space-y-6 pt-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {[
-                            { key: 'devis', label: 'Devis' },
-                            { key: 'facture', label: 'Factures' },
-                            { key: 'commande', label: 'Commandes' },
-                            { key: 'avoir', label: 'Avoirs' },
-                            { key: 'devis_gros', label: 'Devis gros' },
-                            { key: 'commande_gros', label: 'Commandes gros' },
-                            { key: 'facture_gros', label: 'Factures gros' },
-                            { key: 'avoir_gros', label: 'Avoirs gros' },
-                            { key: 'inventaire', label: 'Inventaire' },
-                            { key: 'achats_fournisseurs', label: 'Achats fournisseurs' },
-                            { key: 'reglements', label: 'Règlements' },
-                            { key: 'remboursements', label: 'Remboursements' },
-                        ].map(({ key: docType, label }) => (
+                        {APPROVAL_DOC_TYPES.map(({ key: docType, label }) => (
                             <div key={docType} className="p-4 rounded-2xl border border-border/40 bg-background/40 space-y-4">
                                 <h4 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
                                     <div className="w-2 h-2 rounded-full bg-primary" />

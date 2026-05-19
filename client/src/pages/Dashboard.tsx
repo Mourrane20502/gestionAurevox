@@ -161,7 +161,6 @@ export default function Dashboard() {
     const [pdvSales, setPdvSales] = useState<{ name: string; value: number }[]>([]);
     const [topProducts, setTopProducts] = useState<{ name: string; quantity: number }[]>([]);
     const [pdvSalesGros, setPdvSalesGros] = useState<{ name: string; value: number }[]>([]);
-    const [topProductsGros, setTopProductsGros] = useState<{ name: string; quantity: number }[]>([]);
     const [salesInsights, setSalesInsights] = useState({
         caLast30d: 0,
         caMonthTotal: 0,
@@ -219,7 +218,7 @@ export default function Dashboard() {
 
         const fetchData = async () => {
             try {
-                const [prodRes, clientRes, devisRes, fournisseursRes, commandesRes, facturesRes, avoirsRes, achatsRes, reglementsRes, banqueRes, caisseRes, remboursementsRes, topProductsRes, visRes, gestionnairesRes, commandesGrosRes, facturesGrosRes] =
+                const [prodRes, clientRes, devisRes, fournisseursRes, commandesRes, facturesRes, avoirsRes, achatsRes, reglementsRes, banqueRes, caisseRes, remboursementsRes, topProductsRes, visRes, gestionnairesRes, commandesGrosRes] =
                     await Promise.all([
                     fetch("/api/products", { headers }),
                     fetch("/api/clients", { headers }),
@@ -237,7 +236,6 @@ export default function Dashboard() {
                     fetch("/api/settings/dashboard-visibility", { headers }),
                     fetch("/api/gestionnaires", { headers }),
                     fetch("/api/commandes-gros", { headers }),
-                    fetch("/api/factures-gros", { headers }),
                 ]);
 
                 const products = prodRes.ok ? await prodRes.json() : [];
@@ -256,7 +254,6 @@ export default function Dashboard() {
                 const visibilityData = visRes.ok ? await visRes.json() : {};
                 const gestionnairesData = gestionnairesRes.ok ? await gestionnairesRes.json() : [];
                 const commandesGros = commandesGrosRes.ok ? await commandesGrosRes.json() : [];
-                const facturesGros = facturesGrosRes.ok ? await facturesGrosRes.json() : [];
                 setVisibility(visibilityData);
                 setGestionnaireName(
                     Array.isArray(gestionnairesData) && gestionnairesData[0]?.nom
@@ -490,12 +487,6 @@ export default function Dashboard() {
                 }
                 setMonthlySales(chartData);
 
-                const commandeGrosIdsFacturees = new Set<number>(
-                    (Array.isArray(facturesGros) ? facturesGros : [])
-                        .map((f: any) => Number(f.commande_gros_id))
-                        .filter((id: number) => Number.isFinite(id))
-                );
-
                 // CA par PDV = somme des montants TTC des commandes (classique + gros), par point de vente
                 const byName: Record<string, number> = {};
                 const addPdvByName = (doc: any, montant: number) => {
@@ -524,98 +515,6 @@ export default function Dashboard() {
                     addPdvByNameGros(doc, montantTtcCommande(doc))
                 );
                 setPdvSalesGros(Object.entries(byNameGros).map(([name, value]) => ({ name, value })));
-
-                // Top produits vendus (Gros)
-                const productSalesMapGros: Record<string, { name: string; quantity: number }> = {};
-                const parseGrosQty = (val: unknown) => {
-                    if (typeof val === "number") return Number.isFinite(val) ? val : 0;
-                    if (typeof val !== "string") return 0;
-                    const normalized = val
-                        .replace(/\s+/g, "")
-                        .replace(",", ".")
-                        .replace(/[^0-9.\-]/g, "");
-                    const n = Number.parseFloat(normalized);
-                    return Number.isFinite(n) ? n : 0;
-                };
-                const appendGrosItems = (doc: any) => {
-                    const items = Array.isArray(doc?.items)
-                        ? doc.items
-                        : (Array.isArray(doc?.lignes)
-                            ? doc.lignes
-                            : (Array.isArray(doc?.produits) ? doc.produits : []));
-                    items.forEach((it: any) => {
-                        const name = String(
-                            it?.designation ||
-                            it?.produit_nom ||
-                            it?.nom ||
-                            `Produit gros #${it?.produit_id || "inconnu"}`
-                        );
-                        const key = String(it?.produit_id || name);
-                        const qte = parseGrosQty(
-                            it?.quantite ??
-                            it?.quantity ??
-                            it?.grammage ??
-                            it?.poids ??
-                            0
-                        );
-                        if (!productSalesMapGros[key]) {
-                            productSalesMapGros[key] = { name, quantity: 0 };
-                        }
-                        productSalesMapGros[key].quantity += qte;
-                    });
-                };
-
-                const facturesGrosList = (Array.isArray(facturesGros) ? facturesGros : []);
-                const commandesGrosList = (Array.isArray(commandesGros) ? commandesGros : []);
-
-                const facturesNeedDetails = facturesGrosList.filter((doc: any) => !Array.isArray(doc?.items));
-                const commandesNeedDetails = commandesGrosList.filter(
-                    (doc: any) => !commandeGrosIdsFacturees.has(Number(doc.id)) && !Array.isArray(doc?.items)
-                );
-
-                const [facturesGrosWithItems, commandesGrosWithItems] = await Promise.all([
-                    Promise.all(
-                        facturesNeedDetails.map(async (doc: any) => {
-                            try {
-                                const res = await fetch(`/api/factures-gros/${doc.id}`, { headers });
-                                if (!res.ok) return doc;
-                                return await res.json();
-                            } catch {
-                                return doc;
-                            }
-                        })
-                    ),
-                    Promise.all(
-                        commandesNeedDetails.map(async (doc: any) => {
-                            try {
-                                const res = await fetch(`/api/commandes-gros/${doc.id}`, { headers });
-                                if (!res.ok) return doc;
-                                return await res.json();
-                            } catch {
-                                return doc;
-                            }
-                        })
-                    ),
-                ]);
-
-                const facturesGrosForTopProducts = [
-                    ...facturesGrosList.filter((doc: any) => Array.isArray(doc?.items)),
-                    ...facturesGrosWithItems,
-                ];
-                const commandesGrosForTopProducts = [
-                    ...commandesGrosList.filter(
-                        (doc: any) => !commandeGrosIdsFacturees.has(Number(doc.id)) && Array.isArray(doc?.items)
-                    ),
-                    ...commandesGrosWithItems,
-                ];
-
-                facturesGrosForTopProducts.forEach((doc: any) => appendGrosItems(doc));
-                commandesGrosForTopProducts.forEach((doc: any) => appendGrosItems(doc));
-                setTopProductsGros(
-                    Object.values(productSalesMapGros)
-                        .sort((a, b) => b.quantity - a.quantity)
-                        .slice(0, 5)
-                );
 
                 // Top produits vendus
                 if (Array.isArray(topProductsApi) && topProductsApi.length > 0) {
@@ -797,14 +696,6 @@ export default function Dashboard() {
     const handleDownloadReport = () => {
         const doc = new jsPDF();
         const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-        const ensureSectionFits = (desiredY: number, minRemaining = 45) => {
-            if (desiredY > pageHeight - minRemaining) {
-                doc.addPage();
-                return 20;
-            }
-            return desiredY;
-        };
 
         // Header
         doc.setFillColor(67, 56, 202); // indigo-600
@@ -867,42 +758,6 @@ export default function Dashboard() {
             body: pdvSalesAvecCa.map((p) => [p.name, formatDH(p.value)]),
             theme: "grid",
             headStyles: { fillColor: [245, 158, 11] }, // amber-500
-        });
-
-        // Section 4: Top Produits Gros
-        let finalY3 = (doc as any).lastAutoTable.finalY + 15;
-        finalY3 = ensureSectionFits(finalY3, 55);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.text("IV. TOP 5 PRODUITS VENDUS (GROS)", 14, finalY3);
-
-        autoTable(doc, {
-            startY: finalY3 + 5,
-            head: [["Produit Gros", "Quantité Vendue"]],
-            body: (topProductsGros.length > 0
-                ? topProductsGros
-                : [{ name: "Aucune donnée gros", quantity: 0 }]
-            ).map((p) => [p.name, `${p.quantity} g`]),
-            theme: "grid",
-            headStyles: { fillColor: [79, 70, 229] }, // indigo-600
-        });
-
-        // Section 5: Ventes Gros par PDV
-        let finalY4 = (doc as any).lastAutoTable.finalY + 15;
-        finalY4 = ensureSectionFits(finalY4, 55);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.text("V. VENTES GROS PAR POINT DE VENTE", 14, finalY4);
-
-        autoTable(doc, {
-            startY: finalY4 + 5,
-            head: [["Point de Vente", "Chiffre d'Affaires Gros"]],
-            body: (pdvSalesGros.length > 0
-                ? pdvSalesGros
-                : [{ name: "Aucune donnée gros", value: 0 }]
-            ).map((p) => [p.name, formatDH(p.value)]),
-            theme: "grid",
-            headStyles: { fillColor: [16, 185, 129] }, // emerald-500
         });
 
         doc.save(`rapport_dashboard_${new Date().toISOString().split('T')[0]}.pdf`);
