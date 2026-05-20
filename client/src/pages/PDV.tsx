@@ -64,6 +64,7 @@ interface Product {
     id: number;
     nom: string;
     prix: number;
+    prix_de_vente?: number | string | null;
     stock: number;
     category_name: string;
     reference: string;
@@ -370,70 +371,8 @@ export default function PDV() {
         currentPage * itemsPerPage
     );
 
-    // Calculs des totaux de grammage pour le PDV sélectionné
-    // Total grammage vendu = somme(quantite_vendue * grammage)
-    //   Ex : 10 produits vendus, grammage 100 g → 10 * 100 = 1 000 g
-    const totalGrammageVendu = pdvProducts.reduce(
-        (sum, p) => sum + (Number(p.quantite_vendue) || 0) * (Number(p.grammage) || 0),
-        0
-    );
-
-    // Grammage restant = somme(stock * grammage) (ce qu'il reste en stock)
-    // Pour certains produits gros, le stock peut être absent (null/undefined/"").
-    // Dans ce cas on compte 1 unité pour inclure leur grammage dans le total affiché.
-    const stockUnitsForGrammage = (product: Product) => {
-        const raw = (product as any).stock;
-        if (raw === null || typeof raw === "undefined" || raw === "") return 1;
-        const parsed = Number(raw);
-        if (!Number.isFinite(parsed)) return 0;
-        // Certains produits "gros" remontent avec stock=0 alors que le grammage de la ligne
-        // représente bien une quantité présente à afficher dans le total.
-        if (parsed <= 0 && (Number(product.grammage) || 0) > 0) return 1;
-        return parsed;
-    };
-
-    const totalGrammageRestant = pdvProducts.reduce(
-        (sum, p) => sum + stockUnitsForGrammage(p) * (Number(p.grammage) || 0),
-        0
-    );
-
-    // Total grammage initial = vendu + restant
-    const totalGrammageInitial = totalGrammageVendu + totalGrammageRestant;
     // CA du PDV = total des commandes réglées (total_regle) du PDV associé.
     const totalChiffreAffaires = pdvRevenue;
-
-    const normalizeVariantKey = (value?: string | null): string | null => {
-        const v = String(value || "")
-            .toLowerCase()
-            .trim()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "");
-        if (!v) return null;
-        if (/\braf+in(?:ity|ite|y)\b/.test(v)) return "rafinity";
-        if (/\bbeld(?:i|y)\b/.test(v)) return "beldy";
-        if (/\bresign\b/.test(v)) return "resign";
-        if (/\boccasion\b/.test(v)) return "occasion";
-        return null;
-    };
-
-    const getVariantLabel = (product: Product): string => {
-        const fromPricing = normalizeVariantKey(product.pricing_variant);
-        if (fromPricing) return fromPricing;
-        const fromType = normalizeVariantKey(product.product_type_name);
-        if (fromType) return fromType;
-        return "autre";
-    };
-
-    const grammageActuelByVariant = pdvProducts.reduce<Record<string, number>>((acc, product) => {
-        const variant = getVariantLabel(product);
-        const grammageActuel = stockUnitsForGrammage(product) * (Number(product.grammage) || 0);
-        if (grammageActuel <= 0) return acc;
-        acc[variant] = (acc[variant] || 0) + grammageActuel;
-        return acc;
-    }, {});
-
-    const sortedVariantEntries = Object.entries(grammageActuelByVariant)
-        .sort((a, b) => b[1] - a[1]);
 
     const getProductPhotoUrl = (photo?: string | null) => {
         if (!photo) return null;
@@ -857,39 +796,6 @@ export default function PDV() {
 
                         {/* Stat cards */}
                         <div className="relative grid grid-cols-2 md:grid-cols-4 gap-3 p-6 pt-5">
-                            {/* Total grammage (vendu + restant) */}
-                            <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-3 border border-white/10">
-                                <p className="text-indigo-200 text-[9px] font-black uppercase tracking-widest mb-1">
-                                    Total grammage
-                                </p>
-                                <p className="text-base font-extrabold text-white leading-none">
-                                    {totalGrammageInitial.toLocaleString("fr-FR")}
-                                    <span className="text-[10px] font-bold text-indigo-200 ml-1">g</span>
-                                </p>
-                            </div>
-
-                            {/* Total grammage vendu */}
-                            <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-3 border border-white/10">
-                                <p className="text-indigo-200 text-[9px] font-black uppercase tracking-widest mb-1">
-                                    Total grammage vendu
-                                </p>
-                                <p className="text-base font-extrabold text-white leading-none">
-                                    {totalGrammageVendu.toLocaleString("fr-FR")}
-                                    <span className="text-[10px] font-bold text-indigo-200 ml-1">g</span>
-                                </p>
-                            </div>
-
-                            {/* Total grammage restant (stock * grammage - vendu) */}
-                            <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-3 border border-white/10">
-                                <p className="text-indigo-200 text-[9px] font-black uppercase tracking-widest mb-1">
-                                    Grammage restant
-                                </p>
-                                <p className="text-base font-extrabold text-white leading-none">
-                                    {totalGrammageRestant.toLocaleString("fr-FR")}
-                                    <span className="text-[10px] font-bold text-indigo-200 ml-1">g</span>
-                                </p>
-                            </div>
-
                             {/* Nombre d'articles */}
                             <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-3 border border-white/10">
                                 <p className="text-indigo-200 text-[9px] font-black uppercase tracking-widest mb-1">
@@ -933,30 +839,6 @@ export default function PDV() {
                                 </div>
                             )}
                         </div>
-
-                        {sortedVariantEntries.length > 0 && (
-                            <div className="relative px-6 pb-5">
-                                <p className="text-indigo-100/90 text-[10px] font-black uppercase tracking-[0.2em] mb-2">
-                                    Grammage actuel par variante
-                                </p>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                                    {sortedVariantEntries.map(([variant, grams]) => (
-                                        <div
-                                            key={variant}
-                                            className="bg-white/10 backdrop-blur-xl rounded-xl p-2.5 border border-white/10"
-                                        >
-                                            <p className="text-indigo-200 text-[9px] font-black uppercase tracking-widest">
-                                                {variant}
-                                            </p>
-                                            <p className="text-sm font-extrabold text-white leading-none mt-1">
-                                                {grams.toLocaleString("fr-FR")}
-                                                <span className="text-[10px] font-bold text-indigo-200 ml-1">g</span>
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
                     </DialogHeader>
 
                     {/* Content */}
@@ -1016,15 +898,15 @@ export default function PDV() {
                                             </div>
 
                                             <div className="flex items-center gap-2">
-                                                <div className="text-center px-3 py-2 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-800/30 min-w-[82px]">
-                                                    <p className="text-[9px] text-amber-500 font-black uppercase tracking-widest">Grammage</p>
+                                                <div className="text-center px-3 py-2 bg-amber-50 dark:bg-amber-900/10 rounded-xl border border-amber-100 dark:border-amber-800/30 min-w-[90px]">
+                                                    <p className="text-[9px] text-amber-500 font-black uppercase tracking-widest">Prix de vente</p>
                                                     <p className="text-sm font-black text-amber-600 dark:text-amber-400 mt-0.5 leading-none">
-                                                        {Number(product.grammage || 0).toLocaleString('fr-FR')}
-                                                        <span className="text-[10px] font-bold opacity-60 ml-0.5">g</span>
+                                                        {Number(product.prix_de_vente ?? product.prix ?? 0).toLocaleString('fr-FR')}
+                                                        <span className="text-[10px] font-bold opacity-60 ml-0.5">DH</span>
                                                     </p>
                                                 </div>
                                                 <div className="text-right min-w-[88px]">
-                                                    <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Prix</p>
+                                                    <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Prix d'achat</p>
                                                     <p className="text-base font-black text-indigo-600 dark:text-indigo-400 mt-0.5 leading-none">
                                                         {Number(product.prix).toLocaleString('fr-FR')}
                                                         <span className="text-[10px] font-bold opacity-50 ml-0.5">DH</span>

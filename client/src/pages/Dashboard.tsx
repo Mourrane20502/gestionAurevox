@@ -160,7 +160,6 @@ export default function Dashboard() {
     const [monthlySales, setMonthlySales] = useState<{ label: string; mois: string; commandes: number; factures: number; total: number; achats: number }[]>([]);
     const [pdvSales, setPdvSales] = useState<{ name: string; value: number }[]>([]);
     const [topProducts, setTopProducts] = useState<{ name: string; quantity: number }[]>([]);
-    const [pdvSalesGros, setPdvSalesGros] = useState<{ name: string; value: number }[]>([]);
     const [salesInsights, setSalesInsights] = useState({
         caLast30d: 0,
         caMonthTotal: 0,
@@ -504,17 +503,6 @@ export default function Dashboard() {
                     addPdvByName(doc, montantTtcCommande(doc))
                 );
                 setPdvSales(Object.entries(byName).map(([name, value]) => ({ name, value })));
-
-                // Part « Gros » par PDV = commandes gros uniquement (même clé nom que la carte principale)
-                const byNameGros: Record<string, number> = {};
-                const addPdvByNameGros = (doc: any, montant: number) => {
-                    const name = doc.point_de_vente_nom || "Principal";
-                    byNameGros[name] = (byNameGros[name] || 0) + montant;
-                };
-                (Array.isArray(commandesGros) ? commandesGros : []).forEach((doc: any) =>
-                    addPdvByNameGros(doc, montantTtcCommande(doc))
-                );
-                setPdvSalesGros(Object.entries(byNameGros).map(([name, value]) => ({ name, value })));
 
                 // Top produits vendus
                 if (Array.isArray(topProductsApi) && topProductsApi.length > 0) {
@@ -1224,7 +1212,7 @@ export default function Dashboard() {
                                         <div className="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-4">
                                             <div className="rounded-2xl bg-indigo-500/5 border border-indigo-200/40 dark:border-indigo-400/20 p-5 space-y-4 min-h-[220px]">
                                                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-indigo-600/85">
-                                                    CA par point de vente (inclut gros)
+                                                    CA par point de vente
                                                 </p>
                                                 <div className="grid grid-cols-[0.8fr_1.4fr] gap-2">
                                                     <div className="rounded-lg bg-white/70 dark:bg-black/15 p-2">
@@ -1240,22 +1228,16 @@ export default function Dashboard() {
                                                     </div>
                                                 </div>
                                                 <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-                                                    {pdvSalesAvecCa.map((pdv) => {
-                                                        const pdvGros = pdvSalesGros.find((g) => g.name === pdv.name)?.value || 0;
-                                                        return (
+                                                    {pdvSalesAvecCa.map((pdv) => (
                                                             <div key={pdv.name} className="flex items-center justify-between gap-3 text-sm">
                                                                 <div className="min-w-0">
                                                                     <p className="font-bold text-slate-700 dark:text-slate-200 truncate">{pdv.name}</p>
-                                                                    <p className="text-[11px] font-semibold text-indigo-600/80 dark:text-indigo-300/80 truncate">
-                                                                        Gros: {formatShortDH(pdvGros)}
-                                                                    </p>
                                                                 </div>
                                                                 <span className="font-black text-indigo-700 dark:text-indigo-300 tabular-nums shrink-0 text-base">
                                                                     {formatShortDH(pdv.value)} DH
                                                                 </span>
                                                             </div>
-                                                        );
-                                                    })}
+                                                        ))}
                                                 </div>
                                             </div>
 
