@@ -125,14 +125,31 @@ export default function Contrats() {
         setEditing(row);
         setGestionnaireId(String(row.gestionnaire_id));
         setPdfPath(row.pdf_path || "");
-        setPdfFileName(row.pdf_path || "");
+        setPdfFileName("");
         setPdfFile(null);
         setSigClientValue(row.signature_client || null);
         setSigGestionnaireValue(row.signature_gestionnaire || null);
-        clientSigRef.current?.clear();
-        gestionnaireSigRef.current?.clear();
         setDialogOpen(true);
     };
+
+    useEffect(() => {
+        if (!dialogOpen) return;
+        const timer = setTimeout(() => {
+            if (sigClientValue) {
+                clientSigRef.current?.clear();
+                clientSigRef.current?.fromDataURL(sigClientValue);
+            } else {
+                clientSigRef.current?.clear();
+            }
+            if (sigGestionnaireValue) {
+                gestionnaireSigRef.current?.clear();
+                gestionnaireSigRef.current?.fromDataURL(sigGestionnaireValue);
+            } else {
+                gestionnaireSigRef.current?.clear();
+            }
+        }, 100);
+        return () => clearTimeout(timer);
+    }, [dialogOpen, sigClientValue, sigGestionnaireValue]);
 
     const resolvePdfUrl = (path: string | null | undefined): string => {
         const s = String(path || "").trim();
@@ -170,7 +187,7 @@ export default function Contrats() {
             toast.error("Choisissez un gestionnaire");
             return;
         }
-        if (!pdfPath.trim()) {
+        if (!pdfPath.trim() && !pdfFile) {
             toast.error("Le PDF du contrat est obligatoire");
             return;
         }
@@ -438,24 +455,34 @@ export default function Contrats() {
                         <div className="space-y-2">
                             <Label>PDF contrat (obligatoire)</Label>
                             <Input
+                                key={editing?.id ?? "new"}
                                 type="file"
                                 accept="application/pdf,.pdf"
                                 onChange={(e) => {
                                     const file = e.target.files?.[0];
-                                    const fileName = file?.name || "";
-                                    setPdfFileName(fileName);
-                                    setPdfPath(fileName);
+                                    setPdfFileName(file?.name || "");
                                     setPdfFile(file || null);
+                                    if (!editing && file) {
+                                        setPdfPath(file.name);
+                                    }
                                 }}
                             />
                             {pdfFileName && (
                                 <p className="text-xs text-muted-foreground">
-                                    Fichier sélectionné: {pdfFileName}
+                                    Nouveau fichier : {pdfFileName}
                                 </p>
                             )}
-                            {!pdfFileName && pdfPath && (
+                            {pdfPath && !pdfFile && (
                                 <p className="text-xs text-muted-foreground">
-                                    PDF actuel: {pdfPath}
+                                    PDF actuel :{" "}
+                                    <a
+                                        href={resolvePdfUrl(pdfPath)}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-primary hover:underline font-medium"
+                                    >
+                                        {pdfPath}
+                                    </a>
                                 </p>
                             )}
                         </div>
@@ -473,10 +500,24 @@ export default function Contrats() {
                                     />
                                 </div>
                                 <div className="flex gap-2">
-                                    <Button type="button" variant="outline" onClick={() => clientSigRef.current?.clear()}>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => {
+                                            clientSigRef.current?.clear();
+                                            setSigClientValue(null);
+                                        }}
+                                    >
                                         Effacer
                                     </Button>
-                                    <Button type="button" variant="ghost" onClick={() => setSigClientValue(null)}>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() => {
+                                            clientSigRef.current?.clear();
+                                            setSigClientValue(null);
+                                        }}
+                                    >
                                         Réinitialiser
                                     </Button>
                                 </div>
@@ -494,10 +535,24 @@ export default function Contrats() {
                                     />
                                 </div>
                                 <div className="flex gap-2">
-                                    <Button type="button" variant="outline" onClick={() => gestionnaireSigRef.current?.clear()}>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => {
+                                            gestionnaireSigRef.current?.clear();
+                                            setSigGestionnaireValue(null);
+                                        }}
+                                    >
                                         Effacer
                                     </Button>
-                                    <Button type="button" variant="ghost" onClick={() => setSigGestionnaireValue(null)}>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() => {
+                                            gestionnaireSigRef.current?.clear();
+                                            setSigGestionnaireValue(null);
+                                        }}
+                                    >
                                         Réinitialiser
                                     </Button>
                                 </div>

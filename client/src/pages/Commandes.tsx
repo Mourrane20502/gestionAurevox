@@ -56,7 +56,7 @@ import {
     DollarSign,
     Clock,
     FileText, ChevronLeft, ChevronRight,
-    ChevronsLeft, ChevronsRight, CheckCircle2, ArrowUpRight, BarChart3, UserPlus, Printer, Filter, FileSpreadsheet, XCircle, Banknote, LockOpen, MoreVertical, RotateCcw, Download
+    ChevronsLeft, ChevronsRight, CheckCircle2, ArrowUpRight, BarChart3, UserPlus, Printer, Filter, FileSpreadsheet, XCircle, Banknote, LockOpen, MoreVertical, RotateCcw, Download, Truck
 } from "lucide-react";
 import {
     DropdownMenu,
@@ -315,6 +315,7 @@ function Commandes() {
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
     const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+    const [convertingBlCommandeId, setConvertingBlCommandeId] = useState<number | null>(null);
 
     const [formData, setFormData] = useState({
         numero_commande: "",
@@ -364,6 +365,33 @@ function Commandes() {
             toast.error("Erreur de chargement");
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleConvertToBonLivraison = async (commande: Commande) => {
+        if (Number(commande.bon_livraison_id) > 0) return;
+        setConvertingBlCommandeId(commande.id);
+        try {
+            const res = await fetch(`/api/bons-livraison/from-commande/${commande.id}`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 400 && data?.id) {
+                toast.message(data.message || "BL déjà existant", { description: "Ouverture du bon existant." });
+                navigate(`/dashboard/bons-livraison/${data.id}`);
+                await fetchCommandes();
+                return;
+            }
+            if (!res.ok) throw new Error(data.message || "Création impossible.");
+            toast.success("Bon de livraison créé");
+            window.dispatchEvent(new CustomEvent("approvals-updated"));
+            await fetchCommandes();
+            if (data.id) navigate(`/dashboard/bons-livraison/${data.id}`);
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Erreur");
+        } finally {
+            setConvertingBlCommandeId(null);
         }
     };
 
@@ -2018,6 +2046,23 @@ function Commandes() {
                                                                             )}
                                                                         </>
                                                                     )}
+
+                                                                    <DropdownMenuItem
+                                                                        className="cursor-pointer font-bold text-violet-600"
+                                                                        disabled={
+                                                                            Number(commande.bon_livraison_id) > 0 ||
+                                                                            convertingBlCommandeId === commande.id
+                                                                        }
+                                                                        title={
+                                                                            Number(commande.bon_livraison_id) > 0
+                                                                                ? "Un bon de livraison est déjà associé à cette commande."
+                                                                                : undefined
+                                                                        }
+                                                                        onClick={() => handleConvertToBonLivraison(commande)}
+                                                                    >
+                                                                        <Truck className="h-4 w-4" />
+                                                                        Convertir en bon de livraison
+                                                                    </DropdownMenuItem>
 
                                                                     {!linkedFacture && isReglee && !hasRemboursement && (
                                                                         <DropdownMenuItem
